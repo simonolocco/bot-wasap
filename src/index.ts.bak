@@ -1,0 +1,422 @@
+﻿import 'dotenv/config';
+import path from 'node:path';
+import fs from 'node:fs';
+import { Client, LocalAuth, MessageMedia } from 'whatsapp-web.js';
+import qrcode from 'qrcode-terminal';
+import puppeteer from 'puppeteer';
+import chokidar from 'chokidar';
+
+import { fmtPrice } from './utils';\nimport { appendMemory, getMemory } from './memory';
+import { reloadProducts, findVariants, pickTier, Variant } from './products';
+import { askAI } from './ia';
+import { migrate } from '.././migrate';
+import { saveOrder } from './orders';
+
+type ChatId = string;
+
+// ---------- helpers de listado ----------
+const lastList: Record<ChatId, Variant[]> = {};
+const lastPage: Record<ChatId, number> = {};
+function page<T>(arr: T[], p: number, k = 8) { return arr.slice(p * k, (p + 1) * k); }
+function cheapest(v: Variant) { return v.tiers.slice().sort((a,b)=>a.price-b.price)[0]; }
+
+// ---------- helpers de formato de lista ----------
+function previewTiers(v: Variant, k = 2): string {
+  const tiers = v.tiers.slice().sort((a,b)=> a.min - b.min || a.price - b.price);
+  const parts = tiers.slice(0, k).map(t => `${fmtPrice(t.price)} / ${t.baseUnit}${t.min>1?` (desde ${t.min} ${t.gate})`:''}`);
+  if (tiers.length > k) parts.push('…');
+  return parts.join(' | ');
+}
+function listLine(v: Variant, n: number): string {
+  return `${n}. ${v.codigo || '-'} · ${v.producto} · ${v.marca} — ${previewTiers(v)}`;
+}
+
+// ---------- contexto e IA ----------
+const CONTEXT_PATH = path.resolve(process.cwd(), 'data', 'context.json');
+const COOLDOWN_MS = 300;
+const SILENCE_DURATION_MS = 300;
+const BOT_TAG = '\u200B[bot]\u200B';
+
+const lastCall: Record<string, number> = {};
+const lastProduct: Record<string, { product: string; timestamp: number }> = {};
+const silenceUntil: Record<string, number> = {};
+const history: Record<string, { role: 'user' | 'assistant'; content: string }[]> = {}; // legacy in-memory (short)
+
+
+// ---------- cotizaciÃ³n para confirmar ----------
+type QuoteItem = { sku: string|null; nombre: string; marca: string; gate: string; qty: number; unitPrice: number; subtotal: number };
+const lastQuote: Record<ChatId, { items: QuoteItem[]; total: number }> = {};
+
+function loadContext(): Record<string, unknown> {
+  try { return JSON.parse(fs.readFileSync(CONTEXT_PATH, 'utf8')); } catch { return {}; }
+}
+function saveContext(obj: Record<string, unknown>) {
+  fs.mkdirSync(path.dirname(CONTEXT_PATH), { recursive: true });
+  fs.writeFileSync(CONTEXT_PATH, JSON.stringify(obj, null, 2), 'utf8');
+}
+function ctxToText(ctx: Record<string, unknown>): string {
+  return Object.entries(ctx).map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`).join('\n');
+}
+function normGate(s = ''): string {
+  const t = s.toLowerCase();
+  if (t.startsWith('caja')) return 'caja';
+  if (t.startsWith('horma')) return 'horma';
+  if (t.startsWith('uni')) return 'unidad';
+  if (t.startsWith('lata')) return 'lata';
+  if (t.startsWith('sach')) return 'sachet';
+  if (t.startsWith('bido')) return 'bidon';
+  if (t.startsWith('pote')) return 'pote';
+  if (t.startsWith('barra')) return 'barra';
+  if (t === 'l' || t.startsWith('litro')) return 'l';
+  return '';
+}
+
+// ---------- client ----------
+const client = new Client({
+  authStrategy: new LocalAuth({ dataPath: './auth' }),
+  puppeteer: { headless: true, executablePath: puppeteer.executablePath(), args: ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage'] },
+  webVersionCache: { type: 'none' }
+});
+
+client.on('qr', (qr: string) => qrcode.generate(qr, { small: true }));
+
+client.on('ready', async () => {
+  console.log('Conectado');
+  await migrate();
+  const items = await reloadProducts();
+  console.log('[boot] productos:', items.length);
+});
+
+// --- helpers ---
+function replyAndRemember(chatId: string, msg: any, text: string) {
+  try { appendMemory(chatId, 'assistant', text); } catch {}
+  return msg.reply(text);
+}// ---------- mensajes ----------
+client.on('message', async (msg) => {
+  const chat = await msg.getChat();
+  if ((chat as any).isGroup) return;             // NO grupos
+  const chatId = msg.from;
+  const text = (msg.body || '').trim();\n  // Persist conversational memory\n  try { appendMemory(chatId, 'user', text); } catch {}
+  if (!text) return;
+
+  // seleccion por indice
+  const sel = text.match(/^\s*(\d{1,2})\s*$/);
+  if (sel && lastList[chatId]) {
+    const p = lastPage[chatId] ?? 0;
+    const idx = (+sel[1] - 1) + p * 8;
+    const v = lastList[chatId][idx];
+    if (!v) { await replyAndRemember(chatId, msg, 'Opcion invalida.' + BOT_TAG); return; }
+    let out = `*${v.codigo || '-'} - ${v.producto} - ${v.marca}*\\n`;
+    for (const t of v.tiers) {
+      const desde = t.min === 1 ? '' : ` (desde ${t.min} ${t.gate})`;
+      out += `â€¢ ${fmtPrice(t.price)} / ${t.baseUnit}${desde}\n`;
+    }
+    await replyAndRemember(chatId, msg, out + BOT_TAG);
+    return;
+  }
+
+  // paginado
+  if (/^m(a|Ã¡)s$/i.test(text) && lastList[chatId]) {
+    lastPage[chatId] = (lastPage[chatId] ?? 0) + 1;
+    const p = lastPage[chatId];
+    const items = page(lastList[chatId], p);
+    if (!items.length) { await msg.reply('No hay mas resultados.'); return; }
+    const lines = items.map((v, i) => listLine(v, i + 1));
+    await msg.reply(lines.join('\n') + `\nResponde con 1-${items.length} o "mÃ¡s".` + BOT_TAG);
+    return;
+  }
+
+  try {
+    if (!history[chatId]) history[chatId] = [];
+    const now = Date.now();
+
+    if (msg.fromMe && !text.endsWith(BOT_TAG)) {
+      silenceUntil[chatId] = now + SILENCE_DURATION_MS;
+      history[chatId].push({ role: 'user', content: text });
+      if (history[chatId].length > 10) history[chatId].shift();
+      return;
+    }
+
+    if (/^(hola|buenas|hey|hello)$/i.test(text)) {
+      await msg.reply('Hola. Decime el producto o usÃ¡ !cat para los PDFs.' + BOT_TAG);
+      return;
+    }
+
+    if (silenceUntil[chatId] && now < silenceUntil[chatId]) return;
+
+    if (lastCall[chatId] && now - lastCall[chatId] < COOLDOWN_MS) {
+      await msg.reply('Procesando. IntentÃ¡ en unos segundos.' + BOT_TAG);
+      return;
+    }
+    lastCall[chatId] = now;
+
+    // ---------- CONFIRMAR PEDIDO ----------
+    const rxConfirm = /^(si|sí|confirmo|ok|dale|listo)\\b/i;
+    if (rxConfirm.test(text) && lastQuote[chatId]?.items?.length) {
+      const { items, total } = lastQuote[chatId];
+      delete lastQuote[chatId];
+
+      const saved = await saveOrder(chatId, items.map(i => ({
+        sku: i.sku, nombre: i.nombre, marca: i.marca, gate: i.gate,
+        qty: i.qty, unit_price: i.unitPrice, subtotal: i.subtotal
+      })), total);
+
+      const resumen = items
+        .map(i => `â€¢ ${i.qty} ${i.gate} de ${i.marca} ${i.nombre} â€” ${fmtPrice(i.subtotal)}`)
+        .join('\n');
+
+      await msg.reply(
+        `Pedido NÂ° ${saved.order_number} del ${saved.order_date}\n` +
+        `${resumen}\nTotal: **${fmtPrice(total)}**` + BOT_TAG
+      );
+      return;
+    }
+
+    // ---------- ADMIN ----------
+    if (text === '!reload') {
+      const items = await reloadProducts();
+      await msg.reply(`CatÃ¡logo recargado (${items.length} Ã­tems).` + BOT_TAG);
+      return;
+    }
+    if (text === '!ctx') {
+      const ctx = loadContext();
+      await msg.reply(ctxToText(ctx) || 'Contexto vacÃ­o.' + BOT_TAG);
+      return;
+    }
+    if (text.startsWith('!set ')) {
+      const p = text.slice(5);
+      const i = p.indexOf('=');
+      if (i > 0) {
+        const k = p.slice(0, i).trim();
+        const val = p.slice(i + 1).trim();
+        const ctx = loadContext();
+        (ctx as any)[k] = val;
+        saveContext(ctx);
+        await msg.reply(`OK. ${k} actualizado.` + BOT_TAG);
+      } else {
+        await msg.reply('Formato: !set clave=valor' + BOT_TAG);
+      }
+      return;
+    }
+
+    // ---------- CATÃLOGO PDFs ----------
+    if (/(^| )(!cat|catalogo|catÃ¡logo|lista|productos)( |$)/i.test(text)) {
+      const pdf1 = path.resolve(process.cwd(), 'data', '22.10.25 Lista Mayorista.pdf');
+      const pdf2 = path.resolve(process.cwd(), 'data', 'Lista CBA 13.10.25.pdf');
+      const files = [pdf1, pdf2].filter(f => fs.existsSync(f));
+      if (!files.length) { await msg.reply('No encontrÃ© los PDFs de catÃ¡logo.' + BOT_TAG); return; }
+      await msg.reply('AquÃ­ tenÃ©s los catÃ¡logos:' + BOT_TAG);
+      for (const f of files) {
+        const media = MessageMedia.fromFilePath(f);
+        await (await msg.getChat()).sendMessage(media, { caption: path.basename(f) });
+      }
+      return;
+    }
+
+    // ---------- MARCAS DE X ----------
+    // Soporta: "marcas de X", "todas las marcas de X", "que marcas de X", y con verbos al final (tenes/hay/vendes)
+    const rxMarcas = /^(?:que\s+)?(?:marcas(?:\s+de)?|todas\s+las\s+marcas\s+de)\s+(.+?)(?:\s+(?:ten(?:e?s)?|tienen|hay|vend(?:e?s)?|venden))?\??$/i;
+    const mMarcas = text.match(rxMarcas);
+    if (mMarcas) {
+      const q = mMarcas[1].trim();
+      const cand = await findVariants(q);
+      if (!cand.length) { await msg.reply(`No encontrÃ© "${q}". ProbÃ¡ otra palabra o el cÃ³digo.` + BOT_TAG); return; }
+
+      type TierView = { min: number; price: number; baseUnit: string; gate: string };
+      const byBrand = new Map<string, TierView[]>();
+
+      for (const v of cand) {
+        const brand = v.marca || '(sin marca)';
+        if (!byBrand.has(brand)) byBrand.set(brand, []);
+        const acc = byBrand.get(brand)!;
+        for (const t of v.tiers) acc.push({ min: t.min, price: t.price, baseUnit: t.baseUnit, gate: t.gate });
+      }
+
+      for (const [m, tiers] of byBrand) {
+        const best = new Map<string, TierView>();
+        for (const t of tiers) {
+          const key = `${t.baseUnit}|${t.gate}|${t.min}`;
+          const prev = best.get(key);
+          if ((prev?.price ?? Infinity) > t.price) best.set(key, t);
+        }
+        const orderUnit = (u: string) => (u === 'caja' ? 0 : u === 'kg' ? 1 : (u === 'unidad' || u === 'uni') ? 2 : 3);
+        const sorted = [...best.values()].sort((a,b) =>
+          orderUnit(a.baseUnit) - orderUnit(b.baseUnit) || a.min - b.min || a.price - b.price
+        );
+        byBrand.set(m, sorted);
+      }
+
+      const lines = [...byBrand.entries()]
+        .sort((a,b)=> a[0].localeCompare(b[0]))
+        .map(([m, tiers]) => {
+          const parts = tiers.map(t => `${fmtPrice(t.price)} / ${t.baseUnit} (desde ${t.min} ${t.gate})`);
+          return `* ${m.toUpperCase()}: ${parts.join(' | ')}`;
+        });
+
+      const maxLines = 30;
+      const out = lines.slice(0, maxLines).join('\n');
+      await msg.reply(out + (lines.length > maxLines ? `\nâ€¦y ${lines.length - maxLines} marcas mÃ¡s` : '') + BOT_TAG);
+      return;
+    }
+
+    // ---------- LISTAR: muchas variantes naturales ----------
+    const r1 = /^(?:que|quÃ©|cuales?|cuÃ¡les?)\s+(.+?)\s+(?:ten(?:e?s)?|tenÃ©s|tienen|hay|vend(?:e?s)?|venden)\??$/i;
+    const r2 = /^(?:ten(?:e?s)?|tenÃ©s|teni?s|tienen|hay|vend(?:e?s)?|venden)\s+(.+?)\??$/i;
+    const r3 = /^(.+?)\s+(?:ten(?:e?s)?|tenÃ©s|teni?s|tienen|vend(?:e?s)?|venden)\??$/i;
+
+    let qList = '';
+    const mList = text.match(r1) || text.match(r2) || text.match(r3);
+    if (mList) qList = (mList[1] || '').trim();
+    else {
+      const kw = text.toLowerCase().replace(/[?Â¡!]+/g, '').trim();
+      const words = kw.split(/\s+/);
+      const isCommand = /^(hola|buenas|hello|precio|lista|cat[aÃ¡]logo|!cat|!p)\b/i.test(kw);
+      if (!isCommand && words.length <= 3) qList = kw;
+    }
+
+    if (qList) {
+      const cand = await findVariants(qList);
+      if (!cand.length) { await msg.reply(`No encontrÃ© "${qList}". ProbÃ¡ otra palabra o el cÃ³digo.` + BOT_TAG); return; }
+      lastList[chatId] = cand; lastPage[chatId] = 0;
+
+      // Listado inicial por producto (paginado)
+      const items = page(cand, 0);
+      const lines = items.map((v, i) => listLine(v, i + 1));
+      await msg.reply(lines.join('\n') + `\nResponde con 1-${items.length} o "mÇ­s".` + BOT_TAG);
+      return;
+
+      
+    }
+
+    // ---------- PRECIO / PEDIDOS ----------
+    const askPrice = text.match(/^(?:!p|precio(?:\s+de)?|cu[aÃ¡]nto(?:\s+vale|sale|costa?|est[aÃ¡]))\s+(.+)$/i);
+    const wantAny  = text.match(/^(quiero|necesito|pedido|compra)\s+(.+)$/i);
+
+    if (askPrice || wantAny) {
+      const raw = askPrice ? askPrice[1] : wantAny![2];
+      const parts = [...raw.matchAll(/(\d+)\s*(\w+)\s*de\s*([^y]+?)(?=\s+y\s+|$)/gi)];
+      const reqs = parts.length
+        ? parts.map(m => ({ qty: Number(m[1]), gate: normGate(m[2]), q: m[3].trim() }))
+        : [{ qty: 0, gate: '', q: raw.trim() }];
+
+      let reply = '', grand = 0;
+      const quoteItems: QuoteItem[] = [];
+
+      for (const it of reqs) {
+        let q = it.q || (lastProduct[chatId]?.product || '');
+        const cand = await findVariants(q);
+        if (!cand.length) { reply += `No encontrÃ© "${q}". ProbÃ¡ con cÃ³digo o nombre. Usa !cat\n`; continue; }
+
+        const qLower = raw.toLowerCase();
+        const byBrand = cand.filter(v => v.marca && qLower.includes(v.marca.toLowerCase()));
+        const chosen = (byBrand[0] || cand[0]);
+        lastProduct[chatId] = { product: chosen.producto, timestamp: now };
+
+        reply += `*${chosen.codigo || '-'} Â· ${chosen.producto} Â· ${chosen.marca}*\n`;
+        for (const t of chosen.tiers) {
+          const desde = t.min === 1 ? '' : ` (desde ${t.min} ${t.gate})`;
+          reply += `â€¢ ${fmtPrice(t.price)} / ${t.baseUnit}${desde}\n`;
+        }
+
+        if (it.qty > 0) {
+          const pool = it.gate ? chosen.tiers.filter(t => t.gate === it.gate) : chosen.tiers;
+          const tier = pool.length ? pickTier(pool, it.qty) : pickTier(chosen.tiers, it.qty);
+          const sub = tier.price * it.qty;
+          grand += sub;
+          quoteItems.push({
+            sku: chosen.codigo || null,
+            nombre: chosen.producto,
+            marca: chosen.marca,
+            gate: tier.gate,
+            qty: it.qty,
+            unitPrice: tier.price,
+            subtotal: sub
+          });
+          reply += `\nPara **${it.qty} ${it.gate || tier.gate}** â†’ **${fmtPrice(sub)}**\n`;
+        }
+        reply += `\n`;
+      }
+
+      if (reqs.length > 1 && grand > 0) reply += `Total pedido: **${fmtPrice(grand)}**\n`;
+      reply += `Â¿Quieres©s confirmar el pedido? Responde© "sÃ­" para grabarlo.` + BOT_TAG;
+      await msg.reply(cleanOut(reply));
+
+      if (quoteItems.length) lastQuote[chatId] = { items: quoteItems, total: grand };
+      return;
+    }
+
+    // ---------- IA general ----------
+    const generalPatterns = /^(hola|buenas|ayuda|ofertas|promociones|stock|disponible|env[Ã­i]o|entrega|pago|efectivo|d[eÃ©]bito|cr[eÃ©]dito|transferencia|mercadopago|cu[aÃ¡]ndo|d[Ã³o]nde|direcci[oÃ³]n|horario|abierto|cerrado)/i;
+    if (generalPatterns.test(text)) {
+      const ctx = loadContext();
+      const histText = history[chatId].map(m => `${m.role === 'user' ? 'Usuario' : 'Asistente'}: ${m.content}`).join('\n');
+      const fullCtx = `${ctxToText(ctx)}\n\nHistoria reciente:\n${histText || 'Sin historial'}`;
+      const answer = await askAI(text, fullCtx);
+      if (answer) await msg.reply(cleanOut(answer + BOT_TAG));
+      if (answer) {
+        history[chatId].push({ role: 'assistant', content: answer });
+        if (history[chatId].length > 10) history[chatId].shift();
+      }
+      return;
+    }
+
+    // ---------- fallback IA ----------
+    const ctx = loadContext();
+    const histText = history[chatId].map(m => `${m.role === 'user' ? 'Usuario' : 'Asistente'}: ${m.content}`).join('\n');
+    const fullCtx = `${ctxToText(ctx)}\n\nHistoria reciente:\n${histText || 'Sin historial'}`;
+    const answer = await askAI(text, fullCtx);
+    if (answer) await msg.reply(cleanOut(answer + BOT_TAG));
+    if (answer) {
+      history[chatId].push({ role: 'assistant', content: answer });
+      if (history[chatId].length > 10) history[chatId].shift();
+    }
+  } catch (e) {
+    console.error('Error en message handler:', e);
+    await msg.reply('Error interno.' + BOT_TAG);
+  }
+});
+
+// ---------- lifecycle ----------
+process.on('SIGINT', async () => { try { await client.destroy(); } finally { process.exit(0); } });
+process.on('SIGTERM', async () => { try { await client.destroy(); } finally { process.exit(0); } });
+
+client.initialize();
+
+// ---------- watcher Excel â†’ DB ----------
+const excelPath = path.resolve(process.cwd(), 'data', 'productos.xlsx');
+chokidar.watch(excelPath).on('change', async () => {
+  console.log('[watcher] Excel cambiado. Recargando DB...');
+  await migrate();
+  await reloadProducts();
+});
+
+// Utilidad para normalizar salida y evitar caracteres raros en WhatsApp
+function cleanOut(s: string): string {
+  try {
+    let t = s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    t = t.replace(/[“”«»]/g, '"').replace(/[‘’]/g, "'");
+    t = t.replace(/[•·]/g, '-');
+    t = t.replace(/[\u00A0]/g, ' ');
+    t = t.replace(/[^\x09\x0A\x0D\x20-\x7E]/g, '');
+    return t;
+  } catch { return s; }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

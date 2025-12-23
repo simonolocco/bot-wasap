@@ -1,0 +1,52 @@
+[
+  {
+    "id": 1,
+    "chat_id": "5493515597470",
+    "customer_name": "Simon",
+    "detail": "3 de jamón, 4 de mortadela",
+    "created_at": "2025-12-18T02:09:24.307Z",
+    "status": "submitted",
+    "accepted": 0,
+    "accepted_at": null
+  },
+  {
+    "id": 2,
+    "chat_id": "5493515597470",
+    "customer_name": "Simon",
+    "detail": "Pkn",
+    "created_at": "2025-12-18T02:44:09.696Z",
+    "status": "submitted",
+    "accepted": 0,
+    "accepted_at": null
+  },
+  {
+    "id": 3,
+    "chat_id": "5493515597470",
+    "customer_name": "Simon",
+    "detail": "Hola",
+    "created_at": "2025-12-18T02:48:08.959Z",
+    "status": "canceled",
+    "accepted": 0,
+    "accepted_at": null
+  },
+  {
+    "id": 4,
+    "chat_id": "5493515597470",
+    "customer_name": "Simon",
+    "detail": "3 jamones",
+    "created_at": "2025-12-18T02:48:32.460Z",
+    "status": "submitted",
+    "accepted": 0,
+    "accepted_at": null
+  },
+  {
+    "id": 5,
+    "chat_id": "5493515597470",
+    "customer_name": "Simon",
+    "detail": "2 cajas de jamon",
+    "created_at": "2025-12-18T02:48:52.623Z",
+    "status": "submitted",
+    "accepted": 0,
+    "accepted_at": null
+  }
+]

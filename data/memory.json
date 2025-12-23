@@ -1,0 +1,393 @@
+{
+  "5493543603254@c.us": [
+    {
+      "role": "user",
+      "content": "hola",
+      "ts": 1761430490226
+    },
+    {
+      "role": "assistant",
+      "content": "Buenas, bienvenido a la distribuidora. Elegi una opcion:\n 1. Crear pedido\n 2. Preguntar precio de un producto\n 3. Preguntar marcas de un producto\n 4. Preguntar si hay un producto\n 5. Ver pedido actual\n 6. Confirmar pedido\n 7. Cancelar pedido\n 8. Informacion de la distribuidora\n 9. Ver catalogo (PDFs)\n 10. Ayuda / ejemplos\n- Precio: \"precio cremoso fival\"\n- Marcas: \"marcas de cremoso\"\n- Buscar: \"tenes dulce de leche?\"\n- Pedido: \"agregar 2 cajas de cremoso fival\" [bot]",
+      "ts": 1761430490229
+    },
+    {
+      "role": "user",
+      "content": "hola",
+      "ts": 1761430591520
+    },
+    {
+      "role": "assistant",
+      "content": "Buenas, bienvenido a la distribuidora. Elegi una opcion:\n 1. Crear pedido\n 2. Preguntar precio de un producto\n 3. Preguntar marcas de un producto\n 4. Preguntar si hay un producto\n 5. Ver pedido actual\n 6. Confirmar pedido\n 7. Cancelar pedido\n 8. Informacion de la distribuidora\n 9. Ver catalogo (PDFs)\n 10. Ayuda / ejemplos\n- Precio: \"precio cremoso fival\"\n- Marcas: \"marcas de cremoso\"\n- Buscar: \"tenes dulce de leche?\"\n- Pedido: \"agregar 2 cajas de cremoso fival\" [bot]",
+      "ts": 1761430591524
+    },
+    {
+      "role": "user",
+      "content": "1",
+      "ts": 1761430594674
+    },
+    {
+      "role": "assistant",
+      "content": "Pedido #5 (borrador). Elegi una opcion:\n 1. Agregar producto\n 2. Ver pedido\n 3. Borrar producto\n 4. Confirmar pedido\n 5. Cancelar pedido\n 6. Volver al menu principal [bot]",
+      "ts": 1761430594689
+    },
+    {
+      "role": "user",
+      "content": "1",
+      "ts": 1761430598588
+    },
+    {
+      "role": "assistant",
+      "content": "Decime el producto a agregar. Ej: dulce de leche. O escribi \"volver\" para cancelar. [bot]",
+      "ts": 1761430598590
+    },
+    {
+      "role": "user",
+      "content": "cremoso",
+      "ts": 1761430603260
+    },
+    {
+      "role": "assistant",
+      "content": "1. 119 - Cremoso - CANADA NEGRA | $ 5.499,00 / kg | $ 94.752,00 / caja | ...\n2. 126 - Cremoso - PUNTA DEL AGUA | $ 6.869,00 / kg | $ 115.136,00 / caja | ...\n3. 867 - Cremoso - PAULINA | $ 6.049,00 / kg | $ 5.949,00 / kg (desde 4 horma)\n4. 118 - Cremoso - FIVAL | $ 4.699,00 / kg | $ 84.336,00 / caja | ...\n5. 116 - Cremoso - VALLECITO | $ 4.899,00 / kg | $ 4.799,00 / kg (desde 4 horma) | ...\n6. 3003 - Cremoso Trozado - CANADA NEGRA | $ 6.119,00 / uni\n7. 3076 - Cremoso Trozado - PUNTA DEL AGUA | $ 7.561,00 / uni\n8. 3085 - Cremoso Trozado - VALLECITO | $ 5.339,00 / uni\nResponde con 1-8 o \"mas\".[bot]",
+      "ts": 1761430603438
+    },
+    {
+      "role": "user",
+      "content": "hola",
+      "ts": 1761430802150
+    },
+    {
+      "role": "assistant",
+      "content": "Buenas, bienvenido a la distribuidora. Elegi una opcion:\n 1. Crear pedido\n 2. Preguntar precio de un producto\n 3. Preguntar marcas de un producto\n 4. Preguntar si hay un producto\n 5. Ver pedido actual\n 6. Confirmar pedido\n 7. Cancelar pedido\n 8. Informacion de la distribuidora\n 9. Ver catalogo (PDFs)\n 10. Ayuda / ejemplos\n- Precio: \"precio cremoso fival\"\n- Marcas: \"marcas de cremoso\"\n- Buscar: \"tenes dulce de leche?\"\n- Pedido: \"agregar 2 cajas de cremoso fival\" [bot]",
+      "ts": 1761430802153
+    },
+    {
+      "role": "user",
+      "content": "1",
+      "ts": 1761430807404
+    },
+    {
+      "role": "assistant",
+      "content": "Pedido #5 (borrador). Elegi una opcion:\n 1. Agregar producto\n 2. Ver pedido\n 3. Borrar producto\n 4. Confirmar pedido\n 5. Cancelar pedido\n 6. Volver al menu principal [bot]",
+      "ts": 1761430807416
+    },
+    {
+      "role": "user",
+      "content": "1",
+      "ts": 1761430810433
+    },
+    {
+      "role": "assistant",
+      "content": "Decime el producto a agregar. Ej: dulce de leche. O escribi \"volver\" para cancelar. [bot]",
+      "ts": 1761430810435
+    },
+    {
+      "role": "user",
+      "content": "cremoso",
+      "ts": 1761430812506
+    },
+    {
+      "role": "assistant",
+      "content": "1. 119 - Cremoso - CANADA NEGRA | $ 5.499,00 / kg | $ 94.752,00 / caja | ...\n2. 126 - Cremoso - PUNTA DEL AGUA | $ 6.869,00 / kg | $ 115.136,00 / caja | ...\n3. 867 - Cremoso - PAULINA | $ 6.049,00 / kg | $ 5.949,00 / kg (desde 4 horma)\n4. 118 - Cremoso - FIVAL | $ 4.699,00 / kg | $ 84.336,00 / caja | ...\n5. 116 - Cremoso - VALLECITO | $ 4.899,00 / kg | $ 4.799,00 / kg (desde 4 horma) | ...\n6. 3003 - Cremoso Trozado - CANADA NEGRA | $ 6.119,00 / uni\n7. 3076 - Cremoso Trozado - PUNTA DEL AGUA | $ 7.561,00 / uni\n8. 3085 - Cremoso Trozado - VALLECITO | $ 5.339,00 / uni\nResponde con 1-8 o \"mas\".[bot]",
+      "ts": 1761430812595
+    },
+    {
+      "role": "user",
+      "content": "5",
+      "ts": 1761430831319
+    },
+    {
+      "role": "assistant",
+      "content": "Elegi unidad/presentacion para Cremoso VALLECITO:\n 1. kg $ 4.899,00 (desde 1 horma) | $ 4.799,00 (desde 4 horma) | $ 4.699,00 (desde 20 horma)\n 2. uni $ 5.118,00 | $ 5.339,00\nResponde 1-2 o escribi \"volver\". [bot]",
+      "ts": 1761430831322
+    },
+    {
+      "role": "user",
+      "content": "1",
+      "ts": 1761430837986
+    },
+    {
+      "role": "assistant",
+      "content": "Ingresa la cantidad de horma. Ej: 2. O escribi \"volver\" para cancelar. [bot]",
+      "ts": 1761430837988
+    },
+    {
+      "role": "user",
+      "content": "36",
+      "ts": 1761430845028
+    },
+    {
+      "role": "assistant",
+      "content": "36 horma  Cremoso  VALLECITO  $ 169.164,00. Lo agrego al pedido? si/no. [bot]",
+      "ts": 1761430845031
+    },
+    {
+      "role": "user",
+      "content": "si",
+      "ts": 1761430848866
+    },
+    {
+      "role": "assistant",
+      "content": "Producto agregado al pedido. Parcial: $ 250.236,00. Que desea hacer ahora? [bot]",
+      "ts": 1761430848901
+    },
+    {
+      "role": "assistant",
+      "content": "Pedido #5 (borrador). Elegi una opcion:\n 1. Agregar producto\n 2. Ver pedido\n 3. Borrar producto\n 4. Confirmar pedido\n 5. Cancelar pedido\n 6. Volver al menu principal [bot]",
+      "ts": 1761430849224
+    },
+    {
+      "role": "user",
+      "content": "2",
+      "ts": 1761430860096
+    },
+    {
+      "role": "assistant",
+      "content": "*Pedido #5 (borrador)*\n 4 caja  249  Dulce leche Familiar x 400 gr  TONADITA  $ 20.268,00 / caja  $ 81.072,00\n 36 horma  116  Cremoso  VALLECITO  $ 4.699,00 / kg  $ 169.164,00\nTotal: $ 250.236,00 [bot]",
+      "ts": 1761430860111
+    },
+    {
+      "role": "user",
+      "content": "volver",
+      "ts": 1761430872648
+    },
+    {
+      "role": "assistant",
+      "content": "Pedido #5 (borrador). Elegi una opcion:\n 1. Agregar producto\n 2. Ver pedido\n 3. Borrar producto\n 4. Confirmar pedido\n 5. Cancelar pedido\n 6. Volver al menu principal [bot]",
+      "ts": 1761430872657
+    },
+    {
+      "role": "user",
+      "content": "1",
+      "ts": 1761430878770
+    },
+    {
+      "role": "assistant",
+      "content": "Decime el producto a agregar. Ej: dulce de leche. O escribi \"volver\" para cancelar. [bot]",
+      "ts": 1761430878772
+    },
+    {
+      "role": "user",
+      "content": "jamon",
+      "ts": 1761430891869
+    },
+    {
+      "role": "assistant",
+      "content": "1. 968 - Paleta Jamonada - LA TIROLESA | $ 3.549,00 / kg | $ 65.901,00 / caja | ...\n2. 785 - Salchichon con Jamon - DJ | $ 41.712,00 / caja\n3. 683 - Jamon Cocido Clasico - LA PIAMONTESA | $ 8.199,00 / kg | $ 60.165,00 / caja | ...\n4. 850 - Jamon Cocido Clasico - LARIO | $ 7.799,00 / kg | $ 92.015,00 / caja | ...\n5. 480 - Jamon Cocido Clasico - PALADINI | $ 9.999,00 / kg | $ 128.712,00 / caja | ...\n6. 830 - Jamon Cocido Clasico - DJ | $ 99.105,00 / caja | $ 6.219,00 / kg (desde 2 pieza)\n7. 853 - Jamon Cocido Horneado - LARIO | $ 11.089,00 / kg | $ 78.001,00 / caja\n8. 896 - Jamon de Campo A/V Trozo - PORCACCIONE | $ 12.250,00 / caja\nResponde con 1-8 o \"mas\".[bot]",
+      "ts": 1761430891887
+    },
+    {
+      "role": "user",
+      "content": "mas",
+      "ts": 1761430895640
+    },
+    {
+      "role": "assistant",
+      "content": "1. 1656 - Queso Untable Jamon x 180 gr - TONADITA | $ 15.228,00 / caja\n2. 1089 - Queso Untable Jamon x 190 gr - LA QUESERA | $ 15.252,00 / caja\n3. 562 - Jamon Cocido Oro Rectangular - CUATRO CONDES | $ 8.399,00 / kg | $ 8.299,00 / kg (desde 2 pieza)\n4. 750 - Jamon Crudo Serrano Medio Listo - 254 | $ 16.599,00 / kg | $ 202.397,00 / caja | ...\n5. 551 - Jamon Cocido Oro Bolon con cuero - CUATRO CONDES | $ 8.499,00 / kg | $ 141.360,00 / caja | ...\n6. 455 - Jamon cocido Clasico Rectangular - GRASSETTO | $ 8.998,00 / kg | $ 148.464,00 / caja\n7. 569 - Jamon cocido Clasico Rectangular - SAN TORE | $ 7.559,00 / kg | $ 144.270,00 / caja\n8. 1257 - Mani crocante sabor Jamon x 85 gr - CROPPERS | $ 32.880,00 / caja\nResponde con 1-8 o \"mas\".[bot]",
+      "ts": 1761430895642
+    },
+    {
+      "role": "user",
+      "content": "mas",
+      "ts": 1761430898229
+    },
+    {
+      "role": "assistant",
+      "content": "1. 457 - Jamon Cocido Natural con cuero 1/2 cana - GRASSETTO | $ 10.599,00 / kg | $ 17.666.112,00 / caja | ...\n2. 517 - Jamon Crudo Medio Listo s/h s/c x 2,5 kg - 42 LOS CALVOS | $ 81.414,00 / caja\n3. 357 - Jamon Crudo Medio Garron s/c s/h x 2,5 kg - GRASSETTO | $ 18.889,00 / kg | $ 49.605,00 / caja\n4. 476 - Jamon Crudo Medio Listo s/h - s/c x 2,5 Kg - GRASSETTO | $ 21.169,00 / kg | $ 55.573,00 / caja\nResponde con 1-4 o \"mas\".[bot]",
+      "ts": 1761430898233
+    },
+    {
+      "role": "user",
+      "content": "2",
+      "ts": 1761430901452
+    },
+    {
+      "role": "assistant",
+      "content": "Elegi unidad/presentacion para Jamon Crudo Medio Listo s/h s/c x 2,5 kg 42 LOS CALVOS:\n 1. caja $ 81.414,00\nResponde 1-1 o escribi \"volver\". [bot]",
+      "ts": 1761430901454
+    },
+    {
+      "role": "user",
+      "content": "1",
+      "ts": 1761430905463
+    },
+    {
+      "role": "assistant",
+      "content": "Ingresa la cantidad de caja. Ej: 2. O escribi \"volver\" para cancelar. [bot]",
+      "ts": 1761430905464
+    },
+    {
+      "role": "user",
+      "content": "3",
+      "ts": 1761430917282
+    },
+    {
+      "role": "assistant",
+      "content": "3 caja  Jamon Crudo Medio Listo s/h s/c x 2,5 kg  42 LOS CALVOS  $ 244.242,00. Lo agrego al pedido? si/no. [bot]",
+      "ts": 1761430917283
+    },
+    {
+      "role": "user",
+      "content": "si",
+      "ts": 1761430921165
+    },
+    {
+      "role": "assistant",
+      "content": "Producto agregado al pedido. Parcial: $ 494.478,00. Que desea hacer ahora? [bot]",
+      "ts": 1761430921184
+    },
+    {
+      "role": "assistant",
+      "content": "Pedido #5 (borrador). Elegi una opcion:\n 1. Agregar producto\n 2. Ver pedido\n 3. Borrar producto\n 4. Confirmar pedido\n 5. Cancelar pedido\n 6. Volver al menu principal [bot]",
+      "ts": 1761430921451
+    },
+    {
+      "role": "user",
+      "content": "4",
+      "ts": 1761430926801
+    },
+    {
+      "role": "assistant",
+      "content": "Pedido #5 del 25/10/2025, 01:54:02 confirmado.\n 4 caja  249  Dulce leche Familiar x 400 gr  TONADITA  $ 20.268,00 / caja  $ 81.072,00\n 36 horma  116  Cremoso  VALLECITO  $ 4.699,00 / kg  $ 169.164,00\n 3 caja  517  Jamon Crudo Medio Listo s/h s/c x 2,5 kg  42 LOS CALVOS  $ 81.414,00 / caja  $ 244.242,00\nTotal: $ 494.478,00\nGracias. [bot]",
+      "ts": 1761430926833
+    }
+  ],
+  "5493518015684@c.us": [
+    {
+      "role": "user",
+      "content": "Q busque clientes",
+      "ts": 1761337733670
+    },
+    {
+      "role": "assistant",
+      "content": "No encontre \"q busque clientes\". Proba otra palabra o el codigo.[bot]",
+      "ts": 1761337733690
+    },
+    {
+      "role": "user",
+      "content": "M dijo q hoy sale a buscar",
+      "ts": 1761337737643
+    },
+    {
+      "role": "assistant",
+      "content": "No entendi. Proba con el nombre del producto, o usa !cat.[bot]",
+      "ts": 1761337737645
+    }
+  ],
+  "5493517565643@c.us": [
+    {
+      "role": "user",
+      "content": "Hola",
+      "ts": 1761711234822
+    },
+    {
+      "role": "assistant",
+      "content": "Buenas, bienvenido a la distribuidora. Elegi una opcion:\n 1. Crear pedido\n 2. Preguntar precio de un producto\n 3. Preguntar marcas de un producto\n 4. Preguntar si hay un producto\n 5. Ver pedido actual\n 6. Confirmar pedido\n 7. Cancelar pedido\n 8. Informacion de la distribuidora\n 9. Ver catalogo (PDFs)\n 10. Ayuda / ejemplos\n- Precio: \"precio cremoso fival\"\n- Marcas: \"marcas de cremoso\"\n- Buscar: \"tenes dulce de leche?\"\n- Pedido: \"agregar 2 cajas de cremoso fival\" [bot]",
+      "ts": 1761711234826
+    },
+    {
+      "role": "user",
+      "content": "Qué cremoso tenés?",
+      "ts": 1761711309705
+    },
+    {
+      "role": "assistant",
+      "content": "1. 119 - Cremoso - CANADA NEGRA | $ 5.499,00 / kg | $ 94.752,00 / caja | ...\n2. 126 - Cremoso - PUNTA DEL AGUA | $ 6.869,00 / kg | $ 115.136,00 / caja | ...\n3. 867 - Cremoso - PAULINA | $ 6.049,00 / kg | $ 5.949,00 / kg (desde 4 horma)\n4. 118 - Cremoso - FIVAL | $ 4.699,00 / kg | $ 84.336,00 / caja | ...\n5. 116 - Cremoso - VALLECITO | $ 4.899,00 / kg | $ 4.799,00 / kg (desde 4 horma) | ...\n6. 3003 - Cremoso Trozado - CANADA NEGRA | $ 6.119,00 / uni\n7. 3076 - Cremoso Trozado - PUNTA DEL AGUA | $ 7.561,00 / uni\n8. 3085 - Cremoso Trozado - VALLECITO | $ 5.339,00 / uni\nResponde con 1-8 o \"mas\".[bot]",
+      "ts": 1761711310123
+    },
+    {
+      "role": "user",
+      "content": "Precio de la 66",
+      "ts": 1761711338193
+    },
+    {
+      "role": "assistant",
+      "content": "No encontre \"la 66\". Proba con codigo o nombre. Usa !cat[bot]",
+      "ts": 1761711338243
+    },
+    {
+      "role": "user",
+      "content": "La Salchichas",
+      "ts": 1761711345951
+    },
+    {
+      "role": "assistant",
+      "content": "1. 785 - Salchichon con Jamon - DJ | $ 41.712,00 / caja\n2. 780 - Salchichon Primavera - DJ | $ 41.712,00 / caja\n3. 978 - Salchicha Knackwurst x 3 - NUEVO MUNICH | $ 16.433,00 / uni\n4. 897 - Salchicha Hungara Copetin - NUEVO MUNICH | $ 23.004,00 / uni\n5. 1444 - Salchicha LARGA 6 x 360 gr - C A P | $ 42.000,00 / caja\n6. 498 - Salchicha Viena 6 x 225 gr - PALADINI | $ 44.568,00 / caja\n7. 687 - Salchicha Viena 6 x 190 gr - PANCHIN | $ 24.544,00 / caja\n8. 905 - Salchicha Viena 6 x 190 gr - 66 | $ 14.736,00 / caja\nResponde con 1-8 o \"mas\".[bot]",
+      "ts": 1761711345974
+    },
+    {
+      "role": "user",
+      "content": "Volver",
+      "ts": 1761711372521
+    },
+    {
+      "role": "assistant",
+      "content": "Buenas, bienvenido a la distribuidora. Elegi una opcion:\n 1. Crear pedido\n 2. Preguntar precio de un producto\n 3. Preguntar marcas de un producto\n 4. Preguntar si hay un producto\n 5. Ver pedido actual\n 6. Confirmar pedido\n 7. Cancelar pedido\n 8. Informacion de la distribuidora\n 9. Ver catalogo (PDFs)\n 10. Ayuda / ejemplos\n- Precio: \"precio cremoso fival\"\n- Marcas: \"marcas de cremoso\"\n- Buscar: \"tenes dulce de leche?\"\n- Pedido: \"agregar 2 cajas de cremoso fival\" [bot]",
+      "ts": 1761711372540
+    },
+    {
+      "role": "user",
+      "content": "1",
+      "ts": 1761711382817
+    },
+    {
+      "role": "user",
+      "content": "1",
+      "ts": 1761711819960
+    },
+    {
+      "role": "assistant",
+      "content": "1. 1 - Anchoas en Aceite Marfor lata 40 x 3 filet - MARFOR | $ 23.669,00 / lata | $ 25.164,00 / caja\nResponde con 1-1 o \"mas\".[bot]",
+      "ts": 1761711819992
+    },
+    {
+      "role": "user",
+      "content": "Hola",
+      "ts": 1761711830448
+    },
+    {
+      "role": "assistant",
+      "content": "Buenas, bienvenido a la distribuidora. Elegi una opcion:\n 1. Crear pedido\n 2. Preguntar precio de un producto\n 3. Preguntar marcas de un producto\n 4. Preguntar si hay un producto\n 5. Ver pedido actual\n 6. Confirmar pedido\n 7. Cancelar pedido\n 8. Informacion de la distribuidora\n 9. Ver catalogo (PDFs)\n 10. Ayuda / ejemplos\n- Precio: \"precio cremoso fival\"\n- Marcas: \"marcas de cremoso\"\n- Buscar: \"tenes dulce de leche?\"\n- Pedido: \"agregar 2 cajas de cremoso fival\" [bot]",
+      "ts": 1761711830452
+    },
+    {
+      "role": "user",
+      "content": "1",
+      "ts": 1761711837869
+    },
+    {
+      "role": "assistant",
+      "content": "Pedido #6 (borrador). Elegi una opcion:\n 1. Agregar producto\n 2. Ver pedido\n 3. Borrar producto\n 4. Confirmar pedido\n 5. Cancelar pedido\n 6. Volver al menu principal [bot]",
+      "ts": 1761711837905
+    },
+    {
+      "role": "user",
+      "content": "1",
+      "ts": 1761711843669
+    },
+    {
+      "role": "assistant",
+      "content": "Decime el producto a agregar. Ej: dulce de leche. O escribi \"volver\" para cancelar. [bot]",
+      "ts": 1761711843671
+    },
+    {
+      "role": "user",
+      "content": "3 crudos grasiento\n8 milán tiroles P/F\n4  MILAN TIROLESA P/G\n1 AHUMADA LARIO\n12 jamón cocido tirolesa\n4 bondiolas lario(grandes)\n1c Mortadela económica\n1c milán económico\n3c j.cocido Paladini\n1c Mortadela paladini\n3 mozzarella esperanza\n1 lomo ahumado lario\n1c mayonesa BQB\n50 DISCOS HORNO ECONOMICOS\n25 FREIR ECONOMICO\n3 PACK TOMATE BOTELLA BRIO",
+      "ts": 1761711862952
+    },
+    {
+      "role": "assistant",
+      "content": "No entendi. Proba con el nombre del producto, o usa !cat.[bot]",
+      "ts": 1761711862958
+    },
+    {
+      "role": "user",
+      "content": "Hola me preparan \n2 cremosos pda \n2 barra económico \n1 mortadela Paladini \n1 mortadela común \n2 patita DJ \n1 salchichón primavera \n1 cap \n1 harina leudante \n4 crespón tirolesa \n2 jamonada \n1 jamón tirolesa \n1 sardo pda",
+      "ts": 1761712206796
+    },
+    {
+      "role": "assistant",
+      "content": "No entendi. Proba con el nombre del producto, o usa !cat.[bot]",
+      "ts": 1761712206803
+    }
+  ]
+}
