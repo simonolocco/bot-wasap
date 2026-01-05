@@ -12,7 +12,7 @@ import {
   formatPriceListMessage,
 } from './botMenu';
 import { cancelOrder, createOrder, submitOrder } from './pedidos';
-import { sendCloudMessage, sendCloudTextMessage } from './cloudClient';
+import { sendCloudMessage, sendCloudTextMessage, sendCloudAudio } from './cloudClient';
 
 const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN;
 const PORT = Number(process.env.CLOUD_PORT ?? '4002');
@@ -22,6 +22,7 @@ const FORWARD_ORDER_DISPLAY = process.env.FORWARD_ORDER_DISPLAY ?? `+${FORWARD_O
 
 const app = express();
 app.use(express.json());
+app.use('/static', express.static('public'));
 
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
@@ -129,7 +130,7 @@ async function sendGreetingAndMenu(chatId: string, displayName?: string): Promis
   return true;
 }
 
-async function handleMenuSelection(chatId: string, optionId: MenuOptionId) {
+async function handleMenuSelection(chatId: string, optionId: MenuOptionId, hostBaseUrl: string) {
   let keepMenu = true;
   switch (optionId) {
     case 'horarios':
@@ -140,6 +141,9 @@ async function handleMenuSelection(chatId: string, optionId: MenuOptionId) {
       break;
     case 'lista_precio':
       await sendWhatsAppText(chatId, formatPriceListMessage());
+      // Enviar audio
+      const audioUrl = `${hostBaseUrl}/static/mensaje_bot.ogg`;
+      await sendCloudAudio(chatId, audioUrl).catch(e => console.error('Error enviando audio:', e));
       break;
     case 'hacer_pedido':
       awaitingOrderDetail.add(chatId);
@@ -178,7 +182,7 @@ async function handleMenuSelection(chatId: string, optionId: MenuOptionId) {
   }
 }
 
-async function handleIncomingCloudMessage(message: CloudMessage) {
+async function handleIncomingCloudMessage(message: CloudMessage, hostBaseUrl: string) {
   const chatId = message.from;
   const text = message.text ?? '';
   const optionId = message.selectedOptionId;
@@ -258,7 +262,7 @@ async function handleIncomingCloudMessage(message: CloudMessage) {
   }
 
   if (optionId) {
-    await handleMenuSelection(chatId, optionId);
+    await handleMenuSelection(chatId, optionId, hostBaseUrl);
   }
 }
 
@@ -294,7 +298,10 @@ app.post('/webhook', async (req, res) => {
           }
         }
         if (incoming.text !== undefined || incoming.selectedOptionId) {
-          await handleIncomingCloudMessage(incoming);
+          const host = req.get('host') || `localhost:${PORT}`;
+          const protocol = host.includes('localhost') ? 'http' : 'https';
+          const hostBaseUrl = `${protocol}://${host}`;
+          await handleIncomingCloudMessage(incoming, hostBaseUrl);
         } else {
           console.warn('[webhook] Mensaje no soportado recibido via Cloud API.');
         }

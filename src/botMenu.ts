@@ -37,7 +37,7 @@ export const BUSINESS_SCHEDULE = [
   '*Sábado:* 08:15 - 12:45',
   '*Domingo:* Cerrado',
 ].join('\n');
-export const BUSINESS_ADDRESS = '📍 *Dirección*\n━━━━━━━━━━━━\nAv. Juan B. Justo 5048\nCórdoba, Argentina\n\n🗺️ *Ver en mapa:*\nhttps://maps.app.goo.gl/gCfNiJEz9Q7k4LzS6';
+export const BUSINESS_ADDRESS = '📍 *Dirección*\n━━━━━━━━━━━━\nAv. Juan B. Justo00000 5048\nCórdoba, Argentina\n\n🗺️ *Ver en mapa:*\nhttps://maps.app.goo.gl/gCfNiJEz9Q7k4LzS6';
 
 export const MENU_PROMPT = '¿En qué podemos ayudarte hoy? 👇';
 export const MENU_SECTION_TITLE = 'Seleccioná una opción';

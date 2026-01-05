@@ -29,11 +29,24 @@ export async function sendCloudMessage(payload: Record<string, unknown>) {
   }
 }
 
+
 export async function sendCloudTextMessage(to: string, body: string) {
   console.log(`[cloud-client] Enviando mensaje a ${to}: ${body}`);
   await sendCloudMessage({
     messaging_product: 'whatsapp',
     to,
     text: { body },
+  });
+}
+
+export async function sendCloudAudio(to: string, audioUrl: string, caption?: string) {
+  console.log(`[cloud-client] Enviando audio a ${to}: ${audioUrl}`);
+  await sendCloudMessage({
+    messaging_product: 'whatsapp',
+    to,
+    type: 'audio',
+    audio: {
+      link: audioUrl,
+    },
   });
 }
