@@ -5,7 +5,7 @@ node_modules/
 auth_info/
 
 # Downloaded files output folder
-media/
+/media/
 
 # Configuration values
 .env
@@ -21,4 +21,3 @@ pnpm-debug.log*
 # Database & Scratch files
 data/
 scratch/
-
