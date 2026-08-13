@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import sharp from 'sharp';
 import { DeleteObjectCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { downloadCloudMedia } from '../cloudClient';
 import { attachMediaAssetToMessage, completeJob, createMediaAsset, getMediaAssetByMessageId, getMediaAssetByProviderMediaId, retryJob, setMessageMediaStatus, updateMediaAsset } from '../db/repository';
@@ -118,6 +119,9 @@ export async function storeMedia(buffer: Buffer, mimeType: string, filename: str
   await fs.mkdir(path.dirname(target), { recursive: true });
   await fs.writeFile(target, buffer, { flag: 'wx' });
   try {
+    const dimensions: { width?: number; height?: number } = mimeType.startsWith('image/')
+      ? await sharp(buffer, { limitInputPixels: 80_000_000 }).metadata().then(meta => ({ width: meta.width, height: meta.height })).catch(() => ({}))
+      : {};
     if (mediaDriver === 's3') {
       const { client, bucket } = requireS3();
       await client.send(new PutObjectCommand({
@@ -133,6 +137,8 @@ export async function storeMedia(buffer: Buffer, mimeType: string, filename: str
       sizeBytes: buffer.length,
       sha256: crypto.createHash('sha256').update(buffer).digest('hex'),
       status: 'ready',
+      width: dimensions.width,
+      height: dimensions.height,
     });
   } catch (error) {
     await fs.rm(target, { force: true });
@@ -140,6 +146,30 @@ export async function storeMedia(buffer: Buffer, mimeType: string, filename: str
       const { client, bucket } = requireS3();
       await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: objectKey(key) })).catch(() => undefined);
     }
+    throw error;
+  }
+}
+
+export async function ensureMediaThumbnail(storageKey: string, width: 240 | 480 | 960) {
+  const source = await ensureMediaCached(storageKey);
+  const thumbnailKey = `.thumbnails/${storageKey}.${width}.webp`;
+  const target = getMediaStoragePath(thumbnailKey);
+  try { await fs.access(target); return target; } catch { /* cache miss */ }
+  await fs.mkdir(path.dirname(target), { recursive: true });
+  const temporary = `${target}.${crypto.randomUUID()}.tmp`;
+  try {
+    await sharp(source, { limitInputPixels: 80_000_000, animated: false })
+      .rotate()
+      .resize({ width, height: width, fit: 'inside', withoutEnlargement: true })
+      .webp({ quality: 78, effort: 4 })
+      .toFile(temporary);
+    try { await fs.rename(temporary, target); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      await fs.rm(temporary, { force: true });
+    }
+    return target;
+  } catch (error) {
+    await fs.rm(temporary, { force: true }).catch(() => undefined);
     throw error;
   }
 }

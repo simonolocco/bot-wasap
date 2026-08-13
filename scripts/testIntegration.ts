@@ -1,8 +1,11 @@
 import 'dotenv/config';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
+import sharp from 'sharp';
 import { closePool, query } from '../src/db/pool';
-import { markOutgoingSent, prepareOutgoingMessage, recordMessageStatus, storeIncomingEvent } from '../src/db/repository';
+import { attachMediaAssetToMessage, listMessages, markOutgoingSent, prepareManualMessage, prepareOutgoingMessage, recordMessageStatus, storeIncomingEvent } from '../src/db/repository';
+import { ensureMediaThumbnail, getMediaStoragePath, storeMedia } from '../src/services/mediaStorage';
 
 function assertQaDatabase() {
   const url = process.env.DATABASE_URL;
@@ -19,6 +22,7 @@ async function main() {
   const run = crypto.randomUUID().replace(/-/g, '').slice(0, 12);
   const phone = `549110${run.replace(/\D/g, '').padEnd(7, '7').slice(0, 7)}`;
   const prefix = `qa-int-${run}`;
+  let storedImage: Awaited<ReturnType<typeof storeMedia>> | null = null;
   try {
     const base = { phone, profileName: `QA ${run}`, body: 'hola', messageType: 'text', payload: { qa: run } };
     const first = await storeIncomingEvent({ ...base, providerMessageId: `${prefix}-duplicate` });
@@ -54,6 +58,32 @@ async function main() {
     const outgoing = await prepareOutgoingMessage(contact.rows[0].id, `${prefix}-outgoing`, 'respuesta QA');
     const providerId = `${prefix}-provider-out`;
     await markOutgoingSent(outgoing.id, providerId);
+    const manualReply = await prepareManualMessage(contact.rows[0].id, `${prefix}-manual-reply`, 'respuesta citada', 'text', undefined, outgoing.id);
+    const storedManualQuote = await query<{ provider: string | null }>('SELECT quoted_provider_message_id AS provider FROM messages WHERE id=$1', [manualReply.id]);
+    assert.equal(storedManualQuote.rows[0].provider, providerId, 'una respuesta manual debe conservar el id externo citado');
+    await storeIncomingEvent({
+      ...base,
+      body: 'respuesta del cliente a un mensaje anterior',
+      providerMessageId: `${prefix}-incoming-reply`,
+      quotedProviderMessageId: providerId,
+    });
+    const history = await listMessages(contact.rows[0].id, undefined, 100);
+    const incomingReply = history.items.find(message => message.providerMessageId === `${prefix}-incoming-reply`);
+    assert.equal(incomingReply?.quoteMessageId, outgoing.id);
+    assert.equal(incomingReply?.quotedMessage?.body, 'respuesta QA');
+    assert.equal(incomingReply?.quotedMessage?.providerMessageId, providerId);
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAABAAAAAMCAYAAABr5z2BAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAGklEQVQokWPgb8n5TwlmGDXg/2gY5AyHMAAA1xd+kP6IR7AAAAAASUVORK5CYII=', 'base64');
+    storedImage = await storeMedia(png, 'image/png', `${prefix}.png`);
+    await attachMediaAssetToMessage(outgoing.id, storedImage.id, 'ready');
+    const thumbnailPath = await ensureMediaThumbnail(storedImage.storageKey, 240);
+    const thumbnail = await sharp(thumbnailPath).metadata();
+    assert.equal(thumbnail.format, 'webp');
+    assert.equal(thumbnail.width, 16);
+    assert.equal(thumbnail.height, 12);
+    const historyWithImage = await listMessages(contact.rows[0].id, undefined, 100);
+    const imageMessage = historyWithImage.items.find(message => message.id === outgoing.id);
+    assert.equal(imageMessage?.mediaWidth, 16);
+    assert.equal(imageMessage?.mediaHeight, 12);
     await recordMessageStatus(providerId, 'read', null, { qa: true });
     await recordMessageStatus(providerId, 'delivered', null, { qa: true });
     const delivery = await query<{ status: string }>('SELECT delivery_status AS status FROM messages WHERE id=$1', [outgoing.id]);
@@ -65,6 +95,11 @@ async function main() {
   } finally {
     await query('DELETE FROM contacts WHERE phone=$1', [phone]).catch(() => undefined);
     await query('DELETE FROM webhook_events WHERE provider_message_id LIKE $1', [`${prefix}%`]).catch(() => undefined);
+    if (storedImage) {
+      await query('DELETE FROM media_assets WHERE id=$1', [storedImage.id]).catch(() => undefined);
+      await fs.rm(getMediaStoragePath(storedImage.storageKey), { force: true }).catch(() => undefined);
+      await fs.rm(getMediaStoragePath(`.thumbnails/${storedImage.storageKey}.240.webp`), { force: true }).catch(() => undefined);
+    }
     await closePool();
   }
 }

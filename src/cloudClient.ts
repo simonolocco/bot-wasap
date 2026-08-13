@@ -128,21 +128,32 @@ export async function downloadCloudMedia(providerMediaId: string) {
   return { buffer, mimeType: metadata.data.mime_type ?? String(file.headers['content-type'] ?? 'application/octet-stream'), size: buffer.length };
 }
 
-export function buildMediaPayload(to: string, mediaId: string, mediaType: 'image' | 'document' | 'audio' | 'video', caption?: string, filename?: string) {
+export function buildMediaPayload(to: string, mediaId: string, mediaType: 'image' | 'document' | 'audio' | 'video', caption?: string, filename?: string, replyToProviderMessageId?: string | null) {
   const media: Record<string, unknown> = { id: mediaId };
   if (caption && mediaType !== 'audio') media.caption = caption;
   if (filename && mediaType === 'document') media.filename = filename;
-  return { messaging_product: 'whatsapp', to, type: mediaType, [mediaType]: media };
+  return {
+    messaging_product: 'whatsapp',
+    to,
+    type: mediaType,
+    ...(replyToProviderMessageId ? { context: { message_id: replyToProviderMessageId } } : {}),
+    [mediaType]: media,
+  };
 }
 
 
-export async function sendCloudTextMessage(to: string, body: string) {
-  console.log(`[cloud-client] Enviando mensaje a ${maskedPhone(to)} (${body.length} caracteres)`);
-  return sendCloudMessage({
+export function buildTextPayload(to: string, body: string, replyToProviderMessageId?: string | null) {
+  return {
     messaging_product: 'whatsapp',
     to,
+    ...(replyToProviderMessageId ? { context: { message_id: replyToProviderMessageId } } : {}),
     text: { body },
-  });
+  };
+}
+
+export async function sendCloudTextMessage(to: string, body: string, replyToProviderMessageId?: string | null) {
+  console.log(`[cloud-client] Enviando mensaje a ${maskedPhone(to)} (${body.length} caracteres)`);
+  return sendCloudMessage(buildTextPayload(to, body, replyToProviderMessageId));
 }
 
 export async function sendCloudAudio(to: string, audioUrl: string, caption?: string) {

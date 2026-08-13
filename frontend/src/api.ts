@@ -13,6 +13,29 @@ export async function api<T = any>(url: string, options: RequestInit = {}): Prom
   return data as T;
 }
 
+type CacheEntry = { expiresAt: number; value?: unknown; pending?: Promise<unknown> };
+const responseCache = new Map<string, CacheEntry>();
+
+export function cachedApi<T = any>(url: string, ttlMs = 30_000): Promise<T> {
+  const now = Date.now();
+  const cached = responseCache.get(url);
+  if (cached?.value !== undefined && cached.expiresAt > now) return Promise.resolve(cached.value as T);
+  if (cached?.pending) return cached.pending as Promise<T>;
+  const pending = api<T>(url).then(value => {
+    responseCache.set(url, { value, expiresAt: Date.now() + ttlMs });
+    return value;
+  }).catch(error => {
+    responseCache.delete(url);
+    throw error;
+  });
+  responseCache.set(url, { expiresAt: now + ttlMs, pending });
+  return pending;
+}
+
+export function invalidateApi(prefix = '') {
+  for (const key of responseCache.keys()) if (!prefix || key.startsWith(prefix)) responseCache.delete(key);
+}
+
 export function formatDate(value?: string | null, withDate = false) {
   if (!value) return '—';
   return new Date(value).toLocaleString('es-AR', withDate ? { dateStyle: 'medium', timeStyle: 'short' } : { timeStyle: 'short' });
@@ -28,4 +51,8 @@ export function shortText(value?: string | null, length = 72) {
 
 export function mediaUrl(messageId: string, download = false) {
   return `/api/messages/${encodeURIComponent(messageId)}/media${download ? '/download' : ''}`;
+}
+
+export function thumbnailUrl(messageId: string, width: 240 | 480 | 960 = 480) {
+  return `/api/messages/${encodeURIComponent(messageId)}/media/thumbnail?w=${width}`;
 }

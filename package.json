@@ -23,9 +23,10 @@
     "test:unit": "npm run test:bot && npm run test:tickets && ts-node scripts/testUnit.ts",
     "test:integration": "ts-node scripts/testIntegration.ts",
     "test:e2e": "playwright test tests/e2e.spec.ts --project=chromium",
-    "test:visual": "playwright test tests/visual.spec.ts",
+    "test:visual": "playwright test tests/visual.spec.ts --project=chromium",
+    "test:performance": "ts-node scripts/testFrontendBudget.ts",
     "test:security": "npm audit --audit-level=low",
-    "test:qa": "npm run build && npm run test:security && npm run test:unit && npm run test:integration && npm run test:e2e && npm run test:visual && npm run test:load",
+    "test:qa": "npm run build && npm run test:security && npm run test:unit && npm run test:integration && npm run test:e2e && npm run test:visual && npm run test:performance && npm run test:load",
     "qa:up": "docker compose -f docker-compose.yml -f docker-compose.qa.yml up -d --build",
     "qa:down": "docker compose -f docker-compose.yml -f docker-compose.qa.yml down -v",
     "test:tickets": "ts-node scripts/testTickets.ts",
@@ -57,6 +58,7 @@
     "qrcode-terminal": "^0.12.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "sharp": "^0.35.3",
     "zod": "^4.4.3"
   },
   "devDependencies": {

@@ -56,7 +56,23 @@ export type Message = {
   mediaFilename?: string | null;
   mediaSize?: number | null;
   mediaCaption?: string | null;
+  mediaWidth?: number | null;
+  mediaHeight?: number | null;
   quoteMessageId?: string | null;
+  quotedProviderMessageId?: string | null;
+  quotedMessage?: {
+    id: string | null;
+    providerMessageId: string | null;
+    direction: 'incoming' | 'outgoing' | null;
+    body: string | null;
+    messageType: string | null;
+    mediaMimeType: string | null;
+    mediaFilename: string | null;
+    mediaCaption: string | null;
+    mediaStatus: 'pending' | 'ready' | 'failed' | null;
+    mediaWidth: number | null;
+    mediaHeight: number | null;
+  } | null;
   error?: string | null;
 };
 

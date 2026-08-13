@@ -7,7 +7,7 @@ export default defineConfig({
   base: '/',
   build: {
     outDir: '../public/admin',
-    emptyOutDir: false,
+    emptyOutDir: true,
     sourcemap: false,
   },
 });

@@ -13,7 +13,7 @@ import { pool, query } from './db/pool';
 import { audit, claimOrderTicketFallback, claimOrderTicketFallbackById, closeSupportTicket, dashboard, deleteTemplate, getConversation, getContactById, getMediaAssetById, getMediaAssetByMessageId, getMessageById, getTicketById, listAudit, listContacts, listConversations, listMessages, listOrders, listTemplates, listTickets, markConversationRead, markOutgoingFailed, markOutgoingSent, prepareManualMessage, prepareOutgoingMessage, previewCampaignSegment, recordMessageStatus, retryOutgoingMessage, saveTemplate, setBotPaused, storeIncomingEvent, updateContact, updateMediaAsset, updateOrder, type SupportTicket } from './db/repository';
 import { orderWindowExpired, sendOrderTicketFallback } from './services/orderTicketFallback';
 import { MENU_BUTTON_LABEL, MENU_HEADER_TEXT, MENU_PROMPT, buildMenuListSections, ticketClosureMessage } from './messageCatalog';
-import { checkMediaStorage, ensureMediaCached, isSafeUpload, markMediaUploadFailed, storeMedia } from './services/mediaStorage';
+import { checkMediaStorage, ensureMediaCached, ensureMediaThumbnail, isSafeUpload, markMediaUploadFailed, storeMedia } from './services/mediaStorage';
 
 declare global { namespace Express { interface Request { rawBody?: Buffer; } } }
 declare module 'express-session' { interface SessionData { user?: string; } }
@@ -66,13 +66,14 @@ function verifyMetaSignature(req: Request) {
   const expected = `sha256=${crypto.createHmac('sha256', APP_SECRET).update(req.rawBody).digest('hex')}`;
   return expected.length === received.length && crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(received));
 }
-type ParsedIncoming = { providerMessageId: string; from: string; profileName?: string; text?: string; selectedOptionId?: string; buttonReplyId?: string; type: string; sourceTimestamp?: number; media?: { id?: string; mimeType?: string; filename?: string; caption?: string } };
+type ParsedIncoming = { providerMessageId: string; from: string; profileName?: string; text?: string; selectedOptionId?: string; buttonReplyId?: string; type: string; sourceTimestamp?: number; quotedProviderMessageId?: string; media?: { id?: string; mimeType?: string; filename?: string; caption?: string } };
 function parseIncoming(message: any, profileName?: string): ParsedIncoming | null {
   if (!message?.id || !message?.from) return null;
   const providerMessageId = String(message.id).slice(0, 512);
   const from = String(message.from).replace(/\D/g, '');
   if (!providerMessageId || from.length < 6 || from.length > 20) return null;
   const incoming: ParsedIncoming = { providerMessageId, from, profileName: profileName?.slice(0, 200), type: String(message.type ?? 'unknown').slice(0, 40) };
+  if (message.context?.id) incoming.quotedProviderMessageId = String(message.context.id).slice(0, 512);
   const timestamp = Number(message.timestamp);
   if (Number.isFinite(timestamp) && timestamp > 0) incoming.sourceTimestamp = timestamp > 10_000_000_000 ? timestamp : timestamp * 1000;
   if (message.type === 'text') incoming.text = String(message.text?.body ?? '').slice(0, 4096);
@@ -97,7 +98,7 @@ app.post('/webhook', async (req, res) => {
       for (const message of Array.isArray(value?.messages) ? value.messages : []) {
         const incoming = parseIncoming(message, profileName);
         if (!incoming) continue;
-        await storeIncomingEvent({ providerMessageId: incoming.providerMessageId, phone: incoming.from, profileName: incoming.profileName, body: incoming.text || `[Mensaje ${incoming.type} recibido]`, messageType: incoming.type, sourceTimestamp: incoming.sourceTimestamp, media: incoming.media, payload: { incoming } });
+        await storeIncomingEvent({ providerMessageId: incoming.providerMessageId, phone: incoming.from, profileName: incoming.profileName, body: incoming.text || `[Mensaje ${incoming.type} recibido]`, messageType: incoming.type, sourceTimestamp: incoming.sourceTimestamp, quotedProviderMessageId: incoming.quotedProviderMessageId, media: incoming.media, payload: { incoming } });
       }
     }
     return res.sendStatus(200);
@@ -230,6 +231,7 @@ async function sendMediaFile(req: Request, res: Response, download: boolean) {
   try {
     const filePath = await ensureMediaCached(asset.storageKey);
     res.type(asset.mimeType);
+    res.setHeader('Cache-Control', 'private, max-age=300, must-revalidate');
     const safeInline = /^(image\/(jpeg|png|gif|webp|heic|heif)|audio\/(mpeg|ogg|wav|x-wav|mp4|aac)|application\/pdf)$/i.test(asset.mimeType);
     res.setHeader('Content-Disposition', `${download || !safeInline ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(asset.filename)}`);
     return res.sendFile(filePath);
@@ -237,6 +239,21 @@ async function sendMediaFile(req: Request, res: Response, download: boolean) {
 }
 app.get('/api/messages/:id/media', (req, res) => sendMediaFile(req, res, false));
 app.get('/api/messages/:id/media/download', (req, res) => sendMediaFile(req, res, true));
+app.get('/api/messages/:id/media/thumbnail', async (req, res) => {
+  const width = Number(req.query.w ?? 480);
+  if (![240, 480, 960].includes(width)) return res.status(400).json({ error: 'Tamaño de miniatura inválido.' });
+  const asset = await getMediaAssetByMessageId(req.params.id);
+  if (!asset || asset.status !== 'ready' || !asset.mimeType.startsWith('image/')) return res.status(404).json({ error: 'La imagen todavía no está disponible.' });
+  try {
+    const filePath = await ensureMediaThumbnail(asset.storageKey, width as 240 | 480 | 960);
+    res.type('image/webp');
+    res.setHeader('Cache-Control', 'private, max-age=300, must-revalidate');
+    res.setHeader('Content-Disposition', 'inline');
+    return res.sendFile(filePath);
+  } catch {
+    return res.status(415).json({ error: 'No se pudo preparar la vista previa de esta imagen.' });
+  }
+});
 app.post('/api/media', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'Seleccioná un archivo.' });
   if (!isSafeUpload(req.file.buffer, req.file.mimetype)) return res.status(415).json({ error: 'El contenido no coincide con un formato de imagen, audio, PDF u Office permitido.' });
@@ -270,7 +287,9 @@ app.post('/api/conversations/:id/messages', async (req, res) => {
   const body = parsed.data.body.trim() || parsed.data.caption || `[${messageType}]`;
   const stored = await prepareManualMessage(req.params.id, `manual:${crypto.randomUUID()}`, body, messageType, mediaId ? { id: mediaId, assetId: asset?.id, mimeType: asset?.mimeType ?? parsed.data.mediaMimeType, filename: asset?.filename ?? parsed.data.mediaFilename, size: asset?.sizeBytes ?? parsed.data.mediaSize, caption: parsed.data.caption } : undefined, parsed.data.quoteMessageId);
   try {
-    const providerId = mediaId ? await sendCloudMessage(buildMediaPayload(contact.phone, mediaId, parsed.data.mediaType!, parsed.data.caption, asset?.filename ?? parsed.data.mediaFilename)) : await sendCloudTextMessage(contact.phone, parsed.data.body.trim());
+    const providerId = mediaId
+      ? await sendCloudMessage(buildMediaPayload(contact.phone, mediaId, parsed.data.mediaType!, parsed.data.caption, asset?.filename ?? parsed.data.mediaFilename, quote?.providerMessageId))
+      : await sendCloudTextMessage(contact.phone, parsed.data.body.trim(), quote?.providerMessageId);
     await markOutgoingSent(stored.id, providerId);
     await audit(req.session.user ?? 'admin', 'manual_message_sent', req.params.id, stored.id, { messageType, assetId: asset?.id ?? null, quoteMessageId: parsed.data.quoteMessageId ?? null });
     return res.status(201).json({ id: stored.id, deliveryStatus: 'sent' });
@@ -288,7 +307,10 @@ app.post('/api/messages/:id/retry', async (req, res) => {
   const reset = await retryOutgoingMessage(req.params.id);
   if (!reset) return res.status(409).json({ error: 'El mensaje ya no está disponible para reintento.' });
   try {
-    const providerId = mediaId ? await sendCloudMessage(buildMediaPayload(message.phone, mediaId, message.messageType as 'image' | 'document' | 'audio', message.mediaCaption ?? undefined, asset?.filename ?? message.mediaFilename ?? undefined)) : await sendCloudTextMessage(message.phone, message.body);
+    const quote = message.quoteMessageId ? await getMessageById(message.quoteMessageId) : null;
+    const providerId = mediaId
+      ? await sendCloudMessage(buildMediaPayload(message.phone, mediaId, message.messageType as 'image' | 'document' | 'audio', message.mediaCaption ?? undefined, asset?.filename ?? message.mediaFilename ?? undefined, quote?.providerMessageId ?? message.quotedProviderMessageId))
+      : await sendCloudTextMessage(message.phone, message.body, quote?.providerMessageId ?? message.quotedProviderMessageId);
     await markOutgoingSent(message.id, providerId);
     await audit(req.session.user ?? 'admin', 'manual_message_retried', message.contactId, message.id);
     return res.json({ id: message.id, deliveryStatus: 'sent' });

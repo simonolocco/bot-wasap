@@ -13,8 +13,13 @@ export type Contact = {
 export type Message = {
   id: string; direction: 'incoming' | 'outgoing'; body: string; messageType: string; createdAt: string;
   providerMessageId: string | null; deliveryStatus?: 'pending' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed' | null; mediaId?: string | null;
-  mediaAssetId?: string | null; mediaStatus?: 'pending' | 'ready' | 'failed' | null; quoteMessageId?: string | null;
-  mediaMimeType?: string | null; mediaFilename?: string | null; mediaSize?: number | null; mediaCaption?: string | null; error?: string | null;
+  mediaAssetId?: string | null; mediaStatus?: 'pending' | 'ready' | 'failed' | null; quoteMessageId?: string | null; quotedProviderMessageId?: string | null;
+  mediaMimeType?: string | null; mediaFilename?: string | null; mediaSize?: number | null; mediaCaption?: string | null; mediaWidth?: number | null; mediaHeight?: number | null; error?: string | null;
+  quotedMessage?: {
+    id: string | null; providerMessageId: string | null; direction: 'incoming' | 'outgoing' | null;
+    body: string | null; messageType: string | null; mediaMimeType: string | null; mediaFilename: string | null;
+    mediaCaption: string | null; mediaStatus: 'pending' | 'ready' | 'failed' | null; mediaWidth: number | null; mediaHeight: number | null;
+  } | null;
 };
 export type MediaAsset = {
   id: string; providerMediaId: string | null; storageKey: string; mimeType: string; filename: string;
@@ -71,7 +76,7 @@ export async function upsertContact(client: PoolClient, phoneInput: string, prof
 
 export async function storeIncomingEvent(input: {
   providerMessageId: string; phone: string; profileName?: string; body: string; messageType: string; payload: unknown;
-  sourceTimestamp?: number;
+  sourceTimestamp?: number; quotedProviderMessageId?: string;
   media?: { id?: string; mimeType?: string; filename?: string; size?: number; caption?: string };
 }) {
   return transaction(async client => {
@@ -83,9 +88,12 @@ export async function storeIncomingEvent(input: {
     await client.query(`INSERT INTO bot_sessions (contact_id, display_name) VALUES ($1, $2)
       ON CONFLICT (contact_id) DO UPDATE SET display_name = CASE WHEN bot_sessions.display_name = '' THEN EXCLUDED.display_name ELSE bot_sessions.display_name END, updated_at = now()`,
       [contact.id, input.profileName?.trim() ?? '']);
-    const insertedMessage = await client.query<{ id: string }>(`INSERT INTO messages (contact_id, direction, body, message_type, provider_message_id, media_id, media_mime_type, media_filename, media_size, media_caption, media_status)
-      VALUES ($1, 'incoming', $2, $3, $4, $5, $6, $7, $8, $9, CASE WHEN $5::text IS NULL THEN NULL ELSE 'pending' END) RETURNING id`, [contact.id, input.body, input.messageType, input.providerMessageId,
-      input.media?.id ?? null, input.media?.mimeType ?? null, input.media?.filename ?? null, input.media?.size ?? null, input.media?.caption ?? null]);
+    const quoted = input.quotedProviderMessageId
+      ? await client.query<{ id: string }>('SELECT id FROM messages WHERE contact_id=$1 AND provider_message_id=$2 LIMIT 1', [contact.id, input.quotedProviderMessageId])
+      : null;
+    const insertedMessage = await client.query<{ id: string }>(`INSERT INTO messages (contact_id, direction, body, message_type, provider_message_id, media_id, media_mime_type, media_filename, media_size, media_caption, media_status, quote_message_id, quoted_provider_message_id)
+      VALUES ($1, 'incoming', $2, $3, $4, $5, $6, $7, $8, $9, CASE WHEN $5::text IS NULL THEN NULL ELSE 'pending' END, $10, $11) RETURNING id`, [contact.id, input.body, input.messageType, input.providerMessageId,
+      input.media?.id ?? null, input.media?.mimeType ?? null, input.media?.filename ?? null, input.media?.size ?? null, input.media?.caption ?? null, quoted?.rows[0]?.id ?? null, input.quotedProviderMessageId ?? null]);
     await client.query(`INSERT INTO jobs (type, contact_id, webhook_event_id) VALUES ('process_incoming', $1, $2)`, [contact.id, event.rows[0].id]);
     if (input.media?.id && ['image', 'document', 'audio', 'video'].includes(input.messageType)) {
       await client.query(`INSERT INTO jobs (type, contact_id, message_id, provider_media_id, media_filename, media_mime_type)
@@ -194,23 +202,23 @@ export async function getContactById(contactId: string) {
 
 export async function getIncomingMessage(providerMessageId: string) {
   const result = await query<Message>(`SELECT id, direction, body, message_type AS "messageType", created_at AS "createdAt", provider_message_id AS "providerMessageId",
-    delivery_status AS "deliveryStatus", media_id AS "mediaId", media_mime_type AS "mediaMimeType", media_filename AS "mediaFilename", media_size AS "mediaSize", media_caption AS "mediaCaption", error
+    delivery_status AS "deliveryStatus", media_id AS "mediaId", quote_message_id AS "quoteMessageId", quoted_provider_message_id AS "quotedProviderMessageId", media_mime_type AS "mediaMimeType", media_filename AS "mediaFilename", media_size AS "mediaSize", media_caption AS "mediaCaption", error
     FROM messages WHERE provider_message_id = $1`, [providerMessageId]);
   return result.rows[0] ?? null;
 }
 
 export async function getMessageById(messageId: string) {
   const result = await query<Message & { contactId: string; phone: string }>(`SELECT m.id, m.contact_id AS "contactId", c.phone, m.direction, m.body, m.message_type AS "messageType", m.created_at AS "createdAt", m.provider_message_id AS "providerMessageId",
-    m.delivery_status AS "deliveryStatus", m.media_id AS "mediaId", m.media_asset_id AS "mediaAssetId", m.media_status AS "mediaStatus", m.quote_message_id AS "quoteMessageId", m.media_mime_type AS "mediaMimeType", m.media_filename AS "mediaFilename", m.media_size AS "mediaSize", m.media_caption AS "mediaCaption", m.error
+    m.delivery_status AS "deliveryStatus", m.media_id AS "mediaId", m.media_asset_id AS "mediaAssetId", m.media_status AS "mediaStatus", m.quote_message_id AS "quoteMessageId", m.quoted_provider_message_id AS "quotedProviderMessageId", m.media_mime_type AS "mediaMimeType", m.media_filename AS "mediaFilename", m.media_size AS "mediaSize", m.media_caption AS "mediaCaption", m.error
     FROM messages m JOIN contacts c ON c.id=m.contact_id WHERE m.id=$1`, [messageId]);
   return result.rows[0] ?? null;
 }
 
-export async function createMediaAsset(input: { storageKey: string; mimeType: string; filename: string; sizeBytes?: number; sha256?: string; providerMediaId?: string; status?: 'pending' | 'ready' }) {
-  const result = await query<MediaAsset>(`INSERT INTO media_assets (provider_media_id, storage_key, mime_type, filename, size_bytes, sha256, status)
-    VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, provider_media_id AS "providerMediaId", storage_key AS "storageKey", mime_type AS "mimeType", filename,
+export async function createMediaAsset(input: { storageKey: string; mimeType: string; filename: string; sizeBytes?: number; sha256?: string; providerMediaId?: string; status?: 'pending' | 'ready'; width?: number; height?: number }) {
+  const result = await query<MediaAsset>(`INSERT INTO media_assets (provider_media_id, storage_key, mime_type, filename, size_bytes, sha256, status, width, height)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id, provider_media_id AS "providerMediaId", storage_key AS "storageKey", mime_type AS "mimeType", filename,
       size_bytes AS "sizeBytes", sha256, status, error, width, height, duration_ms AS "durationMs"`,
-    [input.providerMediaId ?? null, input.storageKey, input.mimeType, input.filename, input.sizeBytes ?? null, input.sha256 ?? null, input.status ?? 'pending']);
+    [input.providerMediaId ?? null, input.storageKey, input.mimeType, input.filename, input.sizeBytes ?? null, input.sha256 ?? null, input.status ?? 'pending', input.width ?? null, input.height ?? null]);
   return result.rows[0];
 }
 
@@ -293,8 +301,8 @@ export async function claimOutgoingMessage(messageId: string) {
 
 export async function prepareManualMessage(contactId: string, key: string, body: string, messageType: string, media?: { id?: string; assetId?: string; mimeType?: string; filename?: string; size?: number; caption?: string }, quoteMessageId?: string | null) {
   const result = await query<{ id: string; delivery_status: string | null }>(`
-    INSERT INTO messages (contact_id, direction, body, message_type, outbound_key, delivery_status, media_id, media_asset_id, media_status, quote_message_id, media_mime_type, media_filename, media_size, media_caption)
-     VALUES ($1, 'outgoing', $2, $3, $4, 'pending', $5, $6, CASE WHEN $6::uuid IS NULL THEN NULL ELSE 'ready' END, $10, $7, $8, $9, $11)
+    INSERT INTO messages (contact_id, direction, body, message_type, outbound_key, delivery_status, media_id, media_asset_id, media_status, quote_message_id, quoted_provider_message_id, media_mime_type, media_filename, media_size, media_caption)
+     VALUES ($1, 'outgoing', $2, $3, $4, 'pending', $5, $6, CASE WHEN $6::uuid IS NULL THEN NULL ELSE 'ready' END, $10, (SELECT provider_message_id FROM messages WHERE id=$10 AND contact_id=$1), $7, $8, $9, $11)
     ON CONFLICT (outbound_key) DO UPDATE SET body = messages.body
     RETURNING id, delivery_status`, [contactId, body, messageType, key, media?.id ?? null, media?.assetId ?? null, media?.mimeType ?? null, media?.filename ?? null, media?.size ?? null, quoteMessageId ?? null, media?.caption ?? null]);
   await query(`UPDATE contacts SET last_message_at=now(), last_outgoing_at=now(), updated_at=now() WHERE id=$1`, [contactId]);
@@ -522,11 +530,21 @@ export async function listTickets(input: {
 
 export async function listMessages(contactId: string, before: string | undefined, limit: number) {
   const values: unknown[] = [contactId]; let beforeSql = '';
-  if (before) { values.push(before); beforeSql = `AND created_at < $2::timestamptz`; }
+  if (before) { values.push(before); beforeSql = `AND m.created_at < $2::timestamptz`; }
   values.push(limit + 1);
-  const rows = (await query<Message>(`SELECT id, direction, body, message_type AS "messageType", created_at AS "createdAt", provider_message_id AS "providerMessageId",
-    delivery_status AS "deliveryStatus", media_id AS "mediaId", media_asset_id AS "mediaAssetId", media_status AS "mediaStatus", quote_message_id AS "quoteMessageId", media_mime_type AS "mediaMimeType", media_filename AS "mediaFilename", media_size AS "mediaSize", media_caption AS "mediaCaption", error
-    FROM messages WHERE contact_id = $1 ${beforeSql} ORDER BY created_at DESC, id DESC LIMIT $${values.length}`, values)).rows;
+  const rows = (await query<Message>(`SELECT m.id, m.direction, m.body, m.message_type AS "messageType", m.created_at AS "createdAt", m.provider_message_id AS "providerMessageId",
+    m.delivery_status AS "deliveryStatus", m.media_id AS "mediaId", m.media_asset_id AS "mediaAssetId", m.media_status AS "mediaStatus", m.quote_message_id AS "quoteMessageId", m.quoted_provider_message_id AS "quotedProviderMessageId",
+    m.media_mime_type AS "mediaMimeType", m.media_filename AS "mediaFilename", m.media_size AS "mediaSize", m.media_caption AS "mediaCaption", media.width AS "mediaWidth", media.height AS "mediaHeight", m.error,
+    CASE WHEN m.quote_message_id IS NULL AND m.quoted_provider_message_id IS NULL THEN NULL ELSE jsonb_build_object(
+      'id', quoted.id, 'providerMessageId', COALESCE(quoted.provider_message_id, m.quoted_provider_message_id), 'direction', quoted.direction,
+      'body', quoted.body, 'messageType', quoted.message_type, 'mediaMimeType', quoted.media_mime_type, 'mediaFilename', quoted.media_filename,
+      'mediaCaption', quoted.media_caption, 'mediaStatus', quoted.media_status, 'mediaWidth', quoted_media.width, 'mediaHeight', quoted_media.height
+    ) END AS "quotedMessage"
+    FROM messages m
+    LEFT JOIN media_assets media ON media.id=m.media_asset_id
+    LEFT JOIN messages quoted ON quoted.id=m.quote_message_id
+    LEFT JOIN media_assets quoted_media ON quoted_media.id=quoted.media_asset_id
+    WHERE m.contact_id = $1 ${beforeSql} ORDER BY m.created_at DESC, m.id DESC LIMIT $${values.length}`, values)).rows;
   const hasMore = rows.length > limit; const items = rows.slice(0, limit).reverse();
   return { items, nextBefore: hasMore && items[0] ? items[0].createdAt : null };
 }

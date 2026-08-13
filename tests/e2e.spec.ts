@@ -30,7 +30,7 @@ test('login limita fuerza bruta por origen', async ({ request }) => {
 test('login, navegación principal, salud y logout', async ({ page }) => {
   await login(page);
   for (const [nav, heading] of [
-    ['Resumen', 'Lo que necesita atención'],
+    ['Resumen', 'Resumen'],
     ['Conversaciones', 'Conversaciones'],
     ['Tickets', 'Tickets'],
     ['Contactos', 'Contactos'],
@@ -54,4 +54,31 @@ test('login, navegación principal, salud y logout', async ({ page }) => {
   expect(disguisedUploadStatus).toBe(415);
   await page.getByRole('button', { name: 'Cerrar sesión' }).click();
   await expect(page.getByRole('button', { name: 'Ingresar' })).toBeVisible();
+});
+
+test('imagen privada genera miniatura WebP autenticada', async ({ page }) => {
+  await login(page);
+  const result = await page.evaluate(async () => {
+    const conversations = await fetch('/api/conversations?limit=1').then(response => response.json());
+    const contact = conversations.items?.[0];
+    if (!contact) throw new Error('El entorno QA necesita al menos una conversaciÃ³n sintÃ©tica.');
+    const binary = atob('iVBORw0KGgoAAAANSUhEUgAAABAAAAAMCAYAAABr5z2BAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAGklEQVQokWPgb8n5TwlmGDXg/2gY5AyHMAAA1xd+kP6IR7AAAAAASUVORK5CYII=');
+    const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
+    const form = new FormData();
+    form.append('file', new File([bytes], 'qa-miniatura.png', { type: 'image/png' }));
+    const uploaded = await fetch('/api/media', { method: 'POST', body: form });
+    if (!uploaded.ok) throw new Error(`La carga respondiÃ³ ${uploaded.status}`);
+    const asset = await uploaded.json();
+    const sent = await fetch(`/api/conversations/${contact.id}/messages`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ assetId: asset.assetId, mediaType: 'image', caption: 'Prueba visual QA' }),
+    });
+    if (!sent.ok) throw new Error(`El envÃ­o respondiÃ³ ${sent.status}`);
+    const message = await sent.json();
+    const thumbnail = await fetch(`/api/messages/${message.id}/media/thumbnail?w=240`);
+    return { status: thumbnail.status, contentType: thumbnail.headers.get('content-type'), bytes: (await thumbnail.arrayBuffer()).byteLength };
+  });
+  expect(result.status).toBe(200);
+  expect(result.contentType).toContain('image/webp');
+  expect(result.bytes).toBeGreaterThan(20);
 });

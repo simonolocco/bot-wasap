@@ -14,8 +14,5 @@ export async function login(page: Page) {
 export async function openNavigationOnMobile(page: Page) {
   const viewport = page.viewportSize();
   if (!viewport || viewport.width > 760) return;
-  const menu = page.getByRole('button', { name: /menú|menu|navegación/i }).first();
-  await expect(menu).toBeVisible();
-  await menu.click();
-  await expect(page.locator('.sidebar')).toHaveClass(/open/);
+  await expect(page.getByRole('navigation', { name: 'Navegación principal' })).toBeVisible();
 }

@@ -1,13 +1,11 @@
-import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from 'react';
-import { api, formatDate, initials, mediaUrl, shortText } from './api';
+import { FormEvent, KeyboardEvent, Suspense, lazy, useEffect, useRef, useState } from 'react';
+import { api, formatDate, initials, mediaUrl, shortText, thumbnailUrl } from './api';
 import type {
   Contact,
   ConversationDetail,
   ConversationRow,
-  DashboardData,
   Message,
   SupportTicket,
-  TicketType,
 } from './types';
 import './styles.css';
 
@@ -207,7 +205,7 @@ function Sidebar({
       </div>
       <nav className="sidebar-nav" aria-label="Navegación principal">
         {items.map(([id, icon, label]) => (
-          <button key={id} className={`sidebar-link ${view === id ? 'active' : ''}`} onClick={() => onNavigate(id)}>
+          <button key={id} aria-label={label} title={label} className={`sidebar-link ${view === id ? 'active' : ''}`} onClick={() => onNavigate(id)}>
             <SvgIcon name={icon} />
             <span>{label}</span>
             {id === 'inbox' && unread > 0 && <b>{unread}</b>}
@@ -597,9 +595,20 @@ function MessageBubble({
   const pdf =
     message.mediaMimeType === 'application/pdf' ||
     message.mediaFilename?.toLowerCase().endsWith('.pdf');
-  const quoted = message.quoteMessageId
-    ? messages.find(m => m.id === message.quoteMessageId)
-    : null;
+  const loadedQuote = message.quoteMessageId ? messages.find(m => m.id === message.quoteMessageId) : null;
+  const quoted = message.quotedMessage ?? loadedQuote ?? (message.quotedProviderMessageId ? {
+    id: null,
+    providerMessageId: message.quotedProviderMessageId,
+    direction: null,
+    body: null,
+    messageType: null,
+    mediaMimeType: null,
+    mediaFilename: null,
+    mediaCaption: null,
+    mediaStatus: null,
+    mediaWidth: null,
+    mediaHeight: null,
+  } : null);
 
   return (
     <article
@@ -614,19 +623,40 @@ function MessageBubble({
 
       {quoted && (
         <div className="quoted-message">
-          <b>{quoted.direction === 'incoming' ? 'Cliente' : 'Vos'}</b>
-          <span>{shortText(quoted.body, 100)}</span>
+          {quoted.id && quoted.messageType === 'image' && quoted.mediaStatus !== 'failed' && (
+            <img src={thumbnailUrl(quoted.id, 240)} alt="Imagen citada" loading="lazy" decoding="async" />
+          )}
+          <span>
+            <b>{quoted.direction === 'incoming' ? 'Cliente' : quoted.direction === 'outgoing' ? 'Vos' : 'Mensaje citado'}</b>
+            <small>{quoted.messageType === 'image' ? '📷 Foto' : quoted.messageType === 'audio' ? '🎧 Audio' : quoted.messageType === 'document' ? `📄 ${quoted.mediaFilename || 'Documento'}` : shortText(quoted.body || 'Mensaje original no disponible', 100)}</small>
+          </span>
         </div>
       )}
 
-      {media && image && message.mediaStatus !== 'failed' && (
+      {media && image && message.mediaStatus !== 'failed' && message.mediaStatus !== 'pending' && (
         <button
           className="image-button"
-          onClick={() => onLightbox(url, message.mediaFilename || 'Imagen')}
+          onClick={() => onLightbox(thumbnailUrl(message.id, 960), message.mediaFilename || 'Imagen')}
         >
-          <img src={url} loading="lazy" alt={message.mediaCaption || 'Imagen recibida'} />
-          <span>Ver imagen</span>
+          <span className="image-placeholder" aria-hidden="true" />
+          <img
+            src={thumbnailUrl(message.id, 480)}
+            loading="lazy"
+            decoding="async"
+            width={message.mediaWidth || undefined}
+            height={message.mediaHeight || undefined}
+            alt={message.mediaCaption || 'Imagen recibida'}
+          />
+          <span className="image-label">Ver imagen</span>
         </button>
+      )}
+
+      {media && image && message.mediaStatus === 'pending' && (
+        <div className="media-state"><span className="spinner" /> Preparando imagen…</div>
+      )}
+
+      {media && image && message.mediaStatus === 'failed' && (
+        <div className="media-state error"><SvgIcon name="info" size={15} /> No se pudo preparar esta imagen.</div>
       )}
 
       {media && !image && (
@@ -1418,6 +1448,8 @@ function TemplatesView() {
   );
 }
 
+const SecondaryViewsModule = lazy(() => import('./SecondaryViews'));
+
 /* ═══════════════════════════════════════════════════════
    APP (main)
    ═══════════════════════════════════════════════════════ */
@@ -1438,6 +1470,7 @@ export default function App() {
   const [listLoading, setListLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [searchDraft, setSearchDraft] = useState('');
   const [filter, setFilter] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ConversationDetail | null>(null);
@@ -1513,6 +1546,11 @@ export default function App() {
   useEffect(() => {
     if (authenticated) void loadConversations();
   }, [authenticated, search, filter]);
+
+  useEffect(() => {
+    const id = window.setTimeout(() => setSearch(searchDraft.trim()), 250);
+    return () => window.clearTimeout(id);
+  }, [searchDraft]);
 
   // ── SSE global ──
   useEffect(() => {
@@ -1602,8 +1640,18 @@ export default function App() {
     source.addEventListener('message.created', refresh);
     source.addEventListener('message.status', refresh);
     source.addEventListener('media.ready', refresh);
-    const poll = window.setInterval(refresh, 5000);
-    return () => { source.close(); window.clearInterval(poll); };
+    let fallbackPoll: number | null = null;
+    source.onopen = () => {
+      if (fallbackPoll !== null) window.clearInterval(fallbackPoll);
+      fallbackPoll = null;
+    };
+    source.onerror = () => {
+      if (fallbackPoll === null) fallbackPoll = window.setInterval(refresh, 30_000);
+    };
+    return () => {
+      source.close();
+      if (fallbackPoll !== null) window.clearInterval(fallbackPoll);
+    };
   }, [selectedId, notifications]);
 
   // ── Notify ──
@@ -1796,9 +1844,9 @@ export default function App() {
                 loading={listLoading}
                 hasMore={Boolean(cursor)}
                 error={listError}
-                search={search}
+                search={searchDraft}
                 filter={filter}
-                onSearch={setSearch}
+                onSearch={setSearchDraft}
                 onFilter={setFilter}
                 onMore={() => void loadConversations(false)}
                 onSelect={id => void selectConversation(id)}
@@ -1852,11 +1900,13 @@ export default function App() {
           </div>
         ) : (
           <section className="main-view">
-            {view === 'dashboard' && <DashboardView onOpen={navigate} />}
-            {view === 'tickets' && <TicketsView onOpen={id => void selectConversation(id)} />}
-            {view === 'contacts' && <SimpleListView kind="contacts" onOpen={id => void selectConversation(id)} />}
-            {view === 'orders' && <SimpleListView kind="orders" onOpen={id => void selectConversation(id)} />}
-            {view === 'templates' && <TemplatesView />}
+            <Suspense fallback={<LoadingState label="Abriendo vista" />}>
+              <SecondaryViewsModule
+                view={view}
+                onNavigate={navigate}
+                onOpenContact={id => void selectConversation(id)}
+              />
+            </Suspense>
           </section>
         )}
       </main>
