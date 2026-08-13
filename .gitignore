@@ -5,6 +5,22 @@
 .env.test.local
 .env.production.local
 
+# Runtime conversation state
+data/conversation_state.json
+data/campaign_contacts.json
+data/campaign_templates.json
+data/campaigns.json
+data/orders.json
+data/memory.json
+data/*.db
+data/embeddings.json
+.wwebjs_auth/
+.wwebjs_cache/
+
+# Deployment and backups
+.env.production
+backups/
+
 # Dependencies
 node_modules/
 
@@ -31,6 +47,10 @@ Thumbs.db
 # Build outputs
 dist/
 build/
+frontend-dist/
+public/admin/assets/
+public/admin/index.html
+storage/
 *.tsbuildinfo
 
 # Testing

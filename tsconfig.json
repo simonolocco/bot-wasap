@@ -11,6 +11,6 @@
 "allowSyntheticDefaultImports": true,
 "rootDirs": ["./src", "./lib"]
 },
-"include": ["src//*", "lib//*", "migrate.ts"],
+"include": ["src/**/*.ts", "lib/**/*.ts"],
 "exclude": ["node_modules", "dist"]
 }
