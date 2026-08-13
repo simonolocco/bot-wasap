@@ -1,0 +1,50 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    build:
+      context: .
+      dockerfile: deploy/postgres-qa.Dockerfile
+    command: ["postgres"]
+    environment:
+      POSTGRES_DB: abastobot_qa
+      POSTGRES_USER: abastobot_qa
+      POSTGRES_PASSWORD: qa-database-local-only
+    ports: ["55432:5432"]
+    volumes:
+      - postgres_qa_data:/var/lib/postgresql/data
+
+  migrate:
+    environment:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://abastobot_qa:qa-database-local-only@postgres:5432/abastobot_qa
+
+  app:
+    environment: &qa_env
+      NODE_ENV: development
+      DATABASE_URL: postgresql://abastobot_qa:qa-database-local-only@postgres:5432/abastobot_qa
+      META_VERIFY_TOKEN: qa-verify-token
+      META_APP_SECRET: qa-app-secret
+      WHATSAPP_TRANSPORT: mock
+      ALLOW_LIVE_WHATSAPP: "false"
+      ALLOW_UNSIGNED_WEBHOOKS: "false"
+      ADMIN_USERNAME: qa-admin
+      ADMIN_PASSWORD_HASH: "$$2b$$12$$QJWDJMNxDfMSMcyDvLIb8Otem2Y.nIhGqMbNJFXiSkOgvZKRHFOv6"
+      SESSION_SECRET: qa-session-secret-that-is-only-used-by-automated-tests
+      MEDIA_STORAGE_DRIVER: local
+      MEDIA_STORAGE_PATH: /app/storage/media
+      MOCK_OUTBOUND_LOG: off
+      WORKER_CONCURRENCY: 16
+      WORKER_POLL_MS: 50
+      AUTO_RESPONSE_MAX_DELAY_SECONDS: 120
+    ports: ["4402:4002"]
+    volumes:
+      - media_qa_data:/app/storage/media
+
+  worker:
+    environment: *qa_env
+    volumes:
+      - media_qa_data:/app/storage/media
+
+volumes:
+  postgres_qa_data:
+  media_qa_data:

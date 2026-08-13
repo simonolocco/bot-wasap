@@ -13,7 +13,7 @@ import { pool, query } from './db/pool';
 import { audit, claimOrderTicketFallback, claimOrderTicketFallbackById, closeSupportTicket, dashboard, deleteTemplate, getConversation, getContactById, getMediaAssetById, getMediaAssetByMessageId, getMessageById, getTicketById, listAudit, listContacts, listConversations, listMessages, listOrders, listTemplates, listTickets, markConversationRead, markOutgoingFailed, markOutgoingSent, prepareManualMessage, prepareOutgoingMessage, previewCampaignSegment, recordMessageStatus, retryOutgoingMessage, saveTemplate, setBotPaused, storeIncomingEvent, updateContact, updateMediaAsset, updateOrder, type SupportTicket } from './db/repository';
 import { orderWindowExpired, sendOrderTicketFallback } from './services/orderTicketFallback';
 import { MENU_BUTTON_LABEL, MENU_HEADER_TEXT, MENU_PROMPT, buildMenuListSections, ticketClosureMessage } from './messageCatalog';
-import { getMediaStoragePath, markMediaUploadFailed, storeMedia } from './services/mediaStorage';
+import { checkMediaStorage, ensureMediaCached, isSafeUpload, markMediaUploadFailed, storeMedia } from './services/mediaStorage';
 
 declare global { namespace Express { interface Request { rawBody?: Buffer; } } }
 declare module 'express-session' { interface SessionData { user?: string; } }
@@ -30,6 +30,14 @@ if (production && (!VERIFY_TOKEN || !APP_SECRET || !ADMIN_USERNAME || !ADMIN_PAS
 
 const app = express();
 app.set('trust proxy', 1);
+app.disable('x-powered-by');
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  next();
+});
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 1 } });
 const streams = new Map<Response, string | null>();
 void (async () => {
@@ -61,10 +69,13 @@ function verifyMetaSignature(req: Request) {
 type ParsedIncoming = { providerMessageId: string; from: string; profileName?: string; text?: string; selectedOptionId?: string; buttonReplyId?: string; type: string; sourceTimestamp?: number; media?: { id?: string; mimeType?: string; filename?: string; caption?: string } };
 function parseIncoming(message: any, profileName?: string): ParsedIncoming | null {
   if (!message?.id || !message?.from) return null;
-  const incoming: ParsedIncoming = { providerMessageId: String(message.id), from: String(message.from), profileName, type: String(message.type ?? 'unknown') };
+  const providerMessageId = String(message.id).slice(0, 512);
+  const from = String(message.from).replace(/\D/g, '');
+  if (!providerMessageId || from.length < 6 || from.length > 20) return null;
+  const incoming: ParsedIncoming = { providerMessageId, from, profileName: profileName?.slice(0, 200), type: String(message.type ?? 'unknown').slice(0, 40) };
   const timestamp = Number(message.timestamp);
   if (Number.isFinite(timestamp) && timestamp > 0) incoming.sourceTimestamp = timestamp > 10_000_000_000 ? timestamp : timestamp * 1000;
-  if (message.type === 'text') incoming.text = String(message.text?.body ?? '');
+  if (message.type === 'text') incoming.text = String(message.text?.body ?? '').slice(0, 4096);
   if (message.type === 'interactive') { if (message.interactive?.list_reply) { incoming.text = String(message.interactive.list_reply.title ?? ''); incoming.selectedOptionId = String(message.interactive.list_reply.id ?? ''); } if (message.interactive?.button_reply) { incoming.text = String(message.interactive.button_reply.title ?? ''); incoming.buttonReplyId = String(message.interactive.button_reply.id ?? ''); } }
   if (['image', 'document', 'audio', 'video'].includes(incoming.type)) { const media = message[incoming.type] ?? {}; incoming.text = String(media.caption ?? ''); incoming.media = { id: media.id ? String(media.id) : undefined, mimeType: media.mime_type ? String(media.mime_type) : undefined, filename: media.filename ? String(media.filename) : undefined, caption: media.caption ? String(media.caption) : undefined }; }
   return incoming;
@@ -99,7 +110,34 @@ app.get('/healthz', (_req, res) => res.json({ ok: true }));
 app.get('/readyz', async (_req, res) => { try { await query('SELECT 1'); res.json({ ok: true }); } catch { res.status(503).json({ ok: false }); } });
 
 const loginSchema = z.object({ username: z.string().min(1).max(100), password: z.string().min(1).max(200) });
-app.post('/api/auth/login', async (req, res) => { const parsed = loginSchema.safeParse(req.body); const valid = parsed.success && ADMIN_USERNAME && ADMIN_PASSWORD_HASH && parsed.data.username === ADMIN_USERNAME && await bcrypt.compare(parsed.data.password, ADMIN_PASSWORD_HASH); if (!valid) return res.status(401).json({ error: 'Usuario o contraseña incorrectos.' }); req.session.regenerate(error => { if (error) return res.status(500).json({ error: 'No se pudo crear la sesión.' }); req.session.user = ADMIN_USERNAME; res.json({ username: ADMIN_USERNAME }); }); });
+const loginAttempts = new Map<string, { count: number; resetAt: number }>();
+const loginAttemptCleanup = setInterval(() => {
+  const now = Date.now();
+  for (const [key, attempt] of loginAttempts) if (attempt.resetAt <= now) loginAttempts.delete(key);
+}, 60_000);
+loginAttemptCleanup.unref();
+app.post('/api/auth/login', async (req, res) => {
+  const key = req.ip || req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  const current = loginAttempts.get(key);
+  if (current && current.resetAt > now && current.count >= 5) {
+    res.setHeader('Retry-After', String(Math.ceil((current.resetAt - now) / 1000)));
+    return res.status(429).json({ error: 'Demasiados intentos. Esperá 15 minutos.' });
+  }
+  const parsed = loginSchema.safeParse(req.body);
+  const valid = parsed.success && ADMIN_USERNAME && ADMIN_PASSWORD_HASH && parsed.data.username === ADMIN_USERNAME && await bcrypt.compare(parsed.data.password, ADMIN_PASSWORD_HASH);
+  if (!valid) {
+    const next = current && current.resetAt > now ? { count: current.count + 1, resetAt: current.resetAt } : { count: 1, resetAt: now + 15 * 60_000 };
+    loginAttempts.set(key, next);
+    return res.status(401).json({ error: 'Usuario o contraseña incorrectos.' });
+  }
+  loginAttempts.delete(key);
+  return req.session.regenerate(error => {
+    if (error) return res.status(500).json({ error: 'No se pudo crear la sesión.' });
+    req.session.user = ADMIN_USERNAME;
+    return res.json({ username: ADMIN_USERNAME });
+  });
+});
 app.post('/api/auth/logout', (req, res) => req.session.destroy(() => res.sendStatus(204)));
 app.get('/api/auth/me', (req, res) => req.session.user ? res.json({ username: req.session.user }) : res.status(401).json({ error: 'Sesión requerida.' }));
 function requireAdmin(req: Request, res: Response, next: NextFunction) { return req.session.user ? next() : res.status(401).json({ error: 'Sesión requerida.' }); }
@@ -185,14 +223,15 @@ function openStream(req: Request, res: Response, contactId: string | null) {
   }, 25_000);
   req.on('close', () => { clearInterval(heartbeat); streams.delete(res); });
 }
-app.get('/api/dashboard', async (_req, res) => res.json({ ...(await dashboard()), cloudReady: hasCloudCredentials(), transport: getWhatsAppTransport() }));
+app.get('/api/dashboard', async (_req, res) => res.json({ ...(await dashboard()), cloudReady: hasCloudCredentials(), transport: getWhatsAppTransport(), mediaStorage: await checkMediaStorage() }));
 async function sendMediaFile(req: Request, res: Response, download: boolean) {
   const asset = await getMediaAssetByMessageId(req.params.id);
   if (!asset || asset.status !== 'ready') return res.status(404).json({ error: 'El archivo todavía no está disponible.' });
   try {
-    const filePath = getMediaStoragePath(asset.storageKey);
+    const filePath = await ensureMediaCached(asset.storageKey);
     res.type(asset.mimeType);
-    res.setHeader('Content-Disposition', `${download ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(asset.filename)}`);
+    const safeInline = /^(image\/(jpeg|png|gif|webp|heic|heif)|audio\/(mpeg|ogg|wav|x-wav|mp4|aac)|application\/pdf)$/i.test(asset.mimeType);
+    res.setHeader('Content-Disposition', `${download || !safeInline ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(asset.filename)}`);
     return res.sendFile(filePath);
   } catch { return res.status(404).json({ error: 'Archivo inexistente.' }); }
 }
@@ -200,8 +239,7 @@ app.get('/api/messages/:id/media', (req, res) => sendMediaFile(req, res, false))
 app.get('/api/messages/:id/media/download', (req, res) => sendMediaFile(req, res, true));
 app.post('/api/media', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'Seleccioná un archivo.' });
-  const allowed = /^(image\/|audio\/|application\/pdf$|application\/msword$|application\/vnd\.openxmlformats-officedocument\.)/i.test(req.file.mimetype);
-  if (!allowed) return res.status(415).json({ error: 'Tipo de archivo no permitido. Se aceptan imágenes, audio, PDF y documentos.' });
+  if (!isSafeUpload(req.file.buffer, req.file.mimetype)) return res.status(415).json({ error: 'El contenido no coincide con un formato de imagen, audio, PDF u Office permitido.' });
   let asset: Awaited<ReturnType<typeof storeMedia>> | null = null;
   try {
     asset = await storeMedia(req.file.buffer, req.file.mimetype, req.file.originalname);

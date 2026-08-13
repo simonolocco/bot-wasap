@@ -11,11 +11,17 @@ const HTTP_TIMEOUT_MS = Math.max(1000, Number.parseInt(process.env.WHATSAPP_HTTP
 const production = process.env.NODE_ENV === 'production';
 const transport = (process.env.WHATSAPP_TRANSPORT ?? (production ? 'cloud' : 'mock')).trim().toLowerCase();
 const liveCloudAllowed = production || process.env.ALLOW_LIVE_WHATSAPP === 'true';
-const mockLogPath = path.resolve(process.env.MOCK_OUTBOUND_LOG ?? path.join(process.cwd(), 'storage', 'mock-outbound.jsonl'));
+const mockLogSetting = process.env.MOCK_OUTBOUND_LOG ?? path.join(process.cwd(), 'storage', 'mock-outbound.jsonl');
+const mockLogPath = mockLogSetting.toLowerCase() === 'off' ? null : path.resolve(mockLogSetting);
 const mockDelayMs = Math.max(0, Number.parseInt(process.env.MOCK_WHATSAPP_DELAY_MS ?? '0', 10) || 0);
 const mockFailureMode = (process.env.MOCK_WHATSAPP_FAILURE_MODE ?? '').trim().toLowerCase();
 
 export type WhatsAppTransport = 'cloud' | 'mock';
+
+function maskedPhone(value: string) {
+  const digits = value.replace(/\D/g, '');
+  return digits.length <= 4 ? '***' : `***${digits.slice(-4)}`;
+}
 
 export function getWhatsAppTransport(): WhatsAppTransport {
   return transport === 'cloud' ? 'cloud' : 'mock';
@@ -28,6 +34,7 @@ function assertCloudAllowed() {
 }
 
 async function appendMockEvent(event: Record<string, unknown>) {
+  if (!mockLogPath) return;
   await fs.mkdir(path.dirname(mockLogPath), { recursive: true });
   await fs.appendFile(mockLogPath, `${JSON.stringify({ at: new Date().toISOString(), ...event })}\n`, 'utf8');
 }
@@ -66,7 +73,11 @@ export async function sendCloudMessage(payload: Record<string, unknown>) {
   } catch (error) {
     const axiosError = error as AxiosError<{ error?: { message?: string; type?: string; code?: number } }>;
     if (axiosError.response) {
-      console.error('[cloud-client] Error response body:', axiosError.response.data);
+      console.error('[cloud-client] WhatsApp rechazó la solicitud:', {
+        status: axiosError.response.status,
+        code: axiosError.response.data?.error?.code,
+        type: axiosError.response.data?.error?.type,
+      });
     } else {
       console.error('[cloud-client] Error sin respuesta de WhatsApp:', axiosError.message);
     }
@@ -126,7 +137,7 @@ export function buildMediaPayload(to: string, mediaId: string, mediaType: 'image
 
 
 export async function sendCloudTextMessage(to: string, body: string) {
-  console.log(`[cloud-client] Enviando mensaje a ${to} (${body.length} caracteres)`);
+  console.log(`[cloud-client] Enviando mensaje a ${maskedPhone(to)} (${body.length} caracteres)`);
   return sendCloudMessage({
     messaging_product: 'whatsapp',
     to,
@@ -135,7 +146,7 @@ export async function sendCloudTextMessage(to: string, body: string) {
 }
 
 export async function sendCloudAudio(to: string, audioUrl: string, caption?: string) {
-  console.log(`[cloud-client] Enviando audio a ${to}: ${audioUrl}`);
+  console.log(`[cloud-client] Enviando audio a ${maskedPhone(to)}`);
   return sendCloudMessage({
     messaging_product: 'whatsapp',
     to,
@@ -152,7 +163,7 @@ export async function sendCloudTemplateMessage(
   languageCode: string,
   bodyParameters: string[] = [],
 ) {
-  console.log(`[cloud-client] Enviando plantilla ${templateName} a ${to}`);
+  console.log(`[cloud-client] Enviando plantilla ${templateName} a ${maskedPhone(to)}`);
   const template: Record<string, unknown> = {
     name: templateName,
     language: { code: languageCode },

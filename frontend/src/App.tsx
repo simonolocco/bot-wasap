@@ -4,6 +4,7 @@ import type {
   Contact,
   ConversationDetail,
   ConversationRow,
+  DashboardData,
   Message,
   SupportTicket,
   TicketType,
@@ -1165,9 +1166,31 @@ function CloseModal({
    ═══════════════════════════════════════════════════════ */
 
 function DashboardView({ onOpen }: { onOpen: (v: View) => void }) {
-  const [data, setData] = useState<any>(null);
-  useEffect(() => { void api('/api/dashboard').then(setData); }, []);
+  const [data, setData] = useState<DashboardData | null>(null);
+  useEffect(() => { void api<DashboardData>('/api/dashboard').then(setData); }, []);
   const work = data?.work || {};
+  const ageSeconds = (value?: string | null) => value ? Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 1000)) : null;
+  const providerAge = ageSeconds(data?.provider?.lastActivityAt);
+  const backupAge = ageSeconds(data?.backup?.completedAt);
+  const archiveAge = ageSeconds(data?.archive?.lastArchivedAt);
+  const whatsappState: { label: string; level: 'ok' | 'warn' | 'error' } = data?.transport === 'mock' ? { label: 'Mock QA', level: 'ok' }
+    : !data?.cloudReady ? { label: 'Sin credenciales', level: 'error' }
+    : providerAge !== null && providerAge <= 86_400 ? { label: 'Actividad reciente', level: 'ok' }
+    : { label: 'Sin actividad reciente', level: 'warn' };
+  const backupHealthy = data?.backup?.status === 'succeeded' && backupAge !== null && backupAge <= (data?.thresholds?.backupWarningSeconds ?? 90_000);
+  const archiveFailureUnrecovered = Boolean(data?.archive?.lastFailedAt)
+    && (!data?.archive?.lastArchivedAt || new Date(data.archive.lastFailedAt!).getTime() > new Date(data.archive.lastArchivedAt).getTime());
+  const archiveHealthy = Boolean(data?.archive?.enabled)
+    && archiveAge !== null
+    && archiveAge <= (data?.thresholds?.archiveRpoSeconds ?? 300)
+    && !archiveFailureUnrecovered;
+  const dot = (level: 'ok' | 'warn' | 'error') => `health-dot${level === 'ok' ? '' : ` ${level}`}`;
+  const bytes = (value?: number) => {
+    const amount = Number(value ?? 0);
+    if (amount < 1024 * 1024) return `${Math.round(amount / 1024)} KB`;
+    if (amount < 1024 * 1024 * 1024) return `${(amount / 1024 / 1024).toFixed(1)} MB`;
+    return `${(amount / 1024 / 1024 / 1024).toFixed(1)} GB`;
+  };
 
   return (
     <div className="panel-content">
@@ -1200,32 +1223,40 @@ function DashboardView({ onOpen }: { onOpen: (v: View) => void }) {
         <div className="health-card">
           <h3>Estado del sistema</h3>
           <div className="health-row">
-            <span><i className="health-dot" />WhatsApp Cloud</span>
-            <b>{data?.transport === 'mock' ? 'Mock QA' : data?.cloudReady ? 'Conectado' : 'Revisar'}</b>
+            <span><i className={dot(whatsappState.level)} />WhatsApp Cloud</span>
+            <b>{whatsappState.label}</b>
           </div>
           <div className="health-row">
-            <span><i className="health-dot" />Worker</span>
-            <b>{data?.worker?.healthy ? 'Activo' : 'Revisar'}</b>
+            <span><i className={dot(data?.worker?.healthy ? 'ok' : 'error')} />Worker</span>
+            <b>{data?.worker?.healthy ? 'Activo' : 'Sin latido'}</b>
           </div>
           <div className="health-row">
             <span><i className="health-dot" />Base de datos</span>
-            <b>Conectada</b>
+            <b>{bytes(data?.database?.bytes)}</b>
           </div>
           <div className="health-row">
-            <span><i className="health-dot warn" />Envíos fallidos</span>
+            <span><i className={dot(Number(data?.failures?.failedMessages || 0) > 0 ? 'error' : 'ok')} />Envíos fallidos</span>
             <b>{data?.failures?.failedMessages || 0}</b>
           </div>
           <div className="health-row">
-            <span><i className="health-dot" />Cola pendiente</span>
+            <span><i className={dot((data?.queue?.oldestPendingSeconds || 0) > (data?.thresholds?.queueOldestWarningSeconds || 120) ? 'error' : 'ok')} />Cola pendiente</span>
             <b>{data?.queue?.pending || 0}</b>
           </div>
           <div className="health-row">
-            <span><i className="health-dot" />Reintentos</span>
-            <b>{data?.queue?.retrying || 0}</b>
+            <span><i className={dot((data?.queue?.retrying || 0) > 0 || (data?.queue?.failed || 0) > 0 ? 'warn' : 'ok')} />Reintentos / fallidos</span>
+            <b>{data?.queue?.retrying || 0} / {data?.queue?.failed || 0}</b>
           </div>
           <div className="health-row">
-            <span><i className="health-dot warn" />Más antiguo</span>
-            <b>{data?.queue?.oldestPendingSeconds || 0}s</b>
+            <span><i className={dot(backupHealthy ? 'ok' : 'error')} />Último backup</span>
+            <b>{data?.backup?.completedAt ? formatDate(data.backup.completedAt, true) : 'Sin registro'}</b>
+          </div>
+          <div className="health-row">
+            <span><i className={dot(archiveHealthy ? 'ok' : 'error')} />Archivado WAL</span>
+            <b>{data?.archive?.enabled ? (data.archive.lastArchivedAt ? `${archiveAge}s` : 'Esperando actividad') : 'Desactivado'}</b>
+          </div>
+          <div className="health-row">
+            <span><i className={dot(!data?.mediaStorage?.healthy ? 'error' : (data?.media?.failed || 0) > 0 ? 'warn' : 'ok')} />Multimedia privada</span>
+            <b>{data?.media?.driver || 'local'} · {bytes(data?.media?.bytes)}</b>
           </div>
         </div>
       </div>

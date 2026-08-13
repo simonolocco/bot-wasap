@@ -7,6 +7,11 @@ set -eu
 stamp=$(date -u +%Y-%m-%dT%H-%M-%SZ)
 file="/tmp/abastobot-${stamp}.dump.gz"
 media_file="/tmp/abastobot-media-${stamp}.tar.gz"
+run_id="$(psql "$DATABASE_URL" -Atc "INSERT INTO backup_runs (kind,status,metadata) VALUES ('logical','running',jsonb_build_object('tool','pg_dump')) RETURNING id")"
+failed() {
+  psql "$DATABASE_URL" -v run_id="$run_id" -c "UPDATE backup_runs SET status='failed', completed_at=now(), error='Logical backup failed' WHERE id=:'run_id'" >/dev/null 2>&1 || true
+}
+trap failed INT TERM HUP EXIT
 pg_dump "$DATABASE_URL" | gzip > "$file"
 test -s "$file"
 tar -czf "$media_file" -C "${MEDIA_STORAGE_PATH:-/app/storage/media}" .
@@ -17,5 +22,7 @@ if [ "$(date -u +%u)" = "7" ]; then
   aws --endpoint-url "$BACKUP_S3_ENDPOINT" s3 cp "$file" "s3://${BACKUP_S3_BUCKET}/abastobot/weekly/${stamp}.dump.gz"
   aws --endpoint-url "$BACKUP_S3_ENDPOINT" s3 cp "$media_file" "s3://${BACKUP_S3_BUCKET}/abastobot/weekly/${stamp}.media.tar.gz"
 fi
+psql "$DATABASE_URL" -v run_id="$run_id" -v key="abastobot/daily/${stamp}.dump.gz" -c "UPDATE backup_runs SET status='succeeded', completed_at=now(), object_key=:'key', metadata=jsonb_build_object('tool','pg_dump','mediaKey','abastobot/daily/${stamp}.media.tar.gz') WHERE id=:'run_id'" >/dev/null
+trap - INT TERM HUP EXIT
 rm -f "$file" "$media_file"
 echo "Backup diario subido correctamente; el domingo también se creó el semanal."

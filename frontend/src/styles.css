@@ -1197,6 +1197,7 @@ input:focus, select:focus, textarea:focus {
 }
 
 .health-dot.warn { background: var(--warning); }
+.health-dot.error { background: var(--danger); }
 
 /* ── Filter bar (for tickets etc.) ── */
 .view-filters {

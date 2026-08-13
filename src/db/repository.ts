@@ -87,7 +87,7 @@ export async function storeIncomingEvent(input: {
       VALUES ($1, 'incoming', $2, $3, $4, $5, $6, $7, $8, $9, CASE WHEN $5::text IS NULL THEN NULL ELSE 'pending' END) RETURNING id`, [contact.id, input.body, input.messageType, input.providerMessageId,
       input.media?.id ?? null, input.media?.mimeType ?? null, input.media?.filename ?? null, input.media?.size ?? null, input.media?.caption ?? null]);
     await client.query(`INSERT INTO jobs (type, contact_id, webhook_event_id) VALUES ('process_incoming', $1, $2)`, [contact.id, event.rows[0].id]);
-    if (input.media?.id && ['image', 'document', 'audio'].includes(input.messageType)) {
+    if (input.media?.id && ['image', 'document', 'audio', 'video'].includes(input.messageType)) {
       await client.query(`INSERT INTO jobs (type, contact_id, message_id, provider_media_id, media_filename, media_mime_type)
         VALUES ('download_media', $1, $2, $3, $4, $5)`, [contact.id, insertedMessage.rows[0].id, input.media.id, input.media.filename ?? 'archivo', input.media.mimeType ?? 'application/octet-stream']);
     }
@@ -112,10 +112,19 @@ export async function claimJob(workerId: string) {
   });
 }
 
-export async function recoverStaleJobs() {
-  await query(`UPDATE jobs SET status='retrying', run_after=now(), locked_at=NULL, locked_by=NULL,
-    last_error=COALESCE(last_error, 'Worker reiniciado antes de finalizar')
-    WHERE status='processing' AND locked_at < now() - interval '10 minutes'`);
+export async function recoverStaleJobs(maxHeartbeatAgeSeconds = 30, maxProcessingSeconds = 60) {
+  const result = await query(`UPDATE jobs j SET status='retrying', run_after=now(), locked_at=NULL, locked_by=NULL,
+    last_error=COALESCE(j.last_error, 'Worker interrumpido antes de finalizar')
+    WHERE j.status='processing' AND (
+      j.locked_at IS NULL OR
+      j.locked_at < now() - ($2::int * interval '1 second') OR
+      NOT EXISTS (
+        SELECT 1 FROM worker_heartbeats wh
+        WHERE wh.worker_id=j.locked_by
+          AND wh.last_seen_at >= now() - ($1::int * interval '1 second')
+      )
+    )`, [maxHeartbeatAgeSeconds, maxProcessingSeconds]);
+  return result.rowCount ?? 0;
 }
 
 export async function getJobEvent(jobId: string) {
@@ -219,6 +228,13 @@ export async function getMediaAssetById(assetId: string) {
   return result.rows[0] ?? null;
 }
 
+export async function getMediaAssetByProviderMediaId(providerMediaId: string) {
+  const result = await query<MediaAsset>(`SELECT id, provider_media_id AS "providerMediaId", storage_key AS "storageKey", mime_type AS "mimeType", filename,
+    size_bytes AS "sizeBytes", sha256, status, error, width, height, duration_ms AS "durationMs"
+    FROM media_assets WHERE provider_media_id=$1`, [providerMediaId]);
+  return result.rows[0] ?? null;
+}
+
 export async function getMediaAssetByMessageId(messageId: string) {
   const result = await query<MediaAsset>(`SELECT a.id, a.provider_media_id AS "providerMediaId", a.storage_key AS "storageKey", a.mime_type AS "mimeType", a.filename,
     a.size_bytes AS "sizeBytes", a.sha256, a.status, a.error, a.width, a.height, a.duration_ms AS "durationMs"
@@ -253,11 +269,15 @@ export async function recordMessageStatus(providerMessageId: string, status: 'se
 
 export async function prepareOutgoingMessage(contactId: string, key: string, body: string, messageType = 'text') {
   const result = await query<{ id: string; delivery_status: string | null }>(`
-    INSERT INTO messages (contact_id, direction, body, message_type, outbound_key, delivery_status)
-    VALUES ($1, 'outgoing', $2, $3, $4, 'pending')
-    ON CONFLICT (outbound_key) DO UPDATE SET body = messages.body
-    RETURNING id, delivery_status`, [contactId, body, messageType, key]);
-  await query(`UPDATE contacts SET last_message_at=now(), last_outgoing_at=now(), updated_at=now() WHERE id=$1`, [contactId]);
+    WITH stored AS (
+      INSERT INTO messages (contact_id, direction, body, message_type, outbound_key, delivery_status)
+      VALUES ($1, 'outgoing', $2, $3, $4, 'pending')
+      ON CONFLICT (outbound_key) DO UPDATE SET body = messages.body
+      RETURNING id, delivery_status
+    ), touched AS (
+      UPDATE contacts SET last_message_at=now(), last_outgoing_at=now(), updated_at=now() WHERE id=$1 RETURNING id
+    )
+    SELECT stored.id, stored.delivery_status FROM stored CROSS JOIN (SELECT count(*) FROM touched) touched_count`, [contactId, body, messageType, key]);
   return result.rows[0];
 }
 
@@ -334,7 +354,7 @@ export async function createOrder(contactId: string, customerName: string, detai
 }
 
 export async function dashboard() {
-  const [stats, recent, work, failures, worker, queue] = await Promise.all([
+  const [stats, recent, work, failures, worker, queue, providerActivity, backup, restore, archive, media, database] = await Promise.all([
     query<{ total: string; optedIn: string; unknown: string; optedOut: string }>(`SELECT count(*)::text AS total,
       count(*) FILTER (WHERE consent_status='opted_in')::text AS "optedIn", count(*) FILTER (WHERE consent_status='unknown')::text AS unknown,
       count(*) FILTER (WHERE consent_status='opted_out')::text AS "optedOut" FROM contacts`),
@@ -351,8 +371,61 @@ export async function dashboard() {
     query(`SELECT count(*)::text AS "failedMessages" FROM messages WHERE delivery_status='failed'`),
     query<{ active: string }>(`SELECT count(*)::text AS active FROM worker_heartbeats WHERE last_seen_at > now() - interval '60 seconds'`),
     queueMetrics(),
+    query<{ lastIncomingAt: string | null; lastOutgoingAt: string | null }>(`SELECT
+      (SELECT max(received_at) FROM webhook_events) AS "lastIncomingAt",
+      (SELECT max(COALESCE(provider_status_at, sent_at, created_at)) FROM messages
+        WHERE direction='outgoing' AND delivery_status IN ('sent','delivered','read')) AS "lastOutgoingAt"`),
+    query<{ kind: string; status: string; startedAt: string; completedAt: string | null; objectKey: string | null; error: string | null }>(`
+      SELECT kind, status, started_at AS "startedAt", completed_at AS "completedAt", object_key AS "objectKey", error
+      FROM backup_runs WHERE kind IN ('logical','physical','media')
+      ORDER BY COALESCE(completed_at, started_at) DESC LIMIT 1`),
+    query<{ status: string; startedAt: string; completedAt: string | null; error: string | null }>(`
+      SELECT status, started_at AS "startedAt", completed_at AS "completedAt", error
+      FROM backup_runs WHERE kind='restore' ORDER BY COALESCE(completed_at, started_at) DESC LIMIT 1`),
+    query<{ enabled: boolean; archivedCount: string; failedCount: string; lastArchivedAt: string | null; lastFailedAt: string | null }>(`
+      SELECT current_setting('archive_mode')='on' AS enabled,
+        archived_count::text AS "archivedCount", failed_count::text AS "failedCount",
+        last_archived_time AS "lastArchivedAt", last_failed_time AS "lastFailedAt"
+      FROM pg_stat_archiver`),
+    query<{ ready: string; pending: string; failed: string; bytes: string }>(`SELECT
+      count(*) FILTER (WHERE status='ready')::text AS ready,
+      count(*) FILTER (WHERE status='pending')::text AS pending,
+      count(*) FILTER (WHERE status='failed')::text AS failed,
+      COALESCE(sum(size_bytes) FILTER (WHERE status='ready'),0)::text AS bytes
+      FROM media_assets`),
+    query<{ bytes: string }>(`SELECT pg_database_size(current_database())::text AS bytes`),
   ]);
-  return { stats: stats.rows[0], work: work.rows[0], failures: failures.rows[0], worker: { healthy: Number(worker.rows[0].active) > 0 }, queue, recent: recent.rows };
+  const provider = providerActivity.rows[0] ?? { lastIncomingAt: null, lastOutgoingAt: null };
+  const providerActivityDates = [provider.lastIncomingAt, provider.lastOutgoingAt]
+    .filter((value): value is string => Boolean(value))
+    .sort();
+  const lastProviderActivityAt = providerActivityDates[providerActivityDates.length - 1] ?? null;
+  const latestArchive = archive.rows[0];
+  return {
+    stats: stats.rows[0],
+    work: work.rows[0],
+    failures: failures.rows[0],
+    worker: { healthy: Number(worker.rows[0].active) > 0 },
+    queue,
+    provider: { ...provider, lastActivityAt: lastProviderActivityAt },
+    backup: backup.rows[0] ?? null,
+    restore: restore.rows[0] ?? null,
+    archive: latestArchive ? {
+      enabled: latestArchive.enabled,
+      archivedCount: Number(latestArchive.archivedCount),
+      failedCount: Number(latestArchive.failedCount),
+      lastArchivedAt: latestArchive.lastArchivedAt,
+      lastFailedAt: latestArchive.lastFailedAt,
+    } : { enabled: false, archivedCount: 0, failedCount: 0, lastArchivedAt: null, lastFailedAt: null },
+    media: {
+      ready: Number(media.rows[0]?.ready ?? 0), pending: Number(media.rows[0]?.pending ?? 0),
+      failed: Number(media.rows[0]?.failed ?? 0), bytes: Number(media.rows[0]?.bytes ?? 0),
+      driver: process.env.MEDIA_STORAGE_DRIVER ?? 'local',
+    },
+    database: { bytes: Number(database.rows[0]?.bytes ?? 0) },
+    thresholds: { workerStaleSeconds: 60, queueOldestWarningSeconds: 120, backupWarningSeconds: 90_000, archiveRpoSeconds: 300 },
+    recent: recent.rows,
+  };
 }
 
 export async function listConversations(input: { q?: string; consent?: string; pipeline?: string; unread?: boolean; botPaused?: boolean; followUp?: 'overdue' | 'scheduled'; ticket?: 'open'; cursor?: string; limit: number }) {

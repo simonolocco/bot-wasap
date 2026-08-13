@@ -55,3 +55,6 @@ storage/
 
 # Testing
 coverage/
+qa-artifacts/
+test-results/
+playwright-report/

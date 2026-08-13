@@ -91,3 +91,20 @@ export type ConversationDetail = {
   openTicket: SupportTicket | null;
   tickets: SupportTicket[];
 };
+
+export type DashboardData = {
+  transport: 'mock' | 'cloud';
+  cloudReady: boolean;
+  work: Record<string, number>;
+  failures: { failedMessages: number | string };
+  worker: { healthy: boolean };
+  queue: { pending: number; processing: number; retrying: number; failed: number; oldestPendingSeconds: number };
+  provider: { lastIncomingAt: string | null; lastOutgoingAt: string | null; lastActivityAt: string | null };
+  backup: { kind: string; status: 'running' | 'succeeded' | 'failed'; startedAt: string; completedAt: string | null; objectKey: string | null; error: string | null } | null;
+  restore: { status: 'running' | 'succeeded' | 'failed'; startedAt: string; completedAt: string | null; error: string | null } | null;
+  archive: { enabled: boolean; archivedCount: number; failedCount: number; lastArchivedAt: string | null; lastFailedAt: string | null };
+  media: { ready: number; pending: number; failed: number; bytes: number; driver: string };
+  mediaStorage: { healthy: boolean; driver: string; latencyMs: number; error: string | null };
+  database: { bytes: number };
+  thresholds: { workerStaleSeconds: number; queueOldestWarningSeconds: number; backupWarningSeconds: number; archiveRpoSeconds: number };
+};

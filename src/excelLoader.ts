@@ -1,4 +1,4 @@
-import XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import path from 'node:path';
 import fs from 'node:fs';
 
@@ -90,17 +90,35 @@ function normalizeGateWord(raw: string): string {
 }
 
 // ─── Excel loader ────────────────────────────────────────────
-export function loadExcelData(): { productCount: number; specialPriceCount: number } {
+function plainCellValue(value: ExcelJS.CellValue): string | number | boolean | Date | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' || value instanceof Date) return value;
+  if ('result' in value) return plainCellValue(value.result ?? null);
+  if ('text' in value) return value.text;
+  if ('richText' in value) return value.richText.map(part => part.text).join('');
+  return String(value);
+}
+
+function worksheetRows(worksheet: ExcelJS.Worksheet | undefined) {
+  const rows: Array<Array<string | number | boolean | Date | null>> = [];
+  worksheet?.eachRow({ includeEmpty: true }, row => {
+    const values = Array.isArray(row.values) ? row.values.slice(1) : [];
+    rows.push(values.map(value => plainCellValue(value as ExcelJS.CellValue)));
+  });
+  return rows;
+}
+
+export async function loadExcelData(): Promise<{ productCount: number; specialPriceCount: number }> {
   if (!fs.existsSync(EXCEL_PATH)) {
     console.error(`[excelLoader] No se encontró el archivo Excel: ${EXCEL_PATH}`);
     return { productCount: 0, specialPriceCount: 0 };
   }
 
-  const wb = XLSX.readFile(EXCEL_PATH);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.readFile(EXCEL_PATH);
 
   // ── Sheet1: lista de productos ──
-  const ws1 = wb.Sheets[wb.SheetNames[0]];
-  const raw1 = XLSX.utils.sheet_to_json(ws1, { header: 1 }) as any[][];
+  const raw1 = worksheetRows(wb.worksheets[0]);
 
   // Find the header row (has "CODIGO")
   let headerIdx1 = -1;
@@ -133,8 +151,7 @@ export function loadExcelData(): { productCount: number; specialPriceCount: numb
   }
 
   // ── Sheet2: precios especiales ──
-  const ws2 = wb.Sheets[wb.SheetNames[1]];
-  const raw2 = XLSX.utils.sheet_to_json(ws2, { header: 1 }) as any[][];
+  const raw2 = worksheetRows(wb.worksheets[1]);
 
   // Find header row (has "Código" or "Producto")
   let headerIdx2 = -1;

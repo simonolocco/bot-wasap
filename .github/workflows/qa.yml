@@ -1,0 +1,62 @@
+name: qa
+
+on:
+  push:
+    branches: [main, "codex/**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-and-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run test:security
+      - run: npm run test:unit
+
+  integration-and-ui:
+    runs-on: ubuntu-latest
+    needs: build-and-unit
+    env:
+      POSTGRES_PASSWORD: qa-database-local-only
+      DATABASE_URL: postgresql://abastobot_qa:qa-database-local-only@127.0.0.1:55432/abastobot_qa
+      QA_DATABASE_CONFIRM: I_UNDERSTAND_QA_ONLY
+      QA_BASE_URL: http://127.0.0.1:4402
+      QA_ADMIN_USERNAME: qa-admin
+      QA_ADMIN_PASSWORD: qa-local-password
+      LOAD_WEBHOOK_URL: http://127.0.0.1:4402/webhook
+      META_APP_SECRET: qa-app-secret
+      LOAD_CONTACTS: 1000
+      LOAD_MESSAGES_PER_CONTACT: 5
+      LOAD_BURST: 50
+      LOAD_DUPLICATE_PERCENT: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: docker compose -f docker-compose.yml -f docker-compose.qa.yml up -d --build
+      - run: npm run test:integration
+      - run: npm run test:e2e
+      - run: npm run test:visual
+      - run: npm run test:load
+      - if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.qa.yml logs --no-color > qa-docker.log
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-evidence
+          path: |
+            qa-artifacts/
+            qa-docker.log
+      - if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.qa.yml down -v
