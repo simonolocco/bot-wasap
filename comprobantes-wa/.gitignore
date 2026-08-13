@@ -1,0 +1,24 @@
+# Dependency folder
+node_modules/
+
+# WhatsApp session state folder (contains keys & login info)
+auth_info/
+
+# Downloaded files output folder
+media/
+
+# Configuration values
+.env
+.env.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-debug.log*
+
+# Database & Scratch files
+data/
+scratch/
+

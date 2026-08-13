@@ -1,0 +1,53 @@
+name: comprobantes-wa
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: comprobantes-wa:latest
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATA_DIR: /app/data
+      MEDIA_DIR: /app/media
+      AUTH_DIR: /app/auth_info
+      USE_SUPABASE: "false"
+      STORE_MEDIA_INLINE: "false"
+      DISABLE_WHATSAPP: ${DISABLE_WHATSAPP:-true}
+    ports:
+      - "127.0.0.1:3100:3000"
+    volumes:
+      - app_data:/app/data
+      - app_media:/app/media
+      - whatsapp_auth:/app/auth_info
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3000/login.html').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command:
+      - tunnel
+      - --no-autoupdate
+      - --url
+      - http://app:3000
+    depends_on:
+      app:
+        condition: service_healthy
+
+volumes:
+  app_data:
+  app_media:
+  whatsapp_auth:

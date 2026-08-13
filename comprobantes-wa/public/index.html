@@ -1,0 +1,941 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#0b0f19">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Comprobantes WhatsApp - Dashboard & Conciliación</title>
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/icons/icon-192.png">
+    
+    <!-- Google Fonts & FontAwesome -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        /* Styles for manual reconciliation adjustments */
+        .btn-action-sm {
+            padding: 5px 10px;
+            font-size: 11px;
+            font-weight: 600;
+            border-radius: 6px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            border: 1px solid transparent;
+            transition: all 0.2s;
+            font-family: inherit;
+        }
+        .btn-action-sm.btn-recon-sm {
+            background: rgba(16, 185, 129, 0.12);
+            color: #10b981;
+            border-color: rgba(16, 185, 129, 0.25);
+        }
+        .btn-action-sm.btn-recon-sm:hover {
+            background: #10b981;
+            color: #fff;
+        }
+        .btn-action-sm.btn-secondary-sm {
+            background: rgba(148, 163, 184, 0.12);
+            color: #94a3b8;
+            border-color: rgba(148, 163, 184, 0.25);
+        }
+        .btn-action-sm.btn-secondary-sm:hover {
+            background: #94a3b8;
+            color: #0f172a;
+        }
+        .row-resolved {
+            opacity: 0.65;
+            background: rgba(15, 23, 42, 0.45);
+        }
+        .row-resolved td {
+            text-decoration: line-through;
+            color: #94a3b8 !important;
+        }
+        .row-resolved td:last-child, .row-resolved td.monto-cell, .row-resolved td:nth-child(6) {
+            text-decoration: none !important;
+        }
+        .row-resolved .code-val {
+            text-decoration: line-through;
+            opacity: 0.6;
+        }
+        .reconcile-table th:last-child, .reconcile-table td:last-child {
+            text-align: right;
+        }
+        .btn-action-sm.undo-btn {
+            background: rgba(239, 68, 68, 0.12);
+            color: #ef4444;
+            border-color: rgba(239, 68, 68, 0.25);
+        }
+        .btn-action-sm.undo-btn:hover {
+            background: #ef4444;
+            color: #fff;
+        }
+
+        /* Table layout auto-sizing with selected wrapping to prevent visual bugs */
+        .recon-main-content .table-responsive {
+            overflow-x: auto;
+        }
+        .reconcile-table {
+            table-layout: auto !important;
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .reconcile-table th, 
+        .reconcile-table td {
+            white-space: nowrap; /* Prevent wrapping by default to keep layout clean */
+            padding: 10px 12px;
+            vertical-align: middle;
+        }
+        /* Allow long text descriptions and resolution notes to wrap naturally */
+        .reconcile-table td.bank-match-info,
+        .reconcile-table td.detalle-cell,
+        .reconcile-table td.nota-cell,
+        .reconcile-table td:nth-child(4), /* Concepto / Detalle / Coincidencia */
+        .reconcile-table td:nth-child(8)  /* Detalle de Auditoría / Coincidencia */ {
+            white-space: normal !important;
+            word-break: break-word !important;
+            overflow-wrap: break-word !important;
+            min-width: 200px;
+        }
+        /* Style adjustments for resolution tab items */
+        .resolved-badge {
+            background: rgba(99,102,241,0.15);
+            color: #818cf8;
+            border: 1px solid rgba(99,102,241,0.35);
+        }
+    </style>
+</head>
+<body>
+    <!-- Toast Notification Container -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <!-- Outer wrapper for dashboard with left sidebar -->
+    <div class="dashboard-wrapper" id="dashboardWrapper">
+        
+        <!-- SIDEBAR (IZQUIERDA) -->
+        <aside class="dashboard-sidebar" id="dashboardSidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <div class="logo-icon"><i class="fa-solid fa-receipt"></i></div>
+                    <div class="logo-text">Comprobantes<b>WA</b></div>
+                </div>
+                <button class="btn-toggle-sidebar-mobile" id="btnToggleSidebarMobile" title="Cerrar menú">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            
+            <nav class="sidebar-nav">
+                <button class="nav-tab active" id="tabBtnReceipts" data-view="viewReceipts" data-account="abasto">
+                    <i class="fa-solid fa-table-list"></i> <span>Abasto del Campo</span>
+                </button>
+                <button class="nav-tab" id="tabBtnMercadoFrescos" data-view="viewReceipts" data-account="mercado_frescos">
+                    <i class="fa-solid fa-lemon"></i> <span>Mercado de Frescos</span>
+                </button>
+                <button class="nav-tab" id="tabBtnLatestReceipts" data-view="viewLatestReceipts">
+                    <i class="fa-solid fa-clock-rotate-left"></i> <span>Últimos comprobantes</span>
+                </button>
+                <button class="nav-tab" id="tabBtnHistory" data-view="viewHistory">
+                    <i class="fa-solid fa-calendar-days"></i> <span>Historial de Jornadas</span>
+                </button>
+                <button class="nav-tab" id="tabBtnReconciliation" data-view="viewReconciliation">
+                    <i class="fa-solid fa-scale-balanced"></i> <span>Conciliación</span>
+                </button>
+            </nav>
+            
+            <div class="sidebar-footer">
+                <div class="connection-status-pill disconnected" id="connectionStatusPill">
+                    <span class="status-dot"></span>
+                    <span class="status-text" id="connectionStatusText">Desconectado</span>
+                </div>
+                
+                <div class="target-group-badge" id="targetGroupBadge">
+                    <i class="fa-solid fa-people-group"></i>
+                    <span id="targetGroupName">Cargando grupo...</span>
+                </div>
+                
+                <div class="sidebar-action-group">
+                    <button class="btn-sidebar-action install-app-button" id="btnInstallApp" title="Instalar la app en este dispositivo" hidden>
+                        <i class="fa-solid fa-download"></i> <span>Instalar app</span>
+                    </button>
+                    <button class="btn-qr" id="btnOpenQrModal" title="Ver código QR de WhatsApp">
+                        <i class="fa-solid fa-qrcode"></i> <span>Código QR</span>
+                    </button>
+                    
+                    <button class="btn-sidebar-action danger-sidebar" id="btnDisconnectWa" title="Desconectar sesión de WhatsApp">
+                        <i class="fa-solid fa-power-off"></i> <span>Desconectar</span>
+                    </button>
+                </div>
+                
+                <div class="sidebar-logout-area">
+                    <a href="/auth/logout" class="btn-logout" title="Cerrar sesión del Dashboard">
+                        <i class="fa-solid fa-right-from-bracket"></i> <span>Salir del Sistema</span>
+                    </a>
+                </div>
+            </div>
+        </aside>
+        
+        <!-- MAIN CONTENT AREA (DERECHA) -->
+        <main class="main-content-area">
+            
+            <!-- TOP BAR HEADER -->
+            <header class="top-bar-header">
+                <div class="top-left">
+                    <button class="btn-toggle-sidebar" id="btnToggleSidebar" title="Colapsar menú">
+                        <i class="fa-solid fa-bars-staggered"></i>
+                    </button>
+                    <div class="top-page-title" id="topPageTitle">Abasto del Campo</div>
+                </div>
+                
+                <div class="top-right">
+                    <div class="user-profile-badge">
+                        <div class="user-avatar">A</div>
+                        <div class="user-info">
+                            <span class="user-name">Administración</span>
+                            <span class="user-role">Operador</span>
+                        </div>
+                    </div>
+                </div>
+            </header>
+            
+            <!-- Views Container -->
+            <div class="views-container">
+
+        <!-- VIEW 1: RECEIPTS MAIN DASHBOARD -->
+        <div id="viewReceipts" class="app-view active">
+            <!-- KPI Metrics Grid -->
+            <section class="kpi-grid">
+                <div class="kpi-card total-amount" id="abastoLocal1Kpi">
+                    <div class="kpi-icon"><i class="fa-solid fa-store"></i></div>
+                    <div class="kpi-info">
+                        <span class="kpi-label" id="kpiLocal1Label">🏪 Local Cba (Filtrado)</span>
+                        <h2 class="kpi-value" id="kpiLocal1Amount">$0.00</h2>
+                        <small class="kpi-sub" id="kpiLocal1Count" style="color: #94a3b8; font-size: 12px;">0 comprobantes</small>
+                    </div>
+                </div>
+
+                <div class="kpi-card" id="abastoLocal2Kpi" style="background: linear-gradient(135deg, rgba(168,85,247,0.15), rgba(139,92,246,0.08)); border-color: rgba(168,85,246,0.3);">
+                    <div class="kpi-icon" style="background: linear-gradient(135deg, #a855f7, #7c3aed);"><i class="fa-solid fa-truck"></i></div>
+                    <div class="kpi-info">
+                        <span class="kpi-label" id="kpiLocal2Label">🚚 Repartos (Filtrado)</span>
+                        <h2 class="kpi-value" id="kpiLocal2Amount">$0.00</h2>
+                        <small class="kpi-sub" id="kpiLocal2Count" style="color: #94a3b8; font-size: 12px;">0 comprobantes</small>
+                    </div>
+                </div>
+
+                <div class="kpi-card total-count">
+                    <div class="kpi-icon"><i class="fa-solid fa-file-invoice-dollar"></i></div>
+                    <div class="kpi-info">
+                        <span class="kpi-label" id="kpiTotalLabel">Comprobantes Procesados</span>
+                        <h2 class="kpi-value" id="kpiTotalCount">0</h2>
+                    </div>
+                </div>
+
+                <div class="kpi-card date-filter-kpi">
+                    <div class="kpi-icon"><i class="fa-solid fa-calendar-days"></i></div>
+                    <div class="kpi-info">
+                        <span class="kpi-label">Lapso Seleccionado</span>
+                        <h2 class="kpi-value" id="kpiFilterRange">Últimos 5 días</h2>
+                    </div>
+                </div>
+            </section>
+
+            <section id="mercadoFrescosKpis" class="mercado-frescos-kpis" style="display: none;" aria-label="Locales de Mercado de Frescos"></section>
+
+            <!-- Controls & Filters Section -->
+            <section class="controls-card">
+                <div class="filters-bar">
+                    <div class="preset-buttons">
+                        <button class="btn-filter active" id="btnFilterToday" data-filter-type="today">
+                            <i class="fa-solid fa-calendar-day"></i> Hoy
+                        </button>
+                        <button class="btn-filter" id="btnFilterYesterday" data-filter-type="yesterday">
+                            <i class="fa-solid fa-calendar-day"></i> Ayer
+                        </button>
+                    </div>
+
+                    <div class="single-date-selector">
+                        <span>Ver otro día:</span>
+                        <input type="date" id="inputFilterSingleDate" title="Seleccionar día específico">
+                    </div>
+
+                    <div class="custom-date-range">
+                        <span>Rango:</span>
+                        <input type="date" id="inputStartDate" title="Fecha Desde">
+                        <span>hasta</span>
+                        <input type="date" id="inputEndDate" title="Fecha Hasta">
+                        <button class="btn-apply-dates" id="btnApplyCustomDates">Aplicar Rango</button>
+                    </div>
+                </div>
+
+                <div class="actions-bar">
+                    <div class="search-box">
+                        <i class="fa-solid fa-magnifying-glass"></i>
+                        <input type="text" id="inputSearch" placeholder="Buscar por remitente, banco, N° operación, notas...">
+                    </div>
+
+                    <div class="action-buttons">
+                        <button class="btn-export-excel" id="btnExportExcel">
+                            <i class="fa-solid fa-file-excel"></i> Descargar Excel
+                        </button>
+
+                        <button class="btn-upload-manual" id="btnOpenUploadModal">
+                            <i class="fa-solid fa-cloud-arrow-up"></i> Cargar Foto
+                        </button>
+
+                        <button class="btn-add-no-photo" id="btnOpenNoPhotoModal" title="Agregar un comprobante sin imagen">
+                            <i class="fa-solid fa-hand-holding-dollar"></i> Agregar sin foto
+                        </button>
+
+                        <button class="btn-clear-duplicates" id="btnClearDuplicates" title="Eliminar automáticamente los comprobantes duplicados conservando solo el original">
+                            <i class="fa-solid fa-clone"></i> Borrar Duplicados
+                        </button>
+
+                        <button class="btn-clear-all" id="btnClearAllReceipts" title="Eliminar todos los comprobantes para empezar de cero">
+                            <i class="fa-solid fa-trash-arrow-up"></i> Borrar Todos
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Main Receipts Table -->
+            <section class="table-card">
+                <div class="table-header">
+                    <div class="table-title-group">
+                        <h3 id="receiptsTableTitle"><i class="fa-solid fa-table-list"></i> Comprobantes Detectados</h3>
+                        <div class="status-filter-pills">
+                            <button class="status-pill active" data-status-filter="all" id="pillAll">Todos (<span id="countPillAll">0</span>)</button>
+                            <button class="status-pill completed-pill" data-status-filter="completed" id="pillCompleted">🟢 Éxito (<span id="countPillCompleted">0</span>)</button>
+                            <button class="status-pill duplicate-pill" data-status-filter="duplicate" id="pillDuplicate">⚠️ Repetidos (<span id="countPillDuplicate">0</span>)</button>
+                            <button class="status-pill possible-duplicate-pill" data-status-filter="possible_duplicate" id="pillPossibleDuplicate" style="background: rgba(245,158,11,0.12); color: #f59e0b; border-color: rgba(245,158,11,0.25);"><i class="fa-solid fa-triangle-exclamation"></i> Posibles Duplicados (<span id="countPillPossibleDuplicate">0</span>)</button>
+                            <button class="status-pill note-pill-filter" data-status-filter="notes" id="pillNotes">💬 Con Nota (<span id="countPillNotes">0</span>)</button>
+                        </div>
+                        <div class="local-filter-group" id="localFilterGroup" aria-label="Filtrar por local">
+                            <span class="local-filter-label">Local:</span>
+                            <button class="local-filter-pill active" data-local-filter="all" type="button">Todos</button>
+                            <button class="local-filter-pill" data-local-filter="local1" type="button">Local Cba</button>
+                            <button class="local-filter-pill" data-local-filter="local2" type="button">Repartos</button>
+                        </div>
+                    </div>
+                    <span class="table-counter" id="tableCountBadge">Mostrando 0 comprobantes</span>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="receipts-table">
+                        <thead>
+                            <tr>
+                                <th>Fecha Extracción</th>
+                                <th>Fecha Comprobante</th>
+                                <th>Monto ($)</th>
+                                <th>Comprobante</th>
+                                <th>N° Operación</th>
+                                <th>Entidad / Emisor</th>
+                                <th>Local</th>
+                                <th>Recepción</th>
+                                <th>Estado / Notas</th>
+                                <th class="text-right">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody id="receiptsTableBody">
+                            <tr class="empty-row">
+                                <td colspan="10">
+                                    <div class="empty-state">
+                                        <i class="fa-solid fa-folder-open"></i>
+                                        <p>No se encontraron comprobantes en el lapso seleccionado.</p>
+                                    </div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+
+        <!-- VIEW 2: ULTIMOS COMPROBANTES RECIBIDOS -->
+        <div id="viewLatestReceipts" class="app-view" style="display: none;">
+            <section class="latest-receipts-card">
+                <div class="latest-receipts-header">
+                    <div>
+                        <h2><i class="fa-solid fa-clock-rotate-left"></i> Últimos comprobantes</h2>
+                        <p>Comprobantes de Abasto del Campo y Mercado de Frescos, ordenados por el momento en que entraron por WhatsApp.</p>
+                    </div>
+                    <span class="latest-receipts-live"><i class="fa-solid fa-circle"></i> Se actualiza en vivo</span>
+                </div>
+                <div id="latestReceiptsList" class="latest-receipts-list">
+                    <div class="latest-receipts-empty">
+                        <i class="fa-solid fa-spinner fa-spin"></i>
+                        <p>Cargando últimos comprobantes...</p>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <!-- VIEW 3: HISTORIAL DE JORNADAS DIARIAS -->
+        <div id="viewHistory" class="app-view" style="display: none;">
+            <section class="section-title-bar" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: -10px;">
+                <div class="title-group">
+                    <h2 class="view-title" style="font-family: 'Outfit', sans-serif; font-size: 1.5rem; font-weight: 700; display: flex; align-items: center; gap: 10px;">
+                        <i class="fa-solid fa-clock-rotate-left" style="color: #3b82f6;"></i> Historial de Jornadas Diarias
+                    </h2>
+                    <p class="view-subtitle" style="color: var(--text-muted); font-size: 0.9rem; margin-top: 4px;">Resumen y totales recaudados por día. Haz clic en un día para ver sus detalles en el panel principal.</p>
+                </div>
+                <button class="btn-refresh-history" id="btnRefreshHistory" style="padding: 10px 16px; background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.2); border-radius: 10px; color: #3b82f6; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: var(--transition);">
+                    <i class="fa-solid fa-rotate"></i> Actualizar
+                </button>
+            </section>
+
+            <div class="history-account-filters" id="historyAccountFilters" role="tablist" aria-label="Cuenta del historial">
+                <button class="history-account-filter active" type="button" data-history-account="abasto" role="tab" aria-selected="true">
+                    <i class="fa-solid fa-store"></i> Abasto del Campo
+                </button>
+                <button class="history-account-filter" type="button" data-history-account="mercado_frescos" role="tab" aria-selected="false">
+                    <i class="fa-solid fa-lemon"></i> Mercado de Frescos
+                </button>
+                <button class="history-account-filter" type="button" data-history-account="combined" role="tab" aria-selected="false">
+                    <i class="fa-solid fa-layer-group"></i> Ambos
+                </button>
+            </div>
+
+            <div class="history-grid" id="historyGrid">
+                <div class="empty-state">
+                    <i class="fa-solid fa-spinner fa-spin"></i>
+                    <p>Cargando historial de jornadas...</p>
+                </div>
+            </div>
+        </div>
+
+
+        <!-- VIEW 4: DEDICATED HOMEBANKING RECONCILIATION PAGE -->
+        <div id="viewReconciliation" class="app-view" style="display: none;">
+            <div class="recon-layout">
+                <!-- Left Sidebar: New Upload & Saved Audits History -->
+                <aside class="recon-sidebar">
+                    <div class="sidebar-card upload-card">
+                        <h3><i class="fa-solid fa-cloud-arrow-up"></i> Nueva Conciliación</h3>
+                        <p>Sube el extracto Excel (.xls/.xlsx) de tu Homebanking para cruzar comprobantes vs depósitos.</p>
+                        
+                        <div class="form-group-sm">
+                            <label>Nombre / Identificador:</label>
+                            <input type="text" id="inputAuditName" class="input-text-sm" placeholder="Ej: Cierre 23-07 Banco Macro">
+                        </div>
+
+                        <div class="form-group-sm">
+                            <label>Cuenta a conciliar:</label>
+                            <select id="reconAccount" class="input-text-sm">
+                                <option value="abasto">Abasto del Campo</option>
+                                <option value="mercado_frescos">Mercado de Frescos</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group-sm">
+                            <label>Filtrar Comprobantes por Fecha:</label>
+                            <div class="date-range-inputs">
+                                <input type="date" id="reconStartDate" class="input-date-sm" title="Desde qué fecha conciliar">
+                                <span>hasta</span>
+                                <input type="date" id="reconEndDate" class="input-date-sm" title="Hasta qué fecha conciliar">
+                            </div>
+                        </div>
+
+                        <div class="drop-zone recon-dropzone" id="reconcileDropZone">
+                            <i class="fa-solid fa-file-excel"></i>
+                            <p>Arrastra aquí el Excel o haz clic para subir</p>
+                            <input type="file" id="reconcileFileInput" accept=".xls,.xlsx,.csv" hidden>
+                        </div>
+                        <div class="file-name-display" id="reconcileFileNameDisplay"></div>
+
+                        <button type="button" class="btn-save-audit" id="btnSaveCurrentAudit" style="display: none;">
+                            <i class="fa-solid fa-floppy-disk"></i> Guardar Auditoría
+                        </button>
+                    </div>
+
+                    <div class="sidebar-card history-card">
+                        <h3><i class="fa-solid fa-clock-rotate-left"></i> Auditorías Guardadas</h3>
+                        <div class="history-list" id="savedReconciliationsList">
+                            <div class="empty-history">No hay auditorías guardadas aún.</div>
+                        </div>
+                    </div>
+                </aside>
+
+                <!-- Right Main Area: Active Audit Dashboard -->
+                <main class="recon-main-content">
+                    <div id="reconEmptyState" class="empty-recon-state">
+                        <i class="fa-solid fa-scale-balanced"></i>
+                        <h2>Conciliación e Informe de Homebanking</h2>
+                        <p>Sube un archivo de extracto bancario en el panel de la izquierda para comenzar o selecciona una auditoría guardada.</p>
+                    </div>
+
+                    <div id="reconAuditDashboard" style="display: none;">
+                        <div class="audit-header">
+                            <div>
+                                <h2 id="reconAuditTitle">Conciliación Bancaria</h2>
+                                <span id="reconAuditMeta" class="audit-meta">Extracto: - • Auditado: -</span>
+                            </div>
+                            <div class="audit-actions-group" style="display: flex; gap: 8px;">
+                                <button class="btn-refresh-history" id="btnRecalculateAudit" style="padding: 6px 12px; background: rgba(59, 130, 246, 0.12); border: 1px solid rgba(59, 130, 246, 0.25); border-radius: 8px; color: #3b82f6; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; font-size: 13px; transition: var(--transition);">
+                                    <i class="fa-solid fa-arrows-rotate"></i> Actualizar Cruce
+                                </button>
+                                <button class="btn-danger-sm" id="btnDeleteAudit"><i class="fa-solid fa-trash"></i> Eliminar Auditoría</button>
+                            </div>
+                        </div>
+
+                        <!-- Match Progress Bar -->
+                        <div class="recon-progress-card">
+                            <div class="recon-progress-info">
+                                <span><i class="fa-solid fa-shield-check"></i> % Coincidencia Bancaria</span>
+                                <strong id="reconMatchPercentText">0.0%</strong>
+                            </div>
+                            <div class="recon-progress-track">
+                                <div class="recon-progress-fill" id="reconMatchProgressFill" style="width: 0%;"></div>
+                            </div>
+                        </div>
+
+                        <!-- 4 Summary KPI Cards -->
+                        <div class="reconcile-kpi-grid">
+                            <div class="kpi-card mini verified">
+                                <span class="kpi-label">🟢 Verificados en Banco</span>
+                                <h3 id="recKpiVerified">$0.00</h3>
+                                <small id="recKpiVerifiedCount">0 comprobantes</small>
+                            </div>
+                            <div class="kpi-card mini unverified">
+                                <span class="kpi-label">🔴 No Acreditados / Faltantes</span>
+                                <h3 id="recKpiUnverified">$0.00</h3>
+                                <small id="recKpiUnverifiedCount">0 sin acreditar</small>
+                            </div>
+                            <div class="kpi-card mini unclaimed">
+                                <span class="kpi-label">🟡 Depósitos Sin Comprobante</span>
+                                <h3 id="recKpiUnclaimed">$0.00</h3>
+                                <small id="recKpiUnclaimedCount">0 en banco sin reclamar</small>
+                            </div>
+                            <div class="kpi-card mini duplicates">
+                                <span class="kpi-label">⚠️ Duplicados</span>
+                                <h3 id="recKpiDuplicates">0</h3>
+                                <small>Comprobantes repetidos</small>
+                            </div>
+                        </div>
+
+                        <!-- Audit Sub-Tabs -->
+                        <div class="audit-subtabs">
+                            <button class="subtab-btn active" data-subtab="verified"><i class="fa-solid fa-circle-check"></i> Verificados (<span id="subtabCountVerified">0</span>)</button>
+                            <button class="subtab-btn" data-subtab="unverified"><i class="fa-solid fa-circle-xmark"></i> No Acreditados / Faltantes (<span id="subtabCountUnverified">0</span>)</button>
+                            <button class="subtab-btn" data-subtab="unclaimed"><i class="fa-solid fa-building-columns"></i> Banco Sin Comprobante (<span id="subtabCountUnclaimed">0</span>)</button>
+                            <button class="subtab-btn" data-subtab="resolved-tab" style="background: rgba(99,102,241,0.12); color: #818cf8; border-color: rgba(99,102,241,0.25);"><i class="fa-solid fa-clipboard-check"></i> Resueltos (<span id="subtabCountResolved">0</span>)</button>
+                            <button class="subtab-btn" data-subtab="duplicates"><i class="fa-solid fa-triangle-exclamation"></i> Duplicados (<span id="subtabCountDuplicates">0</span>)</button>
+                        </div>
+
+                        <!-- Dynamic Audit Table -->
+                        <div class="table-card audit-table-card">
+                            <div class="table-responsive">
+                                <table class="receipts-table reconcile-table">
+                                    <thead id="reconTableHeader"></thead>
+                                    <tbody id="reconTableBody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </main>
+            </div>
+        </div>
+        
+        </div> <!-- End of views-container -->
+        </main> <!-- End of main-content-area -->
+    </div> <!-- End of dashboardWrapper -->
+
+    <!-- QR Code Modal -->
+    <div class="modal-backdrop" id="qrModal">
+        <div class="modal-content qr-modal-content">
+            <button class="modal-close" id="btnCloseQrModal">&times;</button>
+            <div class="qr-header">
+                <i class="fa-brands fa-whatsapp"></i>
+                <h2>Vincular WhatsApp Web</h2>
+                <p>Abre WhatsApp en tu teléfono > Dispositivos vinculados > Vincular un dispositivo</p>
+            </div>
+            <div class="qr-container">
+                <div id="qrLoadingSpinner" class="spinner"></div>
+                <img id="qrImage" src="" alt="Código QR de WhatsApp" style="display: none;">
+                <div id="qrSuccessState" class="qr-success" style="display: none;">
+                    <i class="fa-solid fa-circle-check"></i>
+                    <h3>¡WhatsApp Conectado!</h3>
+                    <p>El bot está escuchando imágenes automáticamente en el grupo.</p>
+                </div>
+            </div>
+
+            <button class="btn-secondary btn-reload-qr" id="btnReconnectWa">
+                <i class="fa-solid fa-arrows-rotate"></i> Regenerar Código QR
+            </button>
+        </div>
+    </div>
+
+    <!-- Image & Details Preview Modal -->
+    <div class="modal-backdrop" id="detailsModal">
+        <div class="modal-content details-modal-content">
+            <button class="modal-close" id="btnCloseDetailsModal" title="Cerrar detalles">&times;</button>
+
+            <div id="modalDuplicateAlert" class="duplicate-alert-banner" style="display: none;">
+                <i class="fa-solid fa-triangle-exclamation"></i>
+                <span id="modalDuplicateText">⚠️ COMPROBANTE REPETIDO</span>
+            </div>
+
+            <!-- New Possible Duplicate Banner -->
+            <div id="modalPossibleDuplicateBanner" style="display: none; background: rgba(245,158,11,0.06); border: 1px solid rgba(245,158,11,0.2); border-radius: 14px; padding: 18px; margin-bottom: 22px; flex-direction: column; gap: 14px; box-shadow: 0 8px 32px rgba(245,158,11,0.05);">
+                <div style="display: flex; align-items: center; gap: 10px; color: #f59e0b; font-weight: 700; font-size: 14px; font-family: 'Outfit', sans-serif;">
+                    <i class="fa-solid fa-circle-exclamation fa-lg"></i>
+                    <span>¿Este comprobante está duplicado?</span>
+                </div>
+                <p style="margin: 0; font-size: 13px; color: #94a3b8; line-height: 1.5; font-family: 'Inter', sans-serif;">Se detectaron 2 comprobantes sin N° de operación con el mismo monto, fecha y emisor. Compara las fotos para confirmar si son duplicados:</p>
+                
+                <div style="display: flex; justify-content: space-around; gap: 16px; margin: 4px 0; background: rgba(15,23,42,0.45); padding: 14px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.03);">
+                    <!-- Left side: Current Receipt -->
+                    <div style="display: flex; flex-direction: column; align-items: center; gap: 8px; width: 44%; text-align: center;">
+                        <span style="font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.8px;">Comprobante A (Este)</span>
+                        <div class="duplicate-preview-wrapper" style="position: relative; border-radius: 8px; overflow: hidden; border: 1px solid rgba(255,255,255,0.08); transition: transform 0.2s;">
+                            <img id="compAPreview" src="" style="width: 85px; height: 110px; object-fit: cover; cursor: zoom-in; display: block;" title="Ver en pantalla completa">
+                        </div>
+                        <div style="font-size: 11px; color: #cbd5e1; margin-top: 4px; line-height: 1.4;">
+                            <span style="color: #64748b;">Monto:</span> <strong style="color: #10b981;" id="compAMonto">$0.00</strong><br>
+                            <span style="color: #64748b;">Fecha:</span> <span id="compAFecha">-</span>
+                        </div>
+                    </div>
+                    
+                    <div style="display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,0.1);">
+                        <i class="fa-solid fa-arrows-left-right fa-2xl"></i>
+                    </div>
+                    
+                    <!-- Right side: Candidate Receipt -->
+                    <div style="display: flex; flex-direction: column; align-items: center; gap: 8px; width: 44%; text-align: center;">
+                        <span style="font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.8px;">Comprobante B (Candidato)</span>
+                        <div class="duplicate-preview-wrapper" style="position: relative; border-radius: 8px; overflow: hidden; border: 1px solid rgba(255,255,255,0.08); transition: transform 0.2s;">
+                            <img id="compBPreview" src="" style="width: 85px; height: 110px; object-fit: cover; cursor: zoom-in; display: block;" title="Ver en pantalla completa">
+                        </div>
+                        <div style="font-size: 11px; color: #cbd5e1; margin-top: 4px; line-height: 1.4;">
+                            <span style="color: #64748b;">Monto:</span> <strong style="color: #10b981;" id="compBMonto">$0.00</strong><br>
+                            <span style="color: #64748b;">Fecha:</span> <span id="compBFecha">-</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="display: flex; gap: 12px; justify-content: center; margin-top: 4px;">
+                    <button type="button" class="btn-primary" id="btnConfirmOpDuplicate" style="background: linear-gradient(135deg, #d97706, #b45309); border: none; color: #fff; padding: 10px 20px; font-size: 13px; cursor: pointer; border-radius: 10px; font-weight: 600; display: flex; align-items: center; gap: 8px; box-shadow: 0 4px 12px rgba(217,119,6,0.25); transition: opacity 0.2s;">
+                        <i class="fa-solid fa-clone"></i> Confirmar como Duplicado
+                    </button>
+                    <button type="button" class="btn-secondary" id="btnDismissOpDuplicate" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #cbd5e1; padding: 10px 20px; font-size: 13px; cursor: pointer; border-radius: 10px; font-weight: 600; display: flex; align-items: center; gap: 8px; transition: background 0.2s;">
+                        <i class="fa-solid fa-check"></i> Descartar Duplicado
+                    </button>
+                </div>
+            </div>
+
+            <div class="details-grid">
+                <!-- Columna Izquierda: Visualización del archivo -->
+                <div class="image-preview-container" id="modalPreviewContainer">
+                    <div class="preview-frame">
+                        <img id="modalImagePreview" src="" alt="Vista previa del comprobante" style="cursor: zoom-in;" title="Haz clic para ampliar la imagen">
+                        <div id="modalNoPhotoPreview" class="no-photo-preview" style="display: none;">
+                            <i class="fa-solid fa-file-circle-plus"></i>
+                            <strong>Comprobante sin foto</strong>
+                            <span>Registro agregado manualmente</span>
+                        </div>
+                        <div id="modalPdfPreview" class="pdf-preview-box" style="display: none;">
+                            <div class="pdf-preview-header">
+                                <i class="fa-solid fa-file-pdf"></i>
+                                <span>Vista Previa PDF</span>
+                            </div>
+                            <iframe id="modalPdfIframe" src="" title="Vista previa PDF"></iframe>
+                            <a id="modalPdfLink" href="#" target="_blank" class="btn-primary btn-open-pdf">
+                                <i class="fa-solid fa-arrow-up-right-from-square"></i> Abrir PDF original
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Columna Derecha: Información y Edición -->
+                <div class="details-info-container">
+                    <div class="details-header-group">
+                        <h3>Detalles del Comprobante</h3>
+                        <p class="details-subtitle" id="modalFilename">Archivo: -</p>
+                    </div>
+
+                    <!-- Sección de Campos Editables con Inputs Integrados -->
+                    <div class="editable-fields-box">
+                        <div class="info-group-integrated">
+                            <label><i class="fa-solid fa-calendar-day"></i> Fecha Extraída</label>
+                            <div class="input-integrated-wrapper">
+                                <input type="date" id="modalFechaInput" title="Fecha operativa: define en qué día se cuenta">
+                                <button type="button" id="btnSaveFechaModal" class="btn-save-integrated" title="Guardar fecha">
+                                    <i class="fa-solid fa-floppy-disk"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="info-group-integrated">
+                            <label><i class="fa-regular fa-calendar"></i> Fecha del comprobante</label>
+                            <div class="input-integrated-wrapper">
+                                <input type="date" id="modalFechaComprobanteInput" title="Fecha que figura en el comprobante (usada para conciliación)">
+                                <button type="button" id="btnSaveFechaComprobanteModal" class="btn-save-integrated" title="Guardar fecha del comprobante">
+                                    <i class="fa-solid fa-floppy-disk"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="info-group-integrated">
+                            <label><i class="fa-solid fa-clock"></i> Hora Extraída</label>
+                            <div class="input-integrated-wrapper">
+                                <input type="time" id="modalHoraInput" title="Hora del comprobante (HH:MM)">
+                                <button type="button" id="btnSaveHoraModal" class="btn-save-integrated" title="Guardar hora">
+                                    <i class="fa-solid fa-floppy-disk"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="info-group-integrated">
+                            <label><i class="fa-solid fa-money-bill-wave"></i> Monto ($)</label>
+                            <div class="input-integrated-wrapper">
+                                <input type="number" step="0.01" id="modalMontoInput" title="Monto del comprobante">
+                                <button type="button" id="btnSaveMontoModal" class="btn-save-integrated" title="Guardar monto">
+                                    <i class="fa-solid fa-floppy-disk"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="info-group-integrated">
+                            <label><i class="fa-solid fa-shop"></i> Local Asignado</label>
+                            <div class="input-integrated-wrapper">
+                                <select id="modalLocalSelect" title="Local asignado para el comprobante">
+                                    <option value="local1">Local Cba</option>
+                                    <option value="local2">Repartos</option>
+                                </select>
+                                <button type="button" id="btnSaveLocalModal" class="btn-save-integrated" title="Guardar local">
+                                    <i class="fa-solid fa-floppy-disk"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Datos Informativos Fijos (Estructura Lineal de Ancho Completo para Alineación Perfecta) -->
+                    <div class="details-static-info">
+                        <div class="static-row">
+                            <span class="static-label"><i class="fa-solid fa-hashtag"></i> N° Operación / ID</span>
+                            <strong class="static-value code-val" id="modalNroOp">-</strong>
+                        </div>
+                        <div class="static-row">
+                            <span class="static-label"><i class="fa-solid fa-building-columns"></i> Entidad / Banco</span>
+                            <strong class="static-value" id="modalEmisor">-</strong>
+                        </div>
+                        <div class="static-row">
+                            <span class="static-label"><i class="fa-solid fa-file-invoice"></i> Tipo Comprobante</span>
+                            <strong class="static-value" id="modalTipo">-</strong>
+                        </div>
+                        <div class="static-row">
+                            <span class="static-label"><i class="fa-brands fa-whatsapp"></i> Remitente WhatsApp</span>
+                            <strong class="static-value" id="modalSender">-</strong>
+                        </div>
+                    </div>
+
+                    <!-- Pestañas secundarias (Tabs) para Notas y Texto Detectado (IA) -->
+                    <div class="details-tab-container">
+                        <div class="details-tab-header">
+                            <button type="button" class="details-tab-btn active" id="btnTabNotes" data-details-tab="tabNotes">
+                                <i class="fa-solid fa-comment-dots"></i> Notas
+                            </button>
+                            <button type="button" class="details-tab-btn" id="btnTabRawText" data-details-tab="tabRawText">
+                                <i class="fa-solid fa-microchip"></i> Texto de IA
+                            </button>
+                        </div>
+                        
+                        <div class="details-tab-content">
+                            <!-- Panel de Notas -->
+                            <div class="details-tab-pane active" id="paneNotes">
+                                <textarea id="modalNotes" placeholder="Escribe observaciones aquí... (ej: El cliente tiene 90k de profit)"></textarea>
+                                <button type="button" class="btn-save-note-integrated" id="btnSaveNoteModal">
+                                    <i class="fa-solid fa-floppy-disk"></i> Guardar Nota
+                                </button>
+                            </div>
+                            <!-- Panel de Texto Detectado -->
+                            <div class="details-tab-pane" id="paneRawText">
+                                <textarea id="modalRawText" readonly placeholder="Texto sin procesar detectado por la IA..."></textarea>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="modal-actions-bar" style="display: flex; gap: 10px; margin-top: 10px;">
+                        <button class="btn-reprocess-modal" id="btnReprocessModal" style="flex: 1.3;">
+                            <i class="fa-solid fa-rotate-right"></i> Reprocesar con IA Vision
+                        </button>
+                        <button class="btn-reprocess-modal" id="btnMobileCloseModal" style="flex: 0.7; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.25); color: #fca5a5;" title="Cerrar modal">
+                            Cerrar
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+        </div>
+    </div>
+
+    <!-- Upload Manual Modal -->
+    <div class="modal-backdrop" id="uploadModal">
+        <div class="modal-content upload-modal-content">
+            <button class="modal-close" id="btnCloseUploadModal">&times;</button>
+            <div class="upload-header">
+                <i class="fa-solid fa-cloud-arrow-up"></i>
+                <h2>Carga Manual de Comprobante</h2>
+                <p>Sube una imagen o PDF de comprobante si no fue enviado por WhatsApp.</p>
+            </div>
+            
+            <form id="uploadForm">
+                <div class="drop-zone" id="dropZone">
+                    <i class="fa-solid fa-image"></i>
+                    <p>Arrastra aquí la foto o haz clic para explorar</p>
+                    <input type="file" id="fileInput" accept="image/*,application/pdf" hidden>
+                </div>
+                <div class="file-name-display" id="fileNameDisplay"></div>
+                <button type="submit" class="btn-primary" style="margin-top: 15px;">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i> Procesar con IA Vision
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Manual receipt without image modal -->
+    <div class="modal-backdrop" id="noPhotoModal">
+        <div class="modal-content no-photo-modal-content">
+            <button class="modal-close" id="btnCloseNoPhotoModal">&times;</button>
+            <div class="upload-header">
+                <i class="fa-solid fa-hand-holding-dollar"></i>
+                <h2>Agregar comprobante sin foto</h2>
+                <p id="noPhotoAccountHint">Se agregará a la sección activa.</p>
+            </div>
+
+            <form id="noPhotoForm">
+                <div class="manual-entry-grid">
+                    <div class="manual-entry-field">
+                        <label for="noPhotoFecha">Fecha *</label>
+                        <input type="date" id="noPhotoFecha" required>
+                    </div>
+                    <div class="manual-entry-field">
+                        <label for="noPhotoHora">Hora</label>
+                        <input type="time" id="noPhotoHora">
+                    </div>
+                    <div class="manual-entry-field">
+                        <label for="noPhotoMonto">Monto ($) *</label>
+                        <input type="number" id="noPhotoMonto" min="0.01" step="0.01" placeholder="0,00" required>
+                    </div>
+                    <div class="manual-entry-field">
+                        <label for="noPhotoLocal">Local / Sucursal *</label>
+                        <select id="noPhotoLocal" required></select>
+                    </div>
+                    <div class="manual-entry-field">
+                        <label for="noPhotoEmisor">Entidad / Emisor</label>
+                        <input type="text" id="noPhotoEmisor" placeholder="Ej: Mercado Pago">
+                    </div>
+                    <div class="manual-entry-field">
+                        <label for="noPhotoTipo">Tipo</label>
+                        <select id="noPhotoTipo">
+                            <option value="Transferencia">Transferencia</option>
+                            <option value="Factura">Factura</option>
+                            <option value="Recibo">Recibo</option>
+                            <option value="Otro">Otro</option>
+                        </select>
+                    </div>
+                    <div class="manual-entry-field manual-entry-wide">
+                        <label for="noPhotoOperacion">N° operación / referencia</label>
+                        <input type="text" id="noPhotoOperacion" placeholder="Opcional">
+                    </div>
+                    <div class="manual-entry-field manual-entry-wide">
+                        <label for="noPhotoConcepto">Concepto</label>
+                        <input type="text" id="noPhotoConcepto" placeholder="Opcional">
+                    </div>
+                    <div class="manual-entry-field manual-entry-wide">
+                        <label for="noPhotoNota">Nota</label>
+                        <textarea id="noPhotoNota" rows="3" placeholder="Observación interna opcional"></textarea>
+                    </div>
+                </div>
+
+                <button type="submit" class="btn-primary no-photo-submit">
+                    <i class="fa-solid fa-plus"></i> Agregar comprobante
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Dedicated Note View/Edit Modal -->
+    <div class="modal-backdrop" id="noteModal">
+        <div class="modal-content note-modal-content">
+            <button class="modal-close" id="btnCloseNoteModal">&times;</button>
+            <div class="note-modal-header">
+                <div class="note-modal-icon">
+                    <i class="fa-solid fa-comment-dots"></i>
+                </div>
+                <div class="note-modal-title-group">
+                    <h3>Nota u Observación</h3>
+                    <p id="noteModalSub">Cargando datos del comprobante...</p>
+                </div>
+            </div>
+            
+            <div class="note-modal-body">
+                <textarea id="noteModalText" placeholder="Escribe aquí una observación o nota interna para este comprobante..."></textarea>
+            </div>
+
+            <div class="modal-actions" style="margin-top: 10px;">
+                <button type="button" class="btn-secondary" id="btnCancelNoteModal">Cancelar</button>
+                <button type="button" class="btn-primary" id="btnSaveNoteFromModal">
+                    <i class="fa-solid fa-floppy-disk"></i> Guardar Nota
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Dedicated Resolution Modal (For manual verification/resolution note) -->
+    <div class="modal-backdrop" id="resolutionModal">
+        <div class="modal-content note-modal-content" style="max-width: 450px;">
+            <button class="modal-close" id="btnCloseResolutionModal">&times;</button>
+            <div class="note-modal-header">
+                <div class="note-modal-icon" style="background: rgba(16, 185, 129, 0.15); color: #10b981; width: 44px; height: 44px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 20px;">
+                    <i class="fa-solid fa-clipboard-check"></i>
+                </div>
+                <div class="note-modal-title-group" style="display: flex; flex-direction: column; gap: 2px;">
+                    <h3 id="resolutionModalTitle" style="font-family: 'Outfit', sans-serif; font-size: 1.2rem; font-weight: 700; margin: 0; color: #f8fafc;">Resolver Manualmente</h3>
+                    <p id="resolutionModalSub" style="font-size: 13px; color: #94a3b8; margin: 0;">Cargando datos...</p>
+                </div>
+            </div>
+            
+            <div class="note-modal-body" style="margin-top: 15px;">
+                <label style="color: #94a3b8; font-size: 13px; margin-bottom: 6px; display: block; font-weight: 500;">Nota / Explicación del Ajuste:</label>
+                <textarea id="resolutionModalText" style="width: 100%; min-height: 90px; background: rgba(15,23,42,0.6); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; color: #f8fafc; padding: 10px; font-size: 14px; font-family: inherit; resize: vertical; outline: none; transition: border-color 0.2s;" placeholder="Escribe aquí el motivo del ajuste (ej: Acreditado el día siguiente, Comprobante del día anterior, etc.)..."></textarea>
+            </div>
+
+            <div class="modal-actions" style="margin-top: 20px; display: flex; justify-content: flex-end; gap: 10px;">
+                <button type="button" class="btn-secondary" id="btnCancelResolutionModal">Cancelar</button>
+                <button type="button" class="btn-primary" id="btnConfirmResolution">
+                    <i class="fa-solid fa-check"></i> Confirmar Ajuste
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Fullscreen Image Lightbox Modal -->
+    <div class="modal-backdrop" id="lightboxModal" style="display: none; z-index: 10000; background: rgba(0, 0, 0, 0.92); backdrop-filter: blur(8px);">
+        <div style="position: relative; max-width: 95vw; max-height: 95vh; display: flex; align-items: center; justify-content: center; flex-direction: column;">
+            <button class="modal-close" id="btnCloseLightbox" style="position: absolute; top: -35px; right: 0; color: #fff; font-size: 36px; cursor: pointer; background: none; border: none; z-index: 10001; opacity: 0.8; transition: opacity 0.2s;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.8'">&times;</button>
+            <img id="lightboxImage" src="" alt="Comprobante en tamaño completo" style="max-width: 92vw; max-height: 85vh; object-fit: contain; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.9); border: 1px solid rgba(255,255,255,0.1);">
+            <div style="margin-top: 14px; color: #94a3b8; font-size: 13px; display: flex; align-items: center; gap: 12px; background: rgba(21, 28, 44, 0.8); padding: 8px 18px; border-radius: 20px; border: 1px solid rgba(255,255,255,0.08);">
+                <span><i class="fa-solid fa-magnifying-glass-plus"></i> Vista completa HD</span>
+                <span style="opacity: 0.4">•</span>
+                <a id="lightboxOpenLink" href="#" target="_blank" style="color: #3b82f6; text-decoration: none; font-weight: 500; display: inline-flex; align-items: center; gap: 5px;">
+                    <i class="fa-solid fa-arrow-up-right-from-square"></i> Abrir archivo original
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Socket.io & App Logic -->
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
