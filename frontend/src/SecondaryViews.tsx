@@ -135,7 +135,7 @@ function Contacts({ onOpen }: { onOpen: (id: string) => void }) {
 
 type OrderItem = { name?: string; product?: string; quantity?: number | string; price?: number | string };
 type OrderRow = { id: number; contactId: string | null; customerName: string; detail: string; items?: OrderItem[]; grandTotal?: number | string; status: string; accepted?: boolean; acceptedAt?: string | null; createdAt: string; phone: string };
-function Orders({ onOpen }: { onOpen: (id: string) => void }) {
+function Orders() {
   const limit = 25; const [page, setPage] = useState(0); const [status, setStatus] = useState('');
   const [result, setResult] = useState<Paged<OrderRow> | null>(null); const [loading, setLoading] = useState(true); const [error, setError] = useState('');
   const [selected, setSelected] = useState<OrderRow | null>(null);
@@ -145,11 +145,11 @@ function Orders({ onOpen }: { onOpen: (id: string) => void }) {
   return <DataSurface title="Pedidos" subtitle="Seguimiento de pedidos recibidos por el bot" filters={<select value={status} onChange={e => setStatus(e.target.value)} aria-label="Estado del pedido"><option value="">Todos los estados</option><option value="pending_customer">Esperando cliente</option><option value="submitted">Enviados</option><option value="accepted">Aceptados</option><option value="canceled">Cancelados</option></select>}>
     <ViewState loading={loading} error={error} empty={!loading && !error && !result?.items.length} onRetry={load} />
     {!loading && result?.items.length ? <><div className="data-table order-table"><div className="table-head"><span>Pedido</span><span>Cliente</span><span>Detalle</span><span>Estado</span><span>Recibido</span></div>{result.items.map(order => <button className="table-row" key={order.id} onClick={() => setSelected(order)}><span><b>#{order.id}</b></span><span className="primary-cell"><b>{cleanName(order.customerName, order.phone)}</b><small>{order.phone}</small></span><span className="detail-cell">{order.detail || 'Sin detalle'}</span><span><b className={`order-state ${order.status}`}>{orderStates[order.status] || order.status}</b></span><time>{formatDate(order.createdAt, true)}</time></button>)}</div><Pager page={page} total={result.total} limit={limit} onPage={setPage} /></> : null}
-    {selected && <OrderModal order={selected} onClose={() => setSelected(null)} onOpenConversation={() => { const id = selected.contactId; setSelected(null); if (id) onOpen(id); }} />}
+    {selected && <OrderModal order={selected} onClose={() => setSelected(null)} />}
   </DataSurface>;
 }
 
-function OrderModal({ order, onClose, onOpenConversation }: { order: OrderRow; onClose: () => void; onOpenConversation: () => void }) {
+function OrderModal({ order, onClose }: { order: OrderRow; onClose: () => void }) {
   useEffect(() => { const key = (event: KeyboardEvent) => event.key === 'Escape' && onClose(); window.addEventListener('keydown', key); return () => window.removeEventListener('keydown', key); }, [onClose]);
   const total = Number(order.grandTotal || 0);
   return <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
@@ -158,7 +158,7 @@ function OrderModal({ order, onClose, onOpenConversation }: { order: OrderRow; o
       <div className="order-summary"><div><span>Estado</span><b className={`order-state ${order.status}`}>{orderStates[order.status] || order.status}</b></div><div><span>Recibido</span><b>{formatDate(order.createdAt, true)}</b></div>{order.acceptedAt && <div><span>Aceptado</span><b>{formatDate(order.acceptedAt, true)}</b></div>}{total > 0 && <div><span>Total</span><b>{total.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' })}</b></div>}</div>
       <div className="order-detail"><span>Detalle del pedido</span><p>{order.detail || 'Sin detalle informado.'}</p></div>
       {order.items?.length ? <div className="order-items"><span>Productos</span>{order.items.map((item, index) => <article key={index}><b>{item.name || item.product || `Producto ${index + 1}`}</b>{item.quantity != null && <small>Cantidad: {item.quantity}</small>}{item.price != null && <small>Precio: {item.price}</small>}</article>)}</div> : null}
-      <footer className="modal-actions"><button className="button secondary" onClick={onClose}>Cerrar</button><button className="button primary" disabled={!order.contactId} onClick={onOpenConversation}>{'Ir a la conversaci\u00f3n'}</button></footer>
+      <footer className="modal-actions"><button className="button primary" onClick={onClose}>Cerrar</button></footer>
     </section>
   </div>;
 }
@@ -182,6 +182,6 @@ export default function SecondaryViews({ view, onNavigate, onOpenContact }: { vi
   if (view === 'dashboard') return <Dashboard onNavigate={onNavigate} />;
   if (view === 'tickets') return <Tickets onOpen={onOpenContact} />;
   if (view === 'contacts') return <Contacts onOpen={onOpenContact} />;
-  if (view === 'orders') return <Orders onOpen={onOpenContact} />;
+  if (view === 'orders') return <Orders />;
   return <Templates />;
 }

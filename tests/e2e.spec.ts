@@ -116,6 +116,7 @@ test('botones seguros, cierre de ficha y detalle de pedido responden', async ({ 
     await orderRows.first().click();
     await expect(page.getByRole('dialog')).toBeVisible();
     await expect(page.getByText('Detalle del pedido', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Ir a la conversación' })).toHaveCount(0);
     await page.getByRole('button', { name: 'Cerrar', exact: true }).click();
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await orderRows.first().click();
