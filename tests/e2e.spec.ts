@@ -82,3 +82,44 @@ test('imagen privada genera miniatura WebP autenticada', async ({ page }) => {
   expect(result.contentType).toContain('image/webp');
   expect(result.bytes).toBeGreaterThan(20);
 });
+
+test('botones seguros, cierre de ficha y detalle de pedido responden', async ({ page }) => {
+  await login(page);
+  const firstConversation = page.locator('.conv-row').first();
+  await expect(firstConversation).toBeVisible();
+  await firstConversation.click();
+  await expect(page.locator('.chat-head')).toBeVisible();
+
+  const info = page.getByRole('button', { name: 'Ver ficha comercial', exact: true });
+  await info.click();
+  await expect(page.locator('.contact-drawer.open')).toBeVisible();
+  await page.getByRole('button', { name: 'Cerrar ficha' }).click();
+  await expect(page.locator('.contact-drawer.open')).toHaveCount(0);
+  await expect(page.locator('.inbox-shell')).not.toHaveClass(/info-visible/);
+  await info.click();
+  await expect(page.locator('.contact-drawer.open')).toBeVisible();
+
+  const notifications = page.getByRole('button', { name: /Notificaciones/ });
+  const notificationBefore = await notifications.getAttribute('aria-pressed');
+  await notifications.click();
+  expect(await notifications.getAttribute('aria-pressed')).not.toBe(notificationBefore);
+  await notifications.click();
+  await page.getByLabel('Tema visual').selectOption('dark');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await page.getByLabel('Tema visual').selectOption('light');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+
+  await page.getByRole('button', { name: 'Pedidos', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Pedidos', exact: true })).toBeVisible();
+  const orderRows = page.locator('.order-table .table-row');
+  if (await orderRows.count()) {
+    await orderRows.first().click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(page.getByText('Detalle del pedido', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Cerrar', exact: true }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await orderRows.first().click();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+  }
+});

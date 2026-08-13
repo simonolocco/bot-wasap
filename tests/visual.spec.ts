@@ -36,6 +36,17 @@ for (const viewport of viewports) {
         }));
         expect(overflow.documentWidth).toBeLessThanOrEqual(overflow.viewportWidth + 1);
         await page.screenshot({ path: testInfo.outputPath(`${viewport.name}-${theme}-${navigation.toLowerCase()}.png`), fullPage: true });
+        if (navigation === 'Pedidos') {
+          const orders = page.locator('.order-table .table-row');
+          if (await orders.count()) {
+            await orders.first().click();
+            await expect(page.getByRole('dialog')).toBeVisible();
+            const modalOverflow = await page.evaluate(() => ({ documentWidth: document.documentElement.scrollWidth, viewportWidth: document.documentElement.clientWidth }));
+            expect(modalOverflow.documentWidth).toBeLessThanOrEqual(modalOverflow.viewportWidth + 1);
+            await page.screenshot({ path: testInfo.outputPath(`${viewport.name}-${theme}-pedido-abierto.png`), fullPage: true });
+            await page.getByRole('button', { name: 'Cerrar', exact: true }).click();
+          }
+        }
         if (navigation === 'Conversaciones') {
           const rows = page.locator('.conv-row');
           if (await rows.count()) {

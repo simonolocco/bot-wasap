@@ -4,6 +4,7 @@ import type {
   Contact,
   ConversationDetail,
   ConversationRow,
+  DashboardData,
   Message,
   SupportTicket,
 } from './types';
@@ -254,7 +255,7 @@ function Topbar({
       </div>
       <div className="topbar-actions">
         <span className="live-state"><i /> En vivo</span>
-        <button className="text-action" onClick={() => { if (!notifications && 'Notification' in window && Notification.permission === 'default') void Notification.requestPermission(); setNotifications(!notifications); }}>
+        <button className="text-action" aria-pressed={notifications} onClick={() => { if (!notifications && 'Notification' in window && Notification.permission === 'default') void Notification.requestPermission(); setNotifications(!notifications); }}>
           <SvgIcon name={notifications ? 'bell' : 'bellOff'} />
           <span>{notifications ? 'Notificaciones activadas' : 'Notificaciones silenciadas'}</span>
         </button>
@@ -1836,7 +1837,7 @@ export default function App() {
         />
 
         {view === 'inbox' ? (
-          <div className="inbox-shell">
+          <div className={`inbox-shell ${detail && infoOpen ? 'info-visible' : ''}`}>
             <aside className="conversation-pane">
               <ConversationList
                 items={conversations}

@@ -732,7 +732,9 @@ export async function listOrders(page: number, limit: number, filters: { status?
   if (filters.to) { values.push(filters.to); where.push(`o.created_at < $${values.length}::timestamptz`); }
   const limitIndex = values.length + 1; values.push(limit); const offsetIndex = values.length + 1; values.push(page * limit);
   const [data, count] = await Promise.all([
-    query(`SELECT o.id, o.contact_id AS "contactId", o.customer_name AS "customerName", o.detail, o.status, o.created_at AS "createdAt", c.phone FROM orders o LEFT JOIN contacts c ON c.id=o.contact_id WHERE ${where.join(' AND ')} ORDER BY o.created_at DESC LIMIT $${limitIndex} OFFSET $${offsetIndex}`, values),
+    query(`SELECT o.id, o.contact_id AS "contactId", o.customer_name AS "customerName", o.detail, o.items, o.grand_total AS "grandTotal", o.status,
+      o.accepted, o.accepted_at AS "acceptedAt", o.created_at AS "createdAt", c.phone
+      FROM orders o LEFT JOIN contacts c ON c.id=o.contact_id WHERE ${where.join(' AND ')} ORDER BY o.created_at DESC LIMIT $${limitIndex} OFFSET $${offsetIndex}`, values),
     query<{ count: string }>(`SELECT count(*)::text AS count FROM orders o WHERE ${where.join(' AND ')}`, values.slice(0, -2)),
   ]);
   return { items: data.rows, total: Number(count.rows[0].count), page, limit };
