@@ -36,6 +36,29 @@ for (const viewport of viewports) {
         }));
         expect(overflow.documentWidth).toBeLessThanOrEqual(overflow.viewportWidth + 1);
         await page.screenshot({ path: testInfo.outputPath(`${viewport.name}-${theme}-${navigation.toLowerCase()}.png`), fullPage: true });
+        if (navigation === 'Conversaciones') {
+          const rows = page.locator('.conv-row');
+          if (await rows.count()) {
+            await rows.first().click();
+            await expect(page.locator('.chat-head')).toBeVisible();
+            const info = page.getByRole('button', { name: 'Ver ficha comercial', exact: true });
+            if (await info.isVisible()) await info.click();
+            await expect(page.locator('.drawer-profile')).toBeVisible();
+            await expect(page.locator('.composer-input')).toBeVisible();
+            const emoji = page.getByRole('button', { name: 'Emojis', exact: true });
+            if (await emoji.isVisible()) {
+              await emoji.click();
+              await expect(page.locator('.emoji-popup')).toBeVisible();
+            }
+            const openOverflow = await page.evaluate(() => ({ documentWidth: document.documentElement.scrollWidth, viewportWidth: document.documentElement.clientWidth }));
+            expect(openOverflow.documentWidth).toBeLessThanOrEqual(openOverflow.viewportWidth + 1);
+            await page.screenshot({ path: testInfo.outputPath(`${viewport.name}-${theme}-conversacion-abierta.png`), fullPage: true });
+            const closeDrawer = page.getByRole('button', { name: 'Cerrar ficha' });
+            if (await closeDrawer.isVisible()) await closeDrawer.click();
+            const back = page.getByText('Volver a conversaciones', { exact: true });
+            if (await back.isVisible()) await back.click();
+          }
+        }
       }
     });
   }
