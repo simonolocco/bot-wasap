@@ -13,7 +13,7 @@ Dejar AbastoBot listo para recibir aproximadamente 500 contactos por día, conse
 - URL pública: `https://abasto-bot.cloud`.
 - VPS: Hostinger, proyecto en `/opt/abastobot`.
 - Producción activa y saludable:
-  - app y worker: `abastobot-app:7f373b2`;
+  - app y worker: `abastobot-app:0c29635`;
   - PostgreSQL: `abastobot-postgres:dba9e12`;
   - backup lógico, WAL-G y Caddy: activos.
 - `/healthz`, `/readyz` y `/` responden HTTP 200.
@@ -71,7 +71,8 @@ Dejar AbastoBot listo para recibir aproximadamente 500 contactos por día, conse
 - `24ab26d`: endurecimiento inicial, preflight, smoke y backups automáticos.
 - `c0b3250`: corrección del registro de estado de backups.
 - `dba9e12`: validación y captura correcta del UUID de cada backup. Es la candidata actual.
-- Paquete candidato en la VPS: `/opt/abastobot/releases/release-dba9e12.tar`.
+- `0c29635`: gestión de contactos desde el panel: alta manual, edición de nombre comercial y exportación CSV. Es la versión activa.
+- Paquete activo en la VPS: `/opt/abastobot/releases/release-0c29635.tar`.
 - Imágenes ya construidas en la VPS:
   - `abastobot-app:dba9e12`;
   - `abastobot-postgres:dba9e12`;
@@ -92,8 +93,8 @@ Esto demuestra que PostgreSQL, las migraciones y la app candidata arrancan corre
 
 ## Rollback disponible
 
-- App anterior activa: `abastobot-app:446a629`.
-- PostgreSQL anterior activo: `abastobot-postgres:local`.
+- App anterior disponible: `abastobot-app:c632719`.
+- PostgreSQL disponible: `abastobot-postgres:dba9e12`.
 - Código previo: `/opt/abastobot/releases/pre-24ab26d-source.tar.gz`.
 - Configuración de rollback: `/opt/abastobot/releases/.env.rollback-pre-dba9e12`.
 - No eliminar estas imágenes ni archivos hasta completar y observar el despliegue nuevo.
@@ -176,10 +177,19 @@ El despliegue requerido quedó completado. La siguiente lista queda como procedi
 - El nombre comercial también se puede editar desde la ficha del contacto y queda guardado en PostgreSQL.
 - La creación manual requiere sesión de administrador y queda registrada en la auditoría.
 
+## Control posterior al despliegue de contactos (2026-08-14)
+
+- App y worker activos con la imagen `abastobot-app:0c29635`.
+- `/healthz`, `/readyz` y la pantalla principal responden correctamente; la API de contactos exige sesión de administrador (`401` sin sesión).
+- La cola de trabajos no tiene pendientes: sólo se observaron trabajos `completed`.
+- Worker con heartbeat reciente y archivado PostgreSQL en `94` WAL, `0` fallos.
+- No hubo errores `error`, `exception`, `fatal` ni `unhandled` en los logs de app/worker durante los 10 minutos posteriores al despliegue.
+- El bundle publicado contiene las acciones **Descargar contactos** y **Agregar contacto**.
+
 ## Reglas de seguridad para continuar
 
 - Nunca imprimir `.env`, claves R2, secretos de Meta, contraseñas ni datos de clientes.
 - No guardar secretos en Git.
 - No borrar volúmenes o contenedores fuera de proyectos temporales con nombres validados.
-- Si falla un paso, mantener o restaurar `446a629` y `abastobot-postgres:local` antes de seguir investigando.
+- Si falla un paso, mantener o restaurar `c632719` y `abastobot-postgres:dba9e12` antes de seguir investigando.
 - La IA/Gemini no forma parte del camino crítico del bot y no es necesaria para los menús, carrito, pedidos, soporte ni respuestas predefinidas.
