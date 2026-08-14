@@ -12,12 +12,14 @@ Dejar AbastoBot listo para recibir aproximadamente 500 contactos por día, conse
 
 - URL pública: `https://abasto-bot.cloud`.
 - VPS: Hostinger, proyecto en `/opt/abastobot`.
-- El rollback automático dejó nuevamente activa la versión anterior:
-  - app y worker: `abastobot-app:446a629`;
-  - PostgreSQL: `abastobot-postgres:local`.
-- Después del rollback, `/healthz` y `/readyz` respondieron HTTP 200 y la app quedó saludable.
-- La base y las conversaciones no se perdieron.
-- El intento de activar la candidata no quedó en producción; el rollback se ejecutó antes de declarar el despliegue listo.
+- Producción activa y saludable:
+  - app y worker: `abastobot-app:dba9e12`;
+  - PostgreSQL: `abastobot-postgres:dba9e12`;
+  - backup lógico, WAL-G y Caddy: activos.
+- `/healthz`, `/readyz` y `/` responden HTTP 200.
+- El panel anónimo responde 401, HSTS está presente y `X-Frame-Options` es `DENY`.
+- La verificación pública del webhook de Meta funciona con el token reforzado.
+- La base y las conversaciones se conservaron.
 
 ## Capacidad y pruebas completadas
 
@@ -95,6 +97,8 @@ Esto demuestra que PostgreSQL, las migraciones y la app candidata arrancan corre
 
 ## Próximos pasos exactos
 
+El despliegue requerido quedó completado. La siguiente lista queda como procedimiento de verificación y mantenimiento; los puntos 1 a 11 fueron ejecutados el 2026-08-14.
+
 1. Confirmar otra vez que el bot anterior sigue saludable y que no quedó ningún proyecto temporal `abastobot-stage`.
 2. Extraer `release-dba9e12.tar` sobre `/opt/abastobot`.
 3. Conservar una copia de `/opt/abastobot/releases/.env.candidate-dba9e12` antes de activarla.
@@ -118,6 +122,24 @@ Esto demuestra que PostgreSQL, las migraciones y la app candidata arrancan corre
 11. Descargar desde R2 el dump nuevo y restaurarlo en una base temporal aislada; comparar conteos y eliminar solamente ese entorno temporal.
 12. Mantener las imágenes de rollback durante la observación inicial.
 
+## Resultado final verificado
+
+- PostgreSQL: `archive_mode=on`.
+- Archivador: 5 WAL archivados, 0 fallos al momento del control.
+- Último backup lógico: `succeeded` en R2.
+- Último backup físico WAL-G: `succeeded` en R2.
+- Cola activa: 0.
+- Worker heartbeat: reciente.
+- Errores recientes en app, worker, PostgreSQL, backup y WAL-G: 0.
+- Espacio libre de VPS: aproximadamente 37 GB.
+- Restauración real descargada desde R2 en una base aislada:
+  - 533 contactos;
+  - 276 mensajes;
+  - 118 webhooks;
+  - 34 pedidos;
+  - 0 mensajes huérfanos.
+- El contenedor, volumen y archivo utilizados para esa restauración se eliminaron al finalizar.
+
 ## Reglas de seguridad para continuar
 
 - Nunca imprimir `.env`, claves R2, secretos de Meta, contraseñas ni datos de clientes.
@@ -125,4 +147,3 @@ Esto demuestra que PostgreSQL, las migraciones y la app candidata arrancan corre
 - No borrar volúmenes o contenedores fuera de proyectos temporales con nombres validados.
 - Si falla un paso, mantener o restaurar `446a629` y `abastobot-postgres:local` antes de seguir investigando.
 - La IA/Gemini no forma parte del camino crítico del bot y no es necesaria para los menús, carrito, pedidos, soporte ni respuestas predefinidas.
-
