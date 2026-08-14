@@ -67,6 +67,15 @@ function isMenuCommand(text: string | undefined) {
   return ['hola', 'hola bot', 'buenas', 'buenas bot', 'buen dia', 'buenas tardes', 'buenas noches', 'menu', 'opciones', 'ver menu', 'ver opciones'].includes(normalized);
 }
 
+export function resolveIncomingMenuOption(incoming: Pick<Incoming, 'text' | 'selectedOptionId' | 'buttonReplyId'>): MenuOptionId | undefined {
+  const structuredOption = incoming.selectedOptionId ?? incoming.buttonReplyId;
+  if (structuredOption && MAIN_MENU_OPTIONS.some(item => item.id === structuredOption)) return structuredOption as MenuOptionId;
+  const normalizedText = normalizeText(incoming.text);
+  if (/^[1-6]\s+/.test(normalizedText)) return undefined;
+
+  return resolveOptionIdFromText(incoming.text);
+}
+
 function orderLinkMessage(detail: string, customerName: string, orderId: number) {
   return [
     '✅ Recibimos tu pedido.',
@@ -163,15 +172,13 @@ export async function processIncomingJob(job: { id: string; contact_id: string; 
       await completeJob(job.id);
       return;
     }
-    let option = incoming.selectedOptionId;
-    if (!option && incoming.buttonReplyId && MAIN_MENU_OPTIONS.some(item => item.id === incoming.buttonReplyId)) option = incoming.buttonReplyId as MenuOptionId;
+    let option = resolveIncomingMenuOption(incoming);
 
     const initialName = incoming.profileName?.trim() || session.display_name || '¡hola!';
     const firstInteraction = !session.greeted && await claimInitialGreeting(job.contact_id, initialName);
     if (firstInteraction) {
       await outgoing(job.contact_id, incoming.from, `${key}:greeting`, buildGreetingIntro(initialName));
       console.info(`[worker] Primera interacción de ${job.contact_id}: saludo enviado.`);
-      option = option ?? resolveOptionIdFromText(incoming.text);
       if (!option) { await sendMenu(job.contact_id, incoming.from, key); await completeJob(job.id); return; }
     }
 
@@ -183,7 +190,13 @@ export async function processIncomingJob(job: { id: string; contact_id: string; 
     }
 
     if (session.awaiting_order_detail) {
-      if (option) { await updateSession(job.contact_id, { awaitingOrderDetail: false }); await handleOption(job.contact_id, incoming, option, key); await completeJob(job.id); return; }
+      if (option) {
+        await updateSession(job.contact_id, { awaitingOrderDetail: false });
+        console.info(`[worker] Modo pedido cancelado por ${job.contact_id}; eligió la opción ${option}.`);
+        await handleOption(job.contact_id, incoming, option, key);
+        await completeJob(job.id);
+        return;
+      }
       const text = incoming.text?.trim() ?? '';
       if (!text) { await outgoing(job.contact_id, incoming.from, `${key}:empty-order`, EMPTY_ORDER_MESSAGE); await completeJob(job.id); return; }
       if (['menu', 'cancelar'].includes(text.toLowerCase()) || /\bhola\b/i.test(text)) { await updateSession(job.contact_id, { awaitingOrderDetail: false }); console.info(`[worker] Modo pedido cancelado por ${job.contact_id}; menú solicitado.`); await sendMenu(job.contact_id, incoming.from, key); await completeJob(job.id); return; }
@@ -196,7 +209,6 @@ export async function processIncomingJob(job: { id: string; contact_id: string; 
       return;
     }
 
-    option = option ?? resolveOptionIdFromText(incoming.text);
     if (!option) {
       if (menuCommand) { console.info(`[worker] Menú solicitado por ${job.contact_id}.`); await sendMenu(job.contact_id, incoming.from, key); }
       await completeJob(job.id); return;

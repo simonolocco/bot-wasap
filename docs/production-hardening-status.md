@@ -156,6 +156,13 @@ El despliegue requerido quedó completado. La siguiente lista queda como procedi
 - El acceso anónimo y la descarga del archivo fueron verificados antes del despliegue.
 - Para conservar el mismo enlace, reemplazar el contenido desde **Administrar versiones** en Google Drive; no eliminar ni crear otro archivo.
 
+## Cambio de opción durante un pedido (2026-08-14)
+
+- Si el cliente inicia “Nuevo Pedido” y luego elige otra opción del menú, el pedido pendiente se cancela.
+- El bot responde inmediatamente a la nueva opción elegida, por ejemplo horarios, precios o asesor humano.
+- La detección funciona tanto con el identificador interno del botón como cuando Meta entrega solamente el texto visible de la opción.
+- Un texto normal con productos continúa procesándose como pedido.
+
 ## Reglas de seguridad para continuar
 
 - Nunca imprimir `.env`, claves R2, secretos de Meta, contraseñas ni datos de clientes.
