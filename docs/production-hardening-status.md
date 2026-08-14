@@ -150,6 +150,12 @@ El despliegue requerido quedó completado. La siguiente lista queda como procedi
 - La misma descripción queda guardada en PostgreSQL para visualizarla y reintentar el envío sin perderla.
 - El límite de descripción para archivos es de 1024 caracteres, acorde al envío multimedia de WhatsApp.
 
+## Lista minorista (2026-08-14)
+
+- Enlace público vigente: `https://drive.google.com/file/d/1_mQxhP0oKDIJdBonfHSD2YudV3pqtHRQ/view`.
+- El acceso anónimo y la descarga del archivo fueron verificados antes del despliegue.
+- Para conservar el mismo enlace, reemplazar el contenido desde **Administrar versiones** en Google Drive; no eliminar ni crear otro archivo.
+
 ## Reglas de seguridad para continuar
 
 - Nunca imprimir `.env`, claves R2, secretos de Meta, contraseñas ni datos de clientes.

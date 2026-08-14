@@ -13,7 +13,7 @@ const BOT_FRIENDLY_NAME = process.env.BOT_FRIENDLY_NAME ?? 'AbastoBot';
 const CATALOG_MAYORISTA_URL =
   process.env.CATALOG_MAYORISTA_URL ?? 'https://catalogo.mi-distribuidora.com/catalogo-mayorista.html';
 const CATALOG_MINORISTA_URL =
-  process.env.CATALOG_MINORISTA_URL ?? 'https://catalogo.mi-distribuidora.com/catalogo-minorista.html';
+  process.env.CATALOG_MINORISTA_URL ?? 'https://drive.google.com/file/d/1_mQxhP0oKDIJdBonfHSD2YudV3pqtHRQ/view';
 
 export const MENU_HEADER_TEXT = '👋 ¡Hola! Bienvenido';
 // export const MENU_HEADER_IMAGE = 'https://example.com/logo.jpg'; // Descomentar y poner URL real si se desea imagen
