@@ -143,6 +143,13 @@ El despliegue requerido quedó completado. La siguiente lista queda como procedi
   - 0 mensajes huérfanos.
 - El contenedor, volumen y archivo utilizados para esa restauración se eliminaron al finalizar.
 
+## Corrección de PDF con texto (2026-08-14)
+
+- La bandeja ahora envía el texto escrito junto al PDF como descripción del mismo mensaje de WhatsApp.
+- El servidor también recupera ese texto aunque un cliente anterior no envíe explícitamente el campo de descripción.
+- La misma descripción queda guardada en PostgreSQL para visualizarla y reintentar el envío sin perderla.
+- El límite de descripción para archivos es de 1024 caracteres, acorde al envío multimedia de WhatsApp.
+
 ## Reglas de seguridad para continuar
 
 - Nunca imprimir `.env`, claves R2, secretos de Meta, contraseñas ni datos de clientes.

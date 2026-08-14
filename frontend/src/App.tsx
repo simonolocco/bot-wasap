@@ -1714,7 +1714,9 @@ export default function App() {
       body: JSON.stringify({
         body, assetId: asset?.assetId, mediaId: asset?.mediaId,
         mediaType: asset?.mediaType, mediaMimeType: asset?.mimeType,
-        mediaFilename: asset?.filename, mediaSize: asset?.size, quoteMessageId,
+        mediaFilename: asset?.filename, mediaSize: asset?.size,
+        caption: asset && asset.mediaType !== 'audio' ? body.trim() : undefined,
+        quoteMessageId,
       }),
     });
     setQuote(null);

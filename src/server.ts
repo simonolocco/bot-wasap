@@ -284,12 +284,15 @@ app.post('/api/conversations/:id/messages', async (req, res) => {
   const quote = parsed.data.quoteMessageId ? await getMessageById(parsed.data.quoteMessageId) : null;
   if (parsed.data.quoteMessageId && (!quote || quote.contactId !== req.params.id)) return res.status(400).json({ error: 'El mensaje citado no pertenece a esta conversación.' });
   const messageType = parsed.data.mediaType ?? 'text';
-  const body = parsed.data.body.trim() || parsed.data.caption || `[${messageType}]`;
-  const stored = await prepareManualMessage(req.params.id, `manual:${crypto.randomUUID()}`, body, messageType, mediaId ? { id: mediaId, assetId: asset?.id, mimeType: asset?.mimeType ?? parsed.data.mediaMimeType, filename: asset?.filename ?? parsed.data.mediaFilename, size: asset?.sizeBytes ?? parsed.data.mediaSize, caption: parsed.data.caption } : undefined, parsed.data.quoteMessageId);
+  const typedBody = parsed.data.body.trim();
+  const mediaCaption = mediaId && messageType !== 'audio' ? (parsed.data.caption?.trim() || typedBody || undefined) : undefined;
+  if (mediaCaption && mediaCaption.length > 1024) return res.status(400).json({ error: 'El texto que acompaña al archivo no puede superar los 1024 caracteres.' });
+  const body = typedBody || mediaCaption || `[${messageType}]`;
+  const stored = await prepareManualMessage(req.params.id, `manual:${crypto.randomUUID()}`, body, messageType, mediaId ? { id: mediaId, assetId: asset?.id, mimeType: asset?.mimeType ?? parsed.data.mediaMimeType, filename: asset?.filename ?? parsed.data.mediaFilename, size: asset?.sizeBytes ?? parsed.data.mediaSize, caption: mediaCaption } : undefined, parsed.data.quoteMessageId);
   try {
     const providerId = mediaId
-      ? await sendCloudMessage(buildMediaPayload(contact.phone, mediaId, parsed.data.mediaType!, parsed.data.caption, asset?.filename ?? parsed.data.mediaFilename, quote?.providerMessageId))
-      : await sendCloudTextMessage(contact.phone, parsed.data.body.trim(), quote?.providerMessageId);
+      ? await sendCloudMessage(buildMediaPayload(contact.phone, mediaId, parsed.data.mediaType!, mediaCaption, asset?.filename ?? parsed.data.mediaFilename, quote?.providerMessageId))
+      : await sendCloudTextMessage(contact.phone, typedBody, quote?.providerMessageId);
     await markOutgoingSent(stored.id, providerId);
     await audit(req.session.user ?? 'admin', 'manual_message_sent', req.params.id, stored.id, { messageType, assetId: asset?.id ?? null, quoteMessageId: parsed.data.quoteMessageId ?? null });
     return res.status(201).json({ id: stored.id, deliveryStatus: 'sent' });

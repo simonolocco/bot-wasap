@@ -89,7 +89,7 @@ test('imagen privada genera miniatura WebP autenticada', async ({ page, request 
     const asset = await uploaded.json();
     const sent = await fetch(`/api/conversations/${contact.id}/messages`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ assetId: asset.assetId, mediaType: 'image', caption: 'Prueba visual QA' }),
+      body: JSON.stringify({ body: 'Prueba visual QA', assetId: asset.assetId, mediaType: 'image' }),
     });
     if (!sent.ok) throw new Error(`El envÃ­o respondiÃ³ ${sent.status}`);
     const message = await sent.json();
