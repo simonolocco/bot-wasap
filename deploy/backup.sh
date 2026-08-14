@@ -10,7 +10,8 @@ media_file="/tmp/abastobot-media-${stamp}.tar.gz"
 media_key=""
 run_id="$(psql "$DATABASE_URL" -Atc "INSERT INTO backup_runs (kind,status,metadata) VALUES ('logical','running',jsonb_build_object('tool','pg_dump')) RETURNING id")"
 failed() {
-  psql "$DATABASE_URL" -v run_id="$run_id" -c "UPDATE backup_runs SET status='failed', completed_at=now(), error='Logical backup failed' WHERE id=:'run_id'" >/dev/null 2>&1 || true
+  printf '%s\n' "UPDATE backup_runs SET status='failed', completed_at=now(), error='Logical backup failed' WHERE id=:'run_id'" \
+    | psql "$DATABASE_URL" -v run_id="$run_id" >/dev/null 2>&1 || true
 }
 trap failed INT TERM HUP EXIT
 pg_dump "$DATABASE_URL" | gzip > "$file"
@@ -35,9 +36,11 @@ if [ "$(date -u +%u)" = "7" ]; then
 fi
 
 if [ -n "$media_key" ]; then
-  psql "$DATABASE_URL" -v run_id="$run_id" -v key="abastobot/daily/${stamp}.dump.gz" -v media_key="$media_key" -c "UPDATE backup_runs SET status='succeeded', completed_at=now(), object_key=:'key', metadata=jsonb_build_object('tool','pg_dump','mediaKey',:'media_key') WHERE id=:'run_id'" >/dev/null
+  printf '%s\n' "UPDATE backup_runs SET status='succeeded', completed_at=now(), object_key=:'key', metadata=jsonb_build_object('tool','pg_dump','mediaKey',:'media_key') WHERE id=:'run_id'" \
+    | psql "$DATABASE_URL" -v run_id="$run_id" -v key="abastobot/daily/${stamp}.dump.gz" -v media_key="$media_key" >/dev/null
 else
-  psql "$DATABASE_URL" -v run_id="$run_id" -v key="abastobot/daily/${stamp}.dump.gz" -v media_prefix="${MEDIA_S3_PREFIX:-abastobot/media}" -c "UPDATE backup_runs SET status='succeeded', completed_at=now(), object_key=:'key', metadata=jsonb_build_object('tool','pg_dump','mediaStoredSeparately',true,'mediaPrefix',:'media_prefix') WHERE id=:'run_id'" >/dev/null
+  printf '%s\n' "UPDATE backup_runs SET status='succeeded', completed_at=now(), object_key=:'key', metadata=jsonb_build_object('tool','pg_dump','mediaStoredSeparately',true,'mediaPrefix',:'media_prefix') WHERE id=:'run_id'" \
+    | psql "$DATABASE_URL" -v run_id="$run_id" -v key="abastobot/daily/${stamp}.dump.gz" -v media_prefix="${MEDIA_S3_PREFIX:-abastobot/media}" >/dev/null
 fi
 trap - INT TERM HUP EXIT
 rm -f "$file" "$media_file"
