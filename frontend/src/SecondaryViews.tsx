@@ -61,6 +61,7 @@ function Dashboard({ onNavigate }: { onNavigate: (view: SecondaryView | 'inbox')
   useEffect(load, []);
   if (!data) return <ViewState loading={!error} error={error} empty={false} onRetry={load} />;
   const work = data.work || {};
+  const totalContacts = Number(data.stats?.total ?? 0);
   const healthy = data.worker?.healthy && !Number(data.failures?.failedMessages || 0) && !data.queue?.failed;
   return (
     <div className="dashboard-grid">
@@ -71,7 +72,7 @@ function Dashboard({ onNavigate }: { onNavigate: (view: SecondaryView | 'inbox')
       <section className="metric-grid" aria-label="Métricas comerciales">
         {[
           ['Sin leer', work.unread || 0, 'conversaciones', 'inbox'],
-          ['Nuevas', work.new || 0, 'por atender', 'contacts'],
+          ['Contactos', totalContacts, 'registrados', 'contacts'],
           ['Seguimientos', work.overdueFollowUps || 0, 'vencidos', 'contacts'],
           ['Pedidos', work.newOrders || 0, 'nuevos', 'orders'],
         ].map(([label, value, hint, destination]) => (

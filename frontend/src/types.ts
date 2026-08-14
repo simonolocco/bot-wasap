@@ -109,6 +109,7 @@ export type ConversationDetail = {
 };
 
 export type DashboardData = {
+  stats: { total: number | string; optedIn: number | string; unknown: number | string; optedOut: number | string };
   transport: 'mock' | 'cloud';
   cloudReady: boolean;
   work: Record<string, number>;

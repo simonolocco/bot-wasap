@@ -1200,6 +1200,7 @@ function DashboardView({ onOpen }: { onOpen: (v: View) => void }) {
   const [data, setData] = useState<DashboardData | null>(null);
   useEffect(() => { void api<DashboardData>('/api/dashboard').then(setData); }, []);
   const work = data?.work || {};
+  const totalContacts = Number(data?.stats?.total ?? 0);
   const ageSeconds = (value?: string | null) => value ? Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 1000)) : null;
   const providerAge = ageSeconds(data?.provider?.lastActivityAt);
   const backupAge = ageSeconds(data?.backup?.completedAt);
@@ -1239,7 +1240,7 @@ function DashboardView({ onOpen }: { onOpen: (v: View) => void }) {
         <div className="metric-grid">
           {([
             ['Sin leer', work.unread || 0, 'conversaciones'],
-            ['Nuevas', work.new || 0, 'por atender'],
+            ['Contactos', totalContacts, 'registrados'],
             ['Vencidos', work.overdueFollowUps || 0, 'seguimientos'],
             ['Pedidos', work.newOrders || 0, 'nuevos'],
           ] as const).map(([label, value, hint]) => (
