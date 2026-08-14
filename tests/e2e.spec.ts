@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import crypto from 'node:crypto';
 import { login, openNavigationOnMobile } from './helpers';
 
 test('las APIs privadas rechazan sesiones anónimas', async ({ request }) => {
@@ -56,12 +57,29 @@ test('login, navegación principal, salud y logout', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Ingresar' })).toBeVisible();
 });
 
-test('imagen privada genera miniatura WebP autenticada', async ({ page }) => {
+test('imagen privada genera miniatura WebP autenticada', async ({ page, request }) => {
+  const run = Date.now().toString();
+  const phone = `549110${run.slice(-7)}`;
+  const webhookPayload = {
+    object: 'whatsapp_business_account',
+    entry: [{ changes: [{ value: {
+      contacts: [{ profile: { name: `QA Media ${run}` }, wa_id: phone }],
+      messages: [{ from: phone, id: `wamid.qa-media-${run}`, timestamp: String(Math.floor(Date.now() / 1000)), type: 'text', text: { body: 'hola' } }],
+    } }] }],
+  };
+  const rawPayload = JSON.stringify(webhookPayload);
+  const signature = crypto.createHmac('sha256', process.env.META_APP_SECRET ?? 'qa-app-secret').update(rawPayload).digest('hex');
+  const incoming = await request.post('/webhook', {
+    data: rawPayload,
+    headers: { 'content-type': 'application/json', 'x-hub-signature-256': `sha256=${signature}` },
+  });
+  expect(incoming.status()).toBe(200);
+
   await login(page);
-  const result = await page.evaluate(async () => {
-    const conversations = await fetch('/api/conversations?limit=1').then(response => response.json());
+  const result = await page.evaluate(async currentPhone => {
+    const conversations = await fetch(`/api/conversations?q=${encodeURIComponent(currentPhone)}&limit=1`).then(response => response.json());
     const contact = conversations.items?.[0];
-    if (!contact) throw new Error('El entorno QA necesita al menos una conversaciÃ³n sintÃ©tica.');
+    if (!contact) throw new Error('No se encontró la conversación sintética recién creada.');
     const binary = atob('iVBORw0KGgoAAAANSUhEUgAAABAAAAAMCAYAAABr5z2BAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAGklEQVQokWPgb8n5TwlmGDXg/2gY5AyHMAAA1xd+kP6IR7AAAAAASUVORK5CYII=');
     const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
     const form = new FormData();
@@ -77,7 +95,7 @@ test('imagen privada genera miniatura WebP autenticada', async ({ page }) => {
     const message = await sent.json();
     const thumbnail = await fetch(`/api/messages/${message.id}/media/thumbnail?w=240`);
     return { status: thumbnail.status, contentType: thumbnail.headers.get('content-type'), bytes: (await thumbnail.arrayBuffer()).byteLength };
-  });
+  }, phone);
   expect(result.status).toBe(200);
   expect(result.contentType).toContain('image/webp');
   expect(result.bytes).toBeGreaterThan(20);

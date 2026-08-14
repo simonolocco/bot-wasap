@@ -13,6 +13,7 @@ failed() {
 trap failed INT TERM HUP EXIT
 
 wal-g backup-push "$PGDATA"
+wal-g delete retain FULL "${WALG_RETAIN_FULL_BACKUPS:-2}" --confirm
 psql "$DATABASE_URL" -v run_id="$run_id" -v key="$WALG_S3_PREFIX" -c "UPDATE backup_runs SET status='succeeded', completed_at=now(), object_key=:'key', metadata=jsonb_build_object('tool','wal-g') WHERE id=:'run_id'" >/dev/null
 
 trap - INT TERM HUP EXIT

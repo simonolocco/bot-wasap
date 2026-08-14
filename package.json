@@ -20,7 +20,7 @@
     "password:hash": "ts-node scripts/hashPassword.ts",
     "test:load": "ts-node scripts/loadWebhook.ts",
     "test:scale": "ts-node scripts/testScale.ts",
-    "test:unit": "npm run test:bot && npm run test:tickets && ts-node scripts/testUnit.ts",
+    "test:unit": "npm run test:bot && npm run test:tickets && ts-node scripts/testUnit.ts && ts-node scripts/testProductionConfig.ts",
     "test:integration": "ts-node scripts/testIntegration.ts",
     "test:e2e": "playwright test tests/e2e.spec.ts --project=chromium",
     "test:visual": "playwright test tests/visual.spec.ts --project=chromium",
@@ -33,7 +33,10 @@
     "test:bot": "ts-node scripts/testBotFlows.ts",
     "test:frontend": "npm run typecheck:frontend",
     "ngrok": "ts-node scripts/runNgrok.ts",
-    "embeddings": "ts-node scripts/generateEmbeddings.ts"
+    "embeddings": "ts-node scripts/generateEmbeddings.ts",
+    "production:preflight": "ts-node scripts/preflightProduction.ts",
+    "production:smoke": "ts-node scripts/smokeProduction.ts",
+    "production:check": "npm run production:preflight && npm run production:smoke"
   },
   "keywords": [],
   "author": "",

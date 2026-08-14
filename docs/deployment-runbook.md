@@ -4,7 +4,7 @@ Ventana aprobada: 02:00–05:00 ART. Requiere aprobación explícita del informe
 
 ## Antes de desplegar
 
-1. Confirmar suite completa verde y staging restaurado.
+1. Ejecutar `npm run production:preflight` y confirmar la suite completa verde y staging restaurado.
 2. Asignar tags inmutables `APP_IMAGE_TAG` y `POSTGRES_IMAGE_TAG`; registrar digest y commit.
 3. Guardar el tag actualmente desplegado como rollback.
 4. Ejecutar backup físico WAL-G, forzar un WAL switch y confirmar que el archivo llegó al bucket.
@@ -17,7 +17,7 @@ Ventana aprobada: 02:00–05:00 ART. Requiere aprobación explícita del informe
 2. Construir o descargar las imágenes con sus tags inmutables.
 3. Ejecutar migraciones una sola vez y abortar ante cualquier error.
 4. Recrear app y worker; recrear PostgreSQL sólo cuando el cambio WAL-G esté aprobado y haya backup recuperable.
-5. Verificar `/healthz`, `/readyz`, dashboard operacional, worker heartbeat, cola y `pg_stat_archiver`.
+5. Ejecutar `npm run production:smoke` y verificar dashboard operacional, worker heartbeat, cola, último backup y `pg_stat_archiver`.
 6. Ejecutar smoke test WhatsApp con el número dedicado: saludo, menú, pedido, asesor, texto y archivo; localizar y responder desde el panel.
 7. Observar durante una hora y revisar otra vez a las 24 horas.
 

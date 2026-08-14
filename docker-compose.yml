@@ -90,7 +90,7 @@ services:
     build:
       context: .
       dockerfile: deploy/backup.Dockerfile
-    profiles: ["backup"]
+    profiles: ["backup", "production"]
     restart: unless-stopped
     environment: *app_env
     env_file: .env
@@ -105,7 +105,7 @@ services:
     build:
       context: .
       dockerfile: deploy/postgres-walg.Dockerfile
-    profiles: ["backup"]
+    profiles: ["backup", "production"]
     restart: unless-stopped
     command: ["/bin/sh", "-c", "while true; do walg-backup; sleep 86400; done"]
     environment:
@@ -122,6 +122,7 @@ services:
       AWS_REGION: ${AWS_DEFAULT_REGION:-auto}
       AWS_S3_FORCE_PATH_STYLE: ${AWS_S3_FORCE_PATH_STYLE:-false}
       WALG_COMPRESSION_METHOD: zstd
+      WALG_RETAIN_FULL_BACKUPS: ${WALG_RETAIN_FULL_BACKUPS:-2}
     volumes:
       - postgres_data:/var/lib/postgresql/data:ro
     depends_on:

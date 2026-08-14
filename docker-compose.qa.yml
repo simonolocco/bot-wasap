@@ -28,7 +28,7 @@ services:
       ALLOW_LIVE_WHATSAPP: "false"
       ALLOW_UNSIGNED_WEBHOOKS: "false"
       ADMIN_USERNAME: qa-admin
-      ADMIN_PASSWORD_HASH: "$$2b$$12$$meNpbo3AFdjX3XMixraXe.MfaGQV3ypRI9D66VWs.uMjqamhu7Ahy"
+      ADMIN_PASSWORD_HASH: "$$2b$$12$$ZfhkAvQVprwIjp2gttyYk.OZqkMNKEzUjP0ZwEknbRcHHRolgRwVm"
       SESSION_SECRET: qa-session-secret-that-is-only-used-by-automated-tests
       MEDIA_STORAGE_DRIVER: local
       MEDIA_STORAGE_PATH: /app/storage/media
