@@ -163,6 +163,12 @@ El despliegue requerido quedó completado. La siguiente lista queda como procedi
 - La detección funciona tanto con el identificador interno del botón como cuando Meta entrega solamente el texto visible de la opción.
 - Un texto normal con productos continúa procesándose como pedido.
 
+## Métrica de contactos del panel (2026-08-14)
+
+- La tarjeta que mostraba “Nuevas” usaba el total histórico de contactos, por lo que su etiqueta era incorrecta.
+- Ahora se muestra como **Contactos registrados** y conserva el acceso directo al listado de contactos.
+- Se actualizó tanto el panel principal como la vista alternativa del resumen.
+
 ## Reglas de seguridad para continuar
 
 - Nunca imprimir `.env`, claves R2, secretos de Meta, contraseñas ni datos de clientes.
