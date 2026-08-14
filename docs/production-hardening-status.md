@@ -13,7 +13,7 @@ Dejar AbastoBot listo para recibir aproximadamente 500 contactos por día, conse
 - URL pública: `https://abasto-bot.cloud`.
 - VPS: Hostinger, proyecto en `/opt/abastobot`.
 - Producción activa y saludable:
-  - app y worker: `abastobot-app:0c29635`;
+  - app y worker: `abastobot-app:4ae3deb`;
   - PostgreSQL: `abastobot-postgres:dba9e12`;
   - backup lógico, WAL-G y Caddy: activos.
 - `/healthz`, `/readyz` y `/` responden HTTP 200.
@@ -71,8 +71,9 @@ Dejar AbastoBot listo para recibir aproximadamente 500 contactos por día, conse
 - `24ab26d`: endurecimiento inicial, preflight, smoke y backups automáticos.
 - `c0b3250`: corrección del registro de estado de backups.
 - `dba9e12`: validación y captura correcta del UUID de cada backup. Es la candidata actual.
-- `0c29635`: gestión de contactos desde el panel: alta manual, edición de nombre comercial y exportación CSV. Es la versión activa.
-- Paquete activo en la VPS: `/opt/abastobot/releases/release-0c29635.tar`.
+- `0c29635`: gestión de contactos desde el panel: alta manual, edición de nombre comercial y exportación CSV.
+- `4ae3deb`: botón de borrado manual de contactos con confirmación y auditoría. Es la versión activa.
+- Paquete activo en la VPS: `/opt/abastobot/releases/release-4ae3deb.tar`.
 - Imágenes ya construidas en la VPS:
   - `abastobot-app:dba9e12`;
   - `abastobot-postgres:dba9e12`;
@@ -93,7 +94,7 @@ Esto demuestra que PostgreSQL, las migraciones y la app candidata arrancan corre
 
 ## Rollback disponible
 
-- App anterior disponible: `abastobot-app:c632719`.
+- App anterior disponible: `abastobot-app:0c29635`.
 - PostgreSQL disponible: `abastobot-postgres:dba9e12`.
 - Código previo: `/opt/abastobot/releases/pre-24ab26d-source.tar.gz`.
 - Configuración de rollback: `/opt/abastobot/releases/.env.rollback-pre-dba9e12`.
@@ -179,7 +180,7 @@ El despliegue requerido quedó completado. La siguiente lista queda como procedi
 
 ## Control posterior al despliegue de contactos (2026-08-14)
 
-- App y worker activos con la imagen `abastobot-app:0c29635`.
+- App y worker activos con la imagen `abastobot-app:4ae3deb`.
 - `/healthz`, `/readyz` y la pantalla principal responden correctamente; la API de contactos exige sesión de administrador (`401` sin sesión).
 - La cola de trabajos no tiene pendientes: sólo se observaron trabajos `completed`.
 - Worker con heartbeat reciente y archivado PostgreSQL en `94` WAL, `0` fallos.
