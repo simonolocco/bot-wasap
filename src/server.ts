@@ -10,7 +10,7 @@ import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { buildMediaPayload, getWhatsAppTransport, hasCloudCredentials, sendCloudMessage, sendCloudTextMessage, uploadCloudMedia } from './cloudClient';
 import { pool, query } from './db/pool';
-import { audit, claimOrderTicketFallback, claimOrderTicketFallbackById, closeSupportTicket, dashboard, deleteTemplate, getConversation, getContactById, getMediaAssetById, getMediaAssetByMessageId, getMessageById, getTicketById, listAudit, listContacts, listConversations, listMessages, listOrders, listTemplates, listTickets, markConversationRead, markOutgoingFailed, markOutgoingSent, prepareManualMessage, prepareOutgoingMessage, previewCampaignSegment, recordMessageStatus, retryOutgoingMessage, saveTemplate, setBotPaused, storeIncomingEvent, updateContact, updateMediaAsset, updateOrder, type SupportTicket } from './db/repository';
+import { audit, claimOrderTicketFallback, claimOrderTicketFallbackById, closeSupportTicket, createContact, dashboard, deleteTemplate, exportContacts, getConversation, getContactById, getMediaAssetById, getMediaAssetByMessageId, getMessageById, getTicketById, listAudit, listContacts, listConversations, listMessages, listOrders, listTemplates, listTickets, markConversationRead, markOutgoingFailed, markOutgoingSent, prepareManualMessage, prepareOutgoingMessage, previewCampaignSegment, recordMessageStatus, retryOutgoingMessage, saveTemplate, setBotPaused, storeIncomingEvent, updateContact, updateMediaAsset, updateOrder, type SupportTicket } from './db/repository';
 import { orderWindowExpired, sendOrderTicketFallback } from './services/orderTicketFallback';
 import { MENU_BUTTON_LABEL, MENU_HEADER_TEXT, MENU_PROMPT, buildMenuListSections, ticketClosureMessage } from './messageCatalog';
 import { checkMediaStorage, ensureMediaCached, ensureMediaThumbnail, isSafeUpload, markMediaUploadFailed, storeMedia } from './services/mediaStorage';
@@ -145,6 +145,12 @@ function requireAdmin(req: Request, res: Response, next: NextFunction) { return 
 function positive(value: unknown, fallback: number, maximum: number) { const parsed = Number(value); return Number.isInteger(parsed) && parsed > 0 ? Math.min(parsed, maximum) : fallback; }
 function page(value: unknown) { const parsed = Number(value); return Number.isInteger(parsed) && parsed >= 0 ? parsed : 0; }
 function qs(value: unknown) { return typeof value === 'string' ? value.trim().slice(0, 160) : undefined; }
+function csvCell(value: unknown) {
+  const raw = value == null ? '' : String(value);
+  const safe = /^[=+\-@]/.test(raw) ? `'${raw}` : raw;
+  return `"${safe.replace(/"/g, '""')}"`;
+}
+
 
 const closeReasons = ['order_completed', 'question_answered', 'customer_no_reply', 'operator_cancelled'] as const;
 type ManualCloseReason = typeof closeReasons[number];
@@ -362,6 +368,24 @@ app.post('/api/tickets/:id/order-link', async (req, res) => {
   }
 });
 app.post('/api/conversations/:id/read', async (req, res) => { const contact = await markConversationRead(req.params.id); if (contact) await audit(req.session.user ?? 'admin', 'conversation_read', req.params.id); return contact ? res.json(contact) : res.status(404).json({ error: 'Contacto inexistente.' }); });
+app.post('/api/contacts', async (req, res) => {
+  const parsed = z.object({ phone: z.string().min(6).max(30), name: z.string().trim().min(1).max(200) }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'Indicá un teléfono y un nombre válidos.' });
+  const phone = parsed.data.phone.replace(/\D/g, '');
+  if (phone.length < 6 || phone.length > 20) return res.status(400).json({ error: 'El teléfono debe tener entre 6 y 20 dígitos.' });
+  const contact = await createContact(phone, parsed.data.name);
+  if (!contact) return res.status(409).json({ error: 'No se pudo guardar el contacto.' });
+  await audit(req.session.user ?? 'admin', 'contact_created', contact.id, undefined, { source: 'admin' });
+  return res.status(201).json(contact);
+});
+app.get('/api/contacts/export', async (req, res) => {
+  const rows = await exportContacts({ q: qs(req.query.q), consent: qs(req.query.consent) });
+  const header = ['Nombre', 'Teléfono', 'Consentimiento', 'Etiquetas', 'Estado', 'Última actividad'];
+  const body = rows.map(row => [row.name, row.phone, row.consentStatus, Array.isArray(row.labels) ? row.labels.join(', ') : '', row.pipelineStatus, row.lastMessageAt].map(csvCell).join(','));
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="contactos.csv"');
+  return res.send(`\uFEFF${[header.map(csvCell).join(','), ...body].join('\r\n')}\r\n`);
+});
 app.get('/api/contacts/:id', async (req, res) => { const contact = await getContactById(req.params.id); return contact ? res.json(contact) : res.status(404).json({ error: 'Contacto inexistente.' }); });
 app.get('/api/contacts', async (req, res) => res.json(await listContacts({ q: qs(req.query.q), consent: qs(req.query.consent), page: page(req.query.page), limit: positive(req.query.limit, 50, 100) })));
 app.patch('/api/contacts/:id', async (req, res) => updateConversation(req, res));

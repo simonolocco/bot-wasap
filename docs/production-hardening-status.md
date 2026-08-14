@@ -169,6 +169,13 @@ El despliegue requerido quedó completado. La siguiente lista queda como procedi
 - Ahora se muestra como **Contactos registrados** y conserva el acceso directo al listado de contactos.
 - Se actualizó tanto el panel principal como la vista alternativa del resumen.
 
+## Gestión de contactos del panel (2026-08-14)
+
+- La vista **Contactos** permite descargar toda la lista visible en un CSV; respeta la búsqueda y el filtro de consentimiento activos.
+- **Agregar contacto** permite cargar un teléfono y un nombre comercial, incluso antes de que ese número escriba por WhatsApp.
+- El nombre comercial también se puede editar desde la ficha del contacto y queda guardado en PostgreSQL.
+- La creación manual requiere sesión de administrador y queda registrada en la auditoría.
+
 ## Reglas de seguridad para continuar
 
 - Nunca imprimir `.env`, claves R2, secretos de Meta, contraseñas ni datos de clientes.

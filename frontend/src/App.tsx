@@ -1011,6 +1011,7 @@ function ContactDrawer({
   onSave: (patch: Partial<Contact>) => Promise<void>;
 }) {
   const contact = detail.contact;
+  const [name, setName] = useState(contact.name || contact.publicName || '');
   const [stage, setStage] = useState(contact.pipelineStatus);
   const [labels, setLabels] = useState(contact.labels.join(', '));
   const [notes, setNotes] = useState(contact.notes);
@@ -1023,6 +1024,7 @@ function ContactDrawer({
     setSaving(true);
     try {
       await onSave({
+        name,
         pipelineStatus: stage,
         labels: labels
           .split(',')
@@ -1055,6 +1057,11 @@ function ContactDrawer({
             <span>{consentNames[contact.consentStatus]}</span>
           </div>
         </div>
+        <label>
+          Nombre comercial
+          <input value={name} onChange={e => setName(e.target.value)} placeholder="Nombre del cliente" />
+        </label>
+
 
         <label>
           Etapa

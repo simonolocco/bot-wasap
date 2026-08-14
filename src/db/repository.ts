@@ -73,6 +73,19 @@ export async function upsertContact(client: PoolClient, phoneInput: string, prof
     [phone, profileName?.trim() ?? '', markIncoming]);
   return result.rows[0];
 }
+export async function createContact(phoneInput: string, name = '') {
+  const phone = normalizePhone(phoneInput);
+  const result = await query<Contact>(`
+    INSERT INTO contacts (phone, country_code, name)
+    VALUES ($1, CASE WHEN $1 LIKE '54%' THEN '54' ELSE '' END, $2)
+    ON CONFLICT (phone) DO UPDATE SET
+      name = CASE WHEN EXCLUDED.name <> '' THEN EXCLUDED.name ELSE contacts.name END,
+      updated_at = now()
+    RETURNING ${contactColumns}`,
+    [phone, name.trim()]);
+  return result.rows[0];
+}
+
 
 export async function storeIncomingEvent(input: {
   providerMessageId: string; phone: string; profileName?: string; body: string; messageType: string; payload: unknown;
@@ -708,6 +721,16 @@ export async function listContacts(input: { q?: string; consent?: string; page: 
     query<{ count: string }>(`SELECT count(*)::text AS count FROM contacts WHERE ${where.join(' AND ')}`, values.slice(0, -2)),
   ]);
   return { items: data.rows, total: Number(count.rows[0].count), page: input.page, limit: input.limit };
+}
+
+export async function exportContacts(input: { q?: string; consent?: string }) {
+  const values: unknown[] = []; const where: string[] = ['true'];
+  if (input.q) { values.push(`%${input.q}%`); where.push(`(name ILIKE $${values.length} OR public_name ILIKE $${values.length} OR phone ILIKE $${values.length})`); }
+  if (input.consent && ['unknown','opted_in','opted_out'].includes(input.consent)) { values.push(input.consent); where.push(`consent_status = $${values.length}`); }
+  return (await query<{ phone: string; name: string; publicName: string; consentStatus: ConsentStatus; labels: string[]; pipelineStatus: string; lastMessageAt: string | null }>(`
+    SELECT phone, name, public_name AS "publicName", consent_status AS "consentStatus", labels,
+      pipeline_status AS "pipelineStatus", last_message_at AS "lastMessageAt"
+    FROM contacts WHERE ${where.join(' AND ')} ORDER BY last_message_at DESC NULLS LAST, id DESC`, values)).rows;
 }
 
 export async function updateContact(contactId: string, patch: Partial<{ name: string; publicName: string; notes: string; consentStatus: ConsentStatus; consentSource: string; labels: string[]; pipelineStatus: string; assignedTo: string | null; followUpAt: string | null }>, actor = 'admin') {

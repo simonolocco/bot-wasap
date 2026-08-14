@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { cachedApi, formatDate, initials } from './api';
+import { api, cachedApi, formatDate, initials } from './api';
 import type { Contact, DashboardData, SupportTicket } from './types';
 
 type SecondaryView = 'dashboard' | 'contacts' | 'orders' | 'tickets' | 'templates';
@@ -124,13 +124,16 @@ function Contacts({ onOpen }: { onOpen: (id: string) => void }) {
   const [result, setResult] = useState<Paged<Contact> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [showCreate, setShowCreate] = useState(false);
   const debounced = useDebounced(search);
   const url = useMemo(() => { const p = new URLSearchParams({ page: String(page), limit: String(limit) }); if (debounced) p.set('q', debounced); if (consent) p.set('consent', consent); return `/api/contacts?${p}`; }, [page, debounced, consent]);
+  const exportUrl = useMemo(() => { const p = new URLSearchParams(); if (debounced) p.set('q', debounced); if (consent) p.set('consent', consent); return `/api/contacts/export?${p}`; }, [debounced, consent]);
   const load = () => { setLoading(true); setError(''); void cachedApi<Paged<Contact>>(url).then(setResult).catch(e => setError(e instanceof Error ? e.message : 'Error desconocido')).finally(() => setLoading(false)); };
   useEffect(load, [url]); useEffect(() => setPage(0), [debounced, consent]);
-  return <DataSurface title="Contactos" subtitle="Base comercial, actividad y estado de atención" search={search} onSearch={setSearch} filters={<select value={consent} onChange={e => setConsent(e.target.value)} aria-label="Consentimiento"><option value="">Todo consentimiento</option><option value="opted_in">Consentidos</option><option value="unknown">Sin confirmar</option><option value="opted_out">Excluidos</option></select>}>
+  return <DataSurface title="Contactos" subtitle="Base comercial, actividad y estado de atención" search={search} onSearch={setSearch} actions={<><a className="button secondary" href={exportUrl} download="contactos.csv">Descargar contactos</a><button className="button primary" onClick={() => setShowCreate(true)}>Agregar contacto</button></>} filters={<select value={consent} onChange={e => setConsent(e.target.value)} aria-label="Consentimiento"><option value="">Todo consentimiento</option><option value="opted_in">Consentidos</option><option value="unknown">Sin confirmar</option><option value="opted_out">Excluidos</option></select>}>
     <ViewState loading={loading} error={error} empty={!loading && !error && !result?.items.length} onRetry={load} />
     {!loading && result?.items.length ? <><div className="data-table contact-table"><div className="table-head"><span>Contacto</span><span>Estado</span><span>Etiquetas</span><span>Última actividad</span></div>{result.items.map(contact => <button className="table-row" key={contact.id} onClick={() => onOpen(contact.id)}><span className="contact-cell"><i className="avatar mini">{initials(contact)}</i><span className="primary-cell"><b>{cleanName(contact.name || contact.publicName, contact.phone)}</b><small>{contact.phone}</small></span></span><span><b>{stages[contact.pipelineStatus] || 'Nueva'}</b><small>{contact.botPaused ? 'Atención humana' : 'Bot activo'}</small></span><span className="tag-cell">{contact.labels?.length ? contact.labels.slice(0, 2).map(label => <i key={label}>{label}</i>) : <small>Sin etiquetas</small>}</span><time>{formatDate(contact.lastMessageAt, true)}</time></button>)}</div><Pager page={page} total={result.total} limit={limit} onPage={setPage} /></> : null}
+    {showCreate && <ContactCreateModal onClose={() => setShowCreate(false)} onCreated={contact => { setShowCreate(false); void load(); onOpen(contact.id); }} />}
   </DataSurface>;
 }
 
@@ -175,8 +178,37 @@ function Templates() {
   </DataSurface>;
 }
 
-function DataSurface({ title, subtitle, search, onSearch, filters, children }: { title: string; subtitle: string; search?: string; onSearch?: (value: string) => void; filters?: React.ReactNode; children: React.ReactNode }) {
-  return <div className="data-surface"><header className="surface-header"><div><h2>{title}</h2><p>{subtitle}</p></div>{(onSearch || filters) && <div className="surface-tools">{onSearch && <label className="surface-search"><span aria-hidden="true">⌕</span><input value={search} onChange={e => onSearch(e.target.value)} placeholder={`Buscar en ${title.toLowerCase()}`} aria-label={`Buscar en ${title}`} /></label>}{filters}</div>}</header><div className="surface-content">{children}</div></div>;
+function ContactCreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (contact: Contact) => void }) {
+  const [phone, setPhone] = useState('');
+  const [name, setName] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setSaving(true); setError('');
+    try {
+      const contact = await api<Contact>('/api/contacts', { method: 'POST', body: JSON.stringify({ phone, name }) });
+      onCreated(contact);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'No se pudo guardar el contacto.');
+    } finally { setSaving(false); }
+  }
+
+  return <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
+    <section className="modal contact-modal" role="dialog" aria-modal="true" aria-labelledby="contact-modal-title">
+      <header className="order-modal-head"><div><span className="section-kicker">Base comercial</span><h2 id="contact-modal-title">Agregar contacto</h2><p>Guardá un nombre para identificarlo mejor en la bandeja y en futuras campañas.</p></div><button className="close-btn" aria-label="Cerrar alta de contacto" onClick={onClose}>×</button></header>
+      <form onSubmit={submit}>
+        <label>Teléfono<input autoFocus required value={phone} onChange={event => setPhone(event.target.value)} placeholder="549351..." /></label>
+        <label>Nombre<input required value={name} onChange={event => setName(event.target.value)} placeholder="Nombre del cliente" /></label>
+        {error && <p className="form-error">{error}</p>}
+        <footer className="modal-actions"><button type="button" className="button secondary" onClick={onClose}>Cancelar</button><button type="submit" className="button primary" disabled={saving}>{saving ? 'Guardando…' : 'Guardar contacto'}</button></footer>
+      </form>
+    </section>
+  </div>;
+}
+function DataSurface({ title, subtitle, search, onSearch, actions, filters, children }: { title: string; subtitle: string; search?: string; onSearch?: (value: string) => void; actions?: React.ReactNode; filters?: React.ReactNode; children: React.ReactNode }) {
+
+  return <div className="data-surface"><header className="surface-header"><div><h2>{title}</h2><p>{subtitle}</p></div>{(onSearch || filters || actions) && <div className="surface-tools">{actions}{onSearch && <label className="surface-search"><span aria-hidden="true">⌕</span><input value={search} onChange={e => onSearch(e.target.value)} placeholder={`Buscar en ${title.toLowerCase()}`} aria-label={`Buscar en ${title}`} /></label>}{filters}</div>}</header><div className="surface-content">{children}</div></div>;
 }
 
 export default function SecondaryViews({ view, onNavigate, onOpenContact }: { view: SecondaryView; onNavigate: (view: SecondaryView | 'inbox') => void; onOpenContact: (id: string) => void }) {
