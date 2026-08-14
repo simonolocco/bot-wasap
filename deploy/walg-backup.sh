@@ -5,7 +5,11 @@ set -eu
 : "${WALG_S3_PREFIX:?WALG_S3_PREFIX is required}"
 : "${PGDATA:?PGDATA is required}"
 
-run_id="$(psql "$DATABASE_URL" -Atc "INSERT INTO backup_runs (kind,status,metadata) VALUES ('physical','running',jsonb_build_object('tool','wal-g')) RETURNING id")"
+run_id="$(psql "$DATABASE_URL" -Atq -c "INSERT INTO backup_runs (kind,status,metadata) VALUES ('physical','running',jsonb_build_object('tool','wal-g')) RETURNING id" | head -n 1)"
+case "$run_id" in
+  ????????-????-????-????-????????????) ;;
+  *) echo "No se pudo registrar el inicio del backup físico." >&2; exit 1 ;;
+esac
 
 failed() {
   printf '%s\n' "UPDATE backup_runs SET status='failed', completed_at=now(), error='WAL-G backup-push failed' WHERE id=:'run_id'" \

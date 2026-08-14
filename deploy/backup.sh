@@ -8,7 +8,11 @@ stamp=$(date -u +%Y-%m-%dT%H-%M-%SZ)
 file="/tmp/abastobot-${stamp}.dump.gz"
 media_file="/tmp/abastobot-media-${stamp}.tar.gz"
 media_key=""
-run_id="$(psql "$DATABASE_URL" -Atc "INSERT INTO backup_runs (kind,status,metadata) VALUES ('logical','running',jsonb_build_object('tool','pg_dump')) RETURNING id")"
+run_id="$(psql "$DATABASE_URL" -Atq -c "INSERT INTO backup_runs (kind,status,metadata) VALUES ('logical','running',jsonb_build_object('tool','pg_dump')) RETURNING id" | head -n 1)"
+case "$run_id" in
+  ????????-????-????-????-????????????) ;;
+  *) echo "No se pudo registrar el inicio del backup lógico." >&2; exit 1 ;;
+esac
 failed() {
   printf '%s\n' "UPDATE backup_runs SET status='failed', completed_at=now(), error='Logical backup failed' WHERE id=:'run_id'" \
     | psql "$DATABASE_URL" -v run_id="$run_id" >/dev/null 2>&1 || true
