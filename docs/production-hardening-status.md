@@ -13,13 +13,16 @@ Dejar AbastoBot listo para recibir aproximadamente 500 contactos por día, conse
 - URL pública: `https://abasto-bot.cloud`.
 - VPS: Hostinger, proyecto en `/opt/abastobot`.
 - Producción activa y saludable:
-  - app y worker: `abastobot-app:dba9e12`;
+  - app y worker: `abastobot-app:7f373b2`;
   - PostgreSQL: `abastobot-postgres:dba9e12`;
   - backup lógico, WAL-G y Caddy: activos.
 - `/healthz`, `/readyz` y `/` responden HTTP 200.
 - El panel anónimo responde 401, HSTS está presente y `X-Frame-Options` es `DENY`.
 - La verificación pública del webhook de Meta funciona con el token reforzado.
 - La base y las conversaciones se conservaron.
+- Flujo final del menú:
+  - primer contacto o saludo explícito: saludo y menú inicial;
+  - después de responder horarios, dirección, precios, asesor o finalizar un pedido: menú de seguimiento con “¿En qué más podemos ayudarte?” y acceso al Asesor Humano.
 
 ## Capacidad y pruebas completadas
 
