@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { api, cachedApi, formatDate, initials } from './api';
+import { api, cachedApi, formatDate, initials, invalidateApi } from './api';
 import type { Contact, DashboardData, SupportTicket } from './types';
 
 type SecondaryView = 'dashboard' | 'contacts' | 'orders' | 'tickets' | 'templates';
@@ -125,14 +125,28 @@ function Contacts({ onOpen }: { onOpen: (id: string) => void }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showCreate, setShowCreate] = useState(false);
+  const [deleting, setDeleting] = useState<string | null>(null);
   const debounced = useDebounced(search);
   const url = useMemo(() => { const p = new URLSearchParams({ page: String(page), limit: String(limit) }); if (debounced) p.set('q', debounced); if (consent) p.set('consent', consent); return `/api/contacts?${p}`; }, [page, debounced, consent]);
   const exportUrl = useMemo(() => { const p = new URLSearchParams(); if (debounced) p.set('q', debounced); if (consent) p.set('consent', consent); return `/api/contacts/export?${p}`; }, [debounced, consent]);
   const load = () => { setLoading(true); setError(''); void cachedApi<Paged<Contact>>(url).then(setResult).catch(e => setError(e instanceof Error ? e.message : 'Error desconocido')).finally(() => setLoading(false)); };
+  async function removeContact(contact: Contact) {
+    const label = cleanName(contact.name || contact.publicName, contact.phone);
+    if (!window.confirm(`¿Borrar a ${label}? También se eliminará su historial del panel. Esta acción no se puede deshacer.`)) return;
+    setDeleting(contact.id); setError('');
+    try {
+      await api(`/api/contacts/${encodeURIComponent(contact.id)}`, { method: 'DELETE' });
+      invalidateApi('/api/contacts');
+      if (result?.items.length === 1 && page > 0) setPage(current => current - 1);
+      else load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'No se pudo borrar el contacto.');
+    } finally { setDeleting(null); }
+  }
   useEffect(load, [url]); useEffect(() => setPage(0), [debounced, consent]);
   return <DataSurface title="Contactos" subtitle="Base comercial, actividad y estado de atención" search={search} onSearch={setSearch} actions={<><a className="button secondary" href={exportUrl} download="contactos.csv">Descargar contactos</a><button className="button primary" onClick={() => setShowCreate(true)}>Agregar contacto</button></>} filters={<select value={consent} onChange={e => setConsent(e.target.value)} aria-label="Consentimiento"><option value="">Todo consentimiento</option><option value="opted_in">Consentidos</option><option value="unknown">Sin confirmar</option><option value="opted_out">Excluidos</option></select>}>
     <ViewState loading={loading} error={error} empty={!loading && !error && !result?.items.length} onRetry={load} />
-    {!loading && result?.items.length ? <><div className="data-table contact-table"><div className="table-head"><span>Contacto</span><span>Estado</span><span>Etiquetas</span><span>Última actividad</span></div>{result.items.map(contact => <button className="table-row" key={contact.id} onClick={() => onOpen(contact.id)}><span className="contact-cell"><i className="avatar mini">{initials(contact)}</i><span className="primary-cell"><b>{cleanName(contact.name || contact.publicName, contact.phone)}</b><small>{contact.phone}</small></span></span><span><b>{stages[contact.pipelineStatus] || 'Nueva'}</b><small>{contact.botPaused ? 'Atención humana' : 'Bot activo'}</small></span><span className="tag-cell">{contact.labels?.length ? contact.labels.slice(0, 2).map(label => <i key={label}>{label}</i>) : <small>Sin etiquetas</small>}</span><time>{formatDate(contact.lastMessageAt, true)}</time></button>)}</div><Pager page={page} total={result.total} limit={limit} onPage={setPage} /></> : null}
+    {!loading && result?.items.length ? <><div className="data-table contact-table"><div className="table-head"><span>Contacto</span><span>Estado</span><span>Etiquetas</span><span>Última actividad</span></div>{result.items.map(contact => <div className="contact-row" key={contact.id}><button className="table-row contact-row-main" onClick={() => onOpen(contact.id)}><span className="contact-cell"><i className="avatar mini">{initials(contact)}</i><span className="primary-cell"><b>{cleanName(contact.name || contact.publicName, contact.phone)}</b><small>{contact.phone}</small></span></span><span><b>{stages[contact.pipelineStatus] || 'Nueva'}</b><small>{contact.botPaused ? 'Atención humana' : 'Bot activo'}</small></span><span className="tag-cell">{contact.labels?.length ? contact.labels.slice(0, 2).map(label => <i key={label}>{label}</i>) : <small>Sin etiquetas</small>}</span><time>{formatDate(contact.lastMessageAt, true)}</time></button><button className="contact-delete" type="button" onClick={() => void removeContact(contact)} disabled={deleting === contact.id} title="Borrar contacto" aria-label={`Borrar contacto ${cleanName(contact.name || contact.publicName, contact.phone)}`}>{deleting === contact.id ? '…' : 'Borrar'}</button></div>)}</div><Pager page={page} total={result.total} limit={limit} onPage={setPage} /></> : null}
     {showCreate && <ContactCreateModal onClose={() => setShowCreate(false)} onCreated={contact => { setShowCreate(false); void load(); onOpen(contact.id); }} />}
   </DataSurface>;
 }

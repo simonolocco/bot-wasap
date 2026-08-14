@@ -10,7 +10,7 @@ import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { buildMediaPayload, getWhatsAppTransport, hasCloudCredentials, sendCloudMessage, sendCloudTextMessage, uploadCloudMedia } from './cloudClient';
 import { pool, query } from './db/pool';
-import { audit, claimOrderTicketFallback, claimOrderTicketFallbackById, closeSupportTicket, createContact, dashboard, deleteTemplate, exportContacts, getConversation, getContactById, getMediaAssetById, getMediaAssetByMessageId, getMessageById, getTicketById, listAudit, listContacts, listConversations, listMessages, listOrders, listTemplates, listTickets, markConversationRead, markOutgoingFailed, markOutgoingSent, prepareManualMessage, prepareOutgoingMessage, previewCampaignSegment, recordMessageStatus, retryOutgoingMessage, saveTemplate, setBotPaused, storeIncomingEvent, updateContact, updateMediaAsset, updateOrder, type SupportTicket } from './db/repository';
+import { audit, claimOrderTicketFallback, claimOrderTicketFallbackById, closeSupportTicket, createContact, dashboard, deleteContact, deleteTemplate, exportContacts, getConversation, getContactById, getMediaAssetById, getMediaAssetByMessageId, getMessageById, getTicketById, listAudit, listContacts, listConversations, listMessages, listOrders, listTemplates, listTickets, markConversationRead, markOutgoingFailed, markOutgoingSent, prepareManualMessage, prepareOutgoingMessage, previewCampaignSegment, recordMessageStatus, retryOutgoingMessage, saveTemplate, setBotPaused, storeIncomingEvent, updateContact, updateMediaAsset, updateOrder, type SupportTicket } from './db/repository';
 import { orderWindowExpired, sendOrderTicketFallback } from './services/orderTicketFallback';
 import { MENU_BUTTON_LABEL, MENU_HEADER_TEXT, MENU_PROMPT, buildMenuListSections, ticketClosureMessage } from './messageCatalog';
 import { checkMediaStorage, ensureMediaCached, ensureMediaThumbnail, isSafeUpload, markMediaUploadFailed, storeMedia } from './services/mediaStorage';
@@ -388,6 +388,12 @@ app.get('/api/contacts/export', async (req, res) => {
 });
 app.get('/api/contacts/:id', async (req, res) => { const contact = await getContactById(req.params.id); return contact ? res.json(contact) : res.status(404).json({ error: 'Contacto inexistente.' }); });
 app.get('/api/contacts', async (req, res) => res.json(await listContacts({ q: qs(req.query.q), consent: qs(req.query.consent), page: page(req.query.page), limit: positive(req.query.limit, 50, 100) })));
+app.delete('/api/contacts/:id', async (req, res) => {
+  const parsedId = z.string().uuid().safeParse(req.params.id);
+  if (!parsedId.success) return res.status(400).json({ error: 'Identificador de contacto inválido.' });
+  const contact = await deleteContact(parsedId.data, req.session.user ?? 'admin');
+  return contact ? res.json({ ok: true, contact }) : res.status(404).json({ error: 'Contacto inexistente.' });
+});
 app.patch('/api/contacts/:id', async (req, res) => updateConversation(req, res));
 app.get('/api/orders', async (req, res) => res.json(await listOrders(page(req.query.page), positive(req.query.limit, 50, 100), { status: qs(req.query.status), contactId: qs(req.query.contactId), from: qs(req.query.from), to: qs(req.query.to) })));
 app.patch('/api/orders/:id', async (req, res) => { const parsed = z.object({ status: z.enum(['pending_customer','submitted','canceled','accepted']) }).safeParse(req.body); if (!parsed.success) return res.status(400).json({ error: 'Estado de pedido inválido.' }); const order = await updateOrder(Number(req.params.id), parsed.data.status, req.session.user ?? 'admin'); return order ? res.json(order) : res.status(404).json({ error: 'Pedido inexistente.' }); });

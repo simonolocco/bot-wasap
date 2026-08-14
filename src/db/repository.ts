@@ -86,6 +86,27 @@ export async function createContact(phoneInput: string, name = '') {
   return result.rows[0];
 }
 
+export async function deleteContact(contactId: string, actor = 'admin') {
+  return transaction(async client => {
+    const contactResult = await client.query<{ id: string; phone: string; name: string; publicName: string }>(
+      `SELECT id, phone, name, public_name AS "publicName" FROM contacts WHERE id = $1 FOR UPDATE`,
+      [contactId],
+    );
+    const contact = contactResult.rows[0];
+    if (!contact) return null;
+    const messageCount = await client.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM messages WHERE contact_id = $1`,
+      [contactId],
+    );
+    await client.query(
+      `INSERT INTO admin_audit_log (actor, action, contact_id, metadata) VALUES ($1, 'contact_deleted', $2, $3::jsonb)`,
+      [actor, contactId, JSON.stringify({ phone: contact.phone, name: contact.name, messageCount: Number(messageCount.rows[0]?.count ?? 0) })],
+    );
+    await client.query(`DELETE FROM contacts WHERE id = $1`, [contactId]);
+    return { ...contact, messageCount: Number(messageCount.rows[0]?.count ?? 0) };
+  });
+}
+
 
 export async function storeIncomingEvent(input: {
   providerMessageId: string; phone: string; profileName?: string; body: string; messageType: string; payload: unknown;

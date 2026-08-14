@@ -186,6 +186,12 @@ El despliegue requerido quedó completado. La siguiente lista queda como procedi
 - No hubo errores `error`, `exception`, `fatal` ni `unhandled` en los logs de app/worker durante los 10 minutos posteriores al despliegue.
 - El bundle publicado contiene las acciones **Descargar contactos** y **Agregar contacto**.
 
+## Borrado manual de contactos (2026-08-14)
+
+- Cada fila de **Contactos** tiene un botón **Borrar**.
+- Antes de confirmar, el panel informa que también se elimina el historial de ese contacto y que la acción no se puede deshacer.
+- El borrado requiere sesión de administrador, elimina el contacto y sus conversaciones relacionadas de PostgreSQL, y registra la acción `contact_deleted` en la auditoría.
+
 ## Reglas de seguridad para continuar
 
 - Nunca imprimir `.env`, claves R2, secretos de Meta, contraseñas ni datos de clientes.
