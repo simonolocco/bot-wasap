@@ -61,6 +61,12 @@ export const FAQ_GENERAL = [
 ].join('\n');
 
 export const MENU_PROMPT = '¿En qué podemos ayudarte hoy? 👇';
+export const FOLLOW_UP_MENU_HEADER_TEXT = '¿En qué más podemos ayudarte?';
+export const FOLLOW_UP_MENU_PROMPT = [
+  'Elegí una de las opciones para realizar otra consulta 👇',
+  '',
+  'Si necesitás ayuda con algo que no aparece en el menú, podés elegir la opción de 👤 Asesor Humano.',
+].join('\n');
 export const MENU_SECTION_TITLE = 'Seleccioná una opción';
 export const MENU_BUTTON_LABEL = 'Abrir Menú';
 

@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import {
+  FOLLOW_UP_MENU_HEADER_TEXT,
+  FOLLOW_UP_MENU_PROMPT,
   buildMenuListSections,
   normalizeText,
   resolveOptionIdFromText,
@@ -24,6 +26,9 @@ for (const [input, expected] of menuCases) {
 }
 assert.equal(normalizeText('  ¿DÓNDE están?  '), 'donde estan');
 assert.equal(buildMenuListSections()[0].rows.length, 6);
+assert.equal(FOLLOW_UP_MENU_HEADER_TEXT, '¿En qué más podemos ayudarte?');
+assert.match(FOLLOW_UP_MENU_PROMPT, /otra consulta/);
+assert.match(FOLLOW_UP_MENU_PROMPT, /Asesor Humano/);
 
 const now = Date.now();
 assert.equal(automaticResponseAgeMs(now - 30_000, new Date(now).toISOString(), now), 30_000);

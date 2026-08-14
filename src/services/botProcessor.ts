@@ -2,7 +2,7 @@ import { sendCloudMessage, sendCloudTextMessage } from '../cloudClient';
 import { audit, claimInitialGreeting, claimOutgoingMessage, completeJob, createOrder, createSupportTicket, getContactById, getJobEvent, getSession, hasRecentDuplicateIncoming, markOutgoingFailed, markOutgoingSent, prepareOutgoingMessage, recordSupportTicketQuestion, retryJob, updateSession } from '../db/repository';
 import {
   advisorReply, BUSINESS_ADDRESS, BUSINESS_SCHEDULE, EMPTY_ORDER_MESSAGE, FAQ_GENERAL, FAQ_OTHER_NO_ID, FAQ_OTHER_PROMPT,
-  FAQ_OTHER_YES_ID, MAIN_MENU_OPTIONS, MENU_BUTTON_LABEL, MENU_HEADER_TEXT, MENU_PROMPT, ORDER_INSTRUCTIONS,
+  FAQ_OTHER_YES_ID, FOLLOW_UP_MENU_HEADER_TEXT, FOLLOW_UP_MENU_PROMPT, MAIN_MENU_OPTIONS, MENU_BUTTON_LABEL, MENU_HEADER_TEXT, MENU_PROMPT, ORDER_INSTRUCTIONS,
   SUPPORT_TICKET_PROMPT, buildGreetingIntro, buildMenuListSections, formatPriceListMessage, normalizeText, resolveOptionIdFromText, type MenuOptionId,
 } from '../messageCatalog';
 import { buildOrderForwardLink } from './orderTicket';
@@ -52,6 +52,16 @@ async function sendMenu(contactId: string, to: string, key: string) {
   });
 }
 
+async function sendFollowUpMenu(contactId: string, to: string, key: string) {
+  const cooldownBucket = Math.floor(Date.now() / 3000);
+  await outgoing(contactId, to, `follow-up-menu-cooldown:${contactId}:${cooldownBucket}`, FOLLOW_UP_MENU_PROMPT, {
+    messaging_product: 'whatsapp', to, type: 'interactive', interactive: {
+      type: 'list', header: { type: 'text', text: FOLLOW_UP_MENU_HEADER_TEXT }, body: { text: FOLLOW_UP_MENU_PROMPT },
+      action: { button: MENU_BUTTON_LABEL, sections: buildMenuListSections() },
+    },
+  });
+}
+
 function isMenuCommand(text: string | undefined) {
   const normalized = normalizeText(text);
   return ['hola', 'hola bot', 'buenas', 'buenas bot', 'buen dia', 'buenas tardes', 'buenas noches', 'menu', 'opciones', 'ver menu', 'ver opciones'].includes(normalized);
@@ -95,7 +105,7 @@ async function handleOption(contactId: string, incoming: Incoming, option: MenuO
       return;
   }
   await updateSession(contactId, { awaitingOrderDetail: false });
-  if (option !== 'preguntas_frecuentes') await sendMenu(contactId, to, key);
+  if (option !== 'preguntas_frecuentes') await sendFollowUpMenu(contactId, to, key);
 }
 
 export async function processIncomingJob(job: { id: string; contact_id: string; attempts: number }) {
@@ -149,7 +159,7 @@ export async function processIncomingJob(job: { id: string; contact_id: string; 
     }
     if (incoming.buttonReplyId === FAQ_OTHER_NO_ID) {
       console.info(`[worker] Cliente volvió al menú: ${job.contact_id}.`);
-      await sendMenu(job.contact_id, incoming.from, key);
+      await sendFollowUpMenu(job.contact_id, incoming.from, key);
       await completeJob(job.id);
       return;
     }
@@ -180,7 +190,7 @@ export async function processIncomingJob(job: { id: string; contact_id: string; 
       const orderId = await createOrder(job.contact_id, contact.name || contact.publicName, text);
       await updateSession(job.contact_id, { awaitingOrderDetail: false });
       await outgoing(job.contact_id, incoming.from, `${key}:order-link`, orderLinkMessage(text, contact.name || contact.publicName, orderId));
-      await sendMenu(job.contact_id, incoming.from, key);
+      await sendFollowUpMenu(job.contact_id, incoming.from, key);
       console.info(`[worker] Pedido ${orderId} creado para ${job.contact_id}; link enviado sin ticket automático.`);
       await completeJob(job.id);
       return;
