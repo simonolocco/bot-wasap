@@ -470,6 +470,38 @@ export async function dashboard() {
   };
 }
 
+export function encodeConversationCursor(lastMessageAt: unknown, id: string): string | null {
+  if (!id) return null;
+  let iso = '';
+  if (lastMessageAt instanceof Date) {
+    iso = lastMessageAt.toISOString();
+  } else if (typeof lastMessageAt === 'string' && lastMessageAt.trim()) {
+    const parsed = new Date(lastMessageAt);
+    iso = !isNaN(parsed.getTime()) ? parsed.toISOString() : lastMessageAt.trim();
+  } else if (typeof lastMessageAt === 'number' && Number.isFinite(lastMessageAt)) {
+    iso = new Date(lastMessageAt).toISOString();
+  }
+  if (!iso) return null;
+  return Buffer.from(`${iso}|${id}`).toString('base64url');
+}
+
+export function decodeConversationCursor(cursor: string): { at: string; id: string } | null {
+  if (!cursor || typeof cursor !== 'string') return null;
+  try {
+    const raw = Buffer.from(cursor, 'base64url').toString('utf8');
+    const separatorIndex = raw.lastIndexOf('|');
+    if (separatorIndex === -1) return null;
+    const rawAt = raw.slice(0, separatorIndex).trim();
+    const id = raw.slice(separatorIndex + 1).trim();
+    if (!rawAt || !id) return null;
+    const parsed = new Date(rawAt);
+    const at = !isNaN(parsed.getTime()) ? parsed.toISOString() : rawAt;
+    return { at, id };
+  } catch {
+    return null;
+  }
+}
+
 export async function listConversations(input: { q?: string; consent?: string; pipeline?: string; unread?: boolean; botPaused?: boolean; followUp?: 'overdue' | 'scheduled'; ticket?: 'open'; cursor?: string; limit: number }) {
   const values: unknown[] = []; const where: string[] = ['c.last_message_at IS NOT NULL', 'EXISTS (SELECT 1 FROM messages conversation_m WHERE conversation_m.contact_id=c.id)'];
   if (input.q) { values.push(`%${input.q}%`); where.push(`(c.name ILIKE $${values.length} OR c.public_name ILIKE $${values.length} OR c.phone ILIKE $${values.length} OR EXISTS (SELECT 1 FROM messages search_m WHERE search_m.contact_id=c.id AND search_m.body ILIKE $${values.length}))`); }
@@ -480,7 +512,13 @@ export async function listConversations(input: { q?: string; consent?: string; p
   if (input.followUp === 'overdue') where.push('c.follow_up_at IS NOT NULL AND c.follow_up_at <= now()');
   if (input.followUp === 'scheduled') where.push('c.follow_up_at IS NOT NULL AND c.follow_up_at > now()');
   if (input.ticket === 'open') where.push('ticket.id IS NOT NULL');
-  if (input.cursor) { const [at, id] = Buffer.from(input.cursor, 'base64url').toString('utf8').split('|'); values.push(at, id); where.push(`(c.last_message_at, c.id) < ($${values.length - 1}::timestamptz, $${values.length}::uuid)`); }
+  if (input.cursor) {
+    const decoded = decodeConversationCursor(input.cursor);
+    if (decoded) {
+      values.push(decoded.at, decoded.id);
+      where.push(`(c.last_message_at, c.id) < ($${values.length - 1}::timestamptz, $${values.length}::uuid)`);
+    }
+  }
   values.push(input.limit + 1);
   const rows = (await query<any>(`SELECT c.id, c.phone, c.name, c.public_name AS "publicName", c.consent_status AS "consentStatus", c.last_message_at AS "lastMessageAt",
     c.pipeline_status AS "pipelineStatus", c.assigned_to AS "assignedTo", c.follow_up_at AS "followUpAt", c.unread_count AS "unreadCount",
@@ -491,7 +529,7 @@ export async function listConversations(input: { q?: string; consent?: string; p
     LEFT JOIN LATERAL (SELECT id, status FROM support_tickets WHERE contact_id=c.id AND status='open' ORDER BY created_at DESC LIMIT 1) ticket ON true
     WHERE ${where.join(' AND ')} ORDER BY c.last_message_at DESC, c.id DESC LIMIT $${values.length}`, values)).rows;
   const hasMore = rows.length > input.limit; const items = rows.slice(0, input.limit);
-  const last = items[items.length - 1]; const nextCursor = hasMore && last ? Buffer.from(`${last.lastMessageAt}|${last.id}`).toString('base64url') : null;
+  const last = items[items.length - 1]; const nextCursor = hasMore && last ? encodeConversationCursor(last.lastMessageAt, last.id) : null;
   return { items, nextCursor };
 }
 

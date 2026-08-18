@@ -527,9 +527,12 @@ function ConversationList({
         )}
 
         {hasMore && (
-          <button className="load-more" disabled={loading} onClick={onMore}>
-            {loading ? 'Cargando conversaciones' : 'Cargar más conversaciones'}
-          </button>
+          <div className="load-more-wrap">
+            <button className="load-more" disabled={loading} onClick={onMore}>
+              {loading && <span className="spinner small" />}
+              <span>{loading ? 'Cargando más conversaciones...' : 'Cargar más conversaciones'}</span>
+            </button>
+          </div>
         )}
       </div>
     </>
@@ -1543,7 +1546,12 @@ export default function App() {
       );
       // A slower polling/SSE response must never restore an older unread count.
       if (requestId !== conversationListRequestRef.current) return;
-      setConversations(prev => (reset ? result.items : [...prev, ...result.items]));
+      setConversations(prev => {
+        if (reset) return result.items;
+        const existing = new Set(prev.map(i => i.id));
+        const newRows = result.items.filter(i => !existing.has(i.id));
+        return [...prev, ...newRows];
+      });
       setCursor(result.nextCursor);
     } catch (reason) {
       setListError(reason instanceof Error ? reason.message : 'No se pudieron cargar las conversaciones.');
