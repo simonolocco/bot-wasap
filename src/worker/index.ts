@@ -1,8 +1,8 @@
 import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
 import { closePool } from '../db/pool';
-import { claimJob, recoverStaleJobs, recoverStaleOutgoingMessages, workerHeartbeat } from '../db/repository';
-import { processIncomingJob } from '../services/botProcessor';
+import { claimDueAdvisorFollowup, claimJob, recoverStaleAdvisorFollowups, recoverStaleJobs, recoverStaleOutgoingMessages, workerHeartbeat } from '../db/repository';
+import { processDueAdvisorFollowup, processIncomingJob } from '../services/botProcessor';
 import { processMediaJob } from '../services/mediaStorage';
 
 const workerId = process.env.WORKER_ID ?? `worker-${randomUUID()}`;
@@ -29,12 +29,29 @@ async function runLane() {
   }
 }
 
+async function runAdvisorFollowupLane() {
+  while (!stopped) {
+    try {
+      const followup = await claimDueAdvisorFollowup(workerId);
+      if (!followup) {
+        await pause(1_000);
+        continue;
+      }
+      await processDueAdvisorFollowup(followup);
+    } catch (error) {
+      console.error('[worker] Error del carril de seguimientos:', error);
+      await pause(1_000);
+    }
+  }
+}
+
 async function maintenanceLoop() {
   let lastOutboundRecoveryAt = 0;
   while (!stopped) {
     try {
       await workerHeartbeat(workerId);
       await recoverStaleJobs();
+      await recoverStaleAdvisorFollowups();
       if (Date.now() - lastOutboundRecoveryAt >= 60_000) {
         lastOutboundRecoveryAt = Date.now();
         await recoverStaleOutgoingMessages();
@@ -47,8 +64,8 @@ process.on('SIGTERM', () => { stopped = true; });
 process.on('SIGINT', () => { stopped = true; });
 console.log(`[worker] Iniciado ${workerId} (concurrencia ${concurrency})`);
 void (async () => {
-  await Promise.all([recoverStaleJobs(), recoverStaleOutgoingMessages()]);
-  await Promise.all([maintenanceLoop(), ...Array.from({ length: concurrency }, () => runLane())]);
+  await Promise.all([recoverStaleJobs(), recoverStaleAdvisorFollowups(), recoverStaleOutgoingMessages()]);
+  await Promise.all([maintenanceLoop(), runAdvisorFollowupLane(), ...Array.from({ length: concurrency }, () => runLane())]);
   await closePool();
 })().catch(error => {
   console.error('[worker] Finalización inesperada:', error);

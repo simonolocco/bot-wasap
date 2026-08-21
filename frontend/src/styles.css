@@ -379,6 +379,8 @@ html[data-theme="dark"] .filter-select {
 @keyframes shimmer { to { background-position: -220% 0; } }
 .image-label { position: absolute; z-index: 2; right: 7px; bottom: 7px; border-radius: 7px; padding: 4px 7px; background: rgba(0,0,0,.58); font-size: 9px; }
 .media-state { min-width: 210px; display: flex; align-items: center; gap: 7px; border-radius: 8px; padding: 12px; background: var(--surface-2); color: var(--muted); font-size: 10px; }
+.video-card { min-width: 220px; max-width: 460px; display: grid; gap: 7px; border-radius: 10px; padding: 7px; background: var(--surface-2); }
+.video-card video { display: block; width: 100%; max-height: 340px; border-radius: 7px; background: #0e1d1a; }
 .file-card { min-width: 250px; display: flex; align-items: center; gap: 9px; border-radius: 9px; padding: 9px; background: rgba(255,255,255,.5); }
 .file-card > span:nth-child(2) { min-width: 0; flex: 1; }
 .file-card b { font-size: 11px; font-weight: 700; }
@@ -2298,6 +2300,10 @@ html[data-theme="dark"] .filter-select {
     max-width: 100%;
   }
   .media-state {
+    min-width: 0;
+    max-width: 100%;
+  }
+  .video-card {
     min-width: 0;
     max-width: 100%;
   }

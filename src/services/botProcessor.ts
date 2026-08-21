@@ -1,8 +1,9 @@
 import { sendCloudMessage, sendCloudTextMessage } from '../cloudClient';
 import {
-  audit, claimInitialGreeting, claimOutgoingMessage, completeJob, createOrder, createSupportTicket,
-  getContactById, getJobEvent, getSession, hasRecentDuplicateIncoming, markOutgoingFailed, markOutgoingSent,
-  prepareOutgoingMessage, recordBotInteractionEvent, recordSupportTicketQuestion, retryJob, updateSession,
+  audit, cancelAdvisorFollowup, claimInitialGreeting, claimOutgoingMessage, completeJob, createOrder, createSupportTicket,
+  completeAdvisorFollowup, getContactById, getJobEvent, getSession, hasRecentDuplicateIncoming, isAdvisorFollowupEligible,
+  markOutgoingFailed, markOutgoingSent, prepareOutgoingMessage, recordBotInteractionEvent, recordSupportTicketQuestion,
+  retryAdvisorFollowup, retryJob, scheduleAdvisorFollowup, updateSession,
 } from '../db/repository';
 import {
   advisorReply, BUSINESS_ADDRESS, BUSINESS_SCHEDULE, EMPTY_ORDER_MESSAGE, FAQ_GENERAL, FAQ_OTHER_NO_ID, FAQ_OTHER_PROMPT,
@@ -14,6 +15,7 @@ import { buildOrderForwardLink } from './orderTicket';
 type Incoming = { from: string; profileName?: string; text?: string; selectedOptionId?: MenuOptionId; buttonReplyId?: string; type: string; sourceTimestamp?: number };
 const DUPLICATE_AUTO_RESPONSE_WINDOW_SECONDS = Math.max(0, Number.parseInt(process.env.DUPLICATE_AUTO_RESPONSE_WINDOW_SECONDS ?? '90', 10) || 90);
 const AUTO_RESPONSE_MAX_DELAY_SECONDS = Math.max(0, Number.parseInt(process.env.AUTO_RESPONSE_MAX_DELAY_SECONDS ?? '120', 10) || 120);
+export const ADVISOR_FOLLOWUP_DELAY_MS = 10 * 60 * 1000;
 
 export function automaticResponseAgeMs(sourceTimestamp: number | undefined, receivedAt: string, now = Date.now()) {
   const source = Number(sourceTimestamp);
@@ -28,6 +30,10 @@ export function shouldSkipAutomaticResponse(sourceTimestamp: number | undefined,
 function advisorLink() {
   const number = (process.env.FORWARD_ORDER_NUMBER ?? '+54 9 351 756-5641').replace(/\D/g, '');
   return `https://wa.me/${number}?text=${encodeURIComponent('Hola, tengo una consulta')}`;
+}
+
+export function buildAdvisorFollowupMessage(link: string) {
+  return `Si tu consulta todavía no fue resuelta, podés hablar con nuestro asesor humano desde este enlace:\n${link}\n\nTambién podés escribir “menú” para ver las opciones disponibles.`;
 }
 
 async function outgoing(contactId: string, to: string, key: string, body: string, payload?: Record<string, unknown>) {
@@ -68,7 +74,8 @@ async function sendFollowUpMenu(contactId: string, to: string, key: string) {
 
 export function isMenuCommand(text: string | undefined) {
   const normalized = normalizeText(text);
-  return ['hola', 'hola bot', 'buenas', 'buenas bot', 'buen dia', 'buenas tardes', 'buenas noches', 'menu', 'opciones', 'ver menu', 'ver opciones'].includes(normalized);
+  if (['hola', 'hola bot', 'buenas', 'buenas bot', 'buen dia', 'buenas tardes', 'buenas noches', 'menu', 'opciones', 'ver menu', 'ver opciones'].includes(normalized)) return true;
+  return /\b(info|informacion|detalles|datos)\b/.test(normalized);
 }
 
 export function resolveIncomingMenuOption(incoming: Pick<Incoming, 'text' | 'selectedOptionId' | 'buttonReplyId'>): MenuOptionId | undefined {
@@ -78,6 +85,26 @@ export function resolveIncomingMenuOption(incoming: Pick<Incoming, 'text' | 'sel
   if (/^[1-6]\s+/.test(normalizedText)) return undefined;
 
   return resolveOptionIdFromText(incoming.text);
+}
+
+export async function processDueAdvisorFollowup(followup: { id: string; contact_id: string; attempts: number }) {
+  try {
+    const contact = await getContactById(followup.contact_id);
+    if (!contact || !(await isAdvisorFollowupEligible(followup.id))) {
+      await cancelAdvisorFollowup(followup.id);
+      return;
+    }
+    await outgoing(
+      followup.contact_id,
+      contact.phone,
+      `advisor-followup:${followup.id}`,
+      buildAdvisorFollowupMessage(advisorLink()),
+    );
+    await completeAdvisorFollowup(followup.id);
+  } catch (error) {
+    await retryAdvisorFollowup(followup.id, followup.attempts, error);
+    console.error('[worker] Error enviando seguimiento al asesor', followup.id, error);
+  }
 }
 
 function orderLinkMessage(detail: string, customerName: string, orderId: number) {
@@ -417,6 +444,11 @@ export async function processIncomingJob(job: { id: string; contact_id: string; 
           metadata: { type: incoming.type },
           createdAt: eventTime,
         });
+        await scheduleAdvisorFollowup(
+          job.contact_id,
+          event.provider_message_id,
+          new Date(Date.now() + ADVISOR_FOLLOWUP_DELAY_MS),
+        );
       }
       await completeJob(job.id);
       return;

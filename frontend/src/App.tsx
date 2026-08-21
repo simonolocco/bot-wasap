@@ -596,10 +596,14 @@ function MessageBubble({
   const media = Boolean(
     message.mediaAssetId ||
       message.mediaId ||
-      ['image', 'document', 'audio'].includes(message.messageType),
+      ['image', 'sticker', 'video', 'document', 'audio'].includes(message.messageType),
   );
   const url = mediaUrl(message.id);
-  const image = message.messageType === 'image';
+  const image = message.messageType === 'image' || message.messageType === 'sticker';
+  const video = message.messageType === 'video';
+  const mediaReady = message.mediaStatus !== 'failed' && message.mediaStatus !== 'pending';
+  const placeholderBody = `[Mensaje ${message.messageType} recibido]`;
+  const displayBody = message.body && message.body !== placeholderBody ? message.body : message.mediaCaption || '';
   const pdf =
     message.mediaMimeType === 'application/pdf' ||
     message.mediaFilename?.toLowerCase().endsWith('.pdf');
@@ -631,12 +635,12 @@ function MessageBubble({
 
       {quoted && (
         <div className="quoted-message">
-          {quoted.id && quoted.messageType === 'image' && quoted.mediaStatus !== 'failed' && (
+          {quoted.id && (quoted.messageType === 'image' || quoted.messageType === 'sticker') && quoted.mediaStatus !== 'failed' && (
             <img src={thumbnailUrl(quoted.id, 240)} alt="Imagen citada" loading="lazy" decoding="async" />
           )}
           <span>
             <b>{quoted.direction === 'incoming' ? 'Cliente' : quoted.direction === 'outgoing' ? 'Vos' : 'Mensaje citado'}</b>
-            <small>{quoted.messageType === 'image' ? '📷 Foto' : quoted.messageType === 'audio' ? '🎧 Audio' : quoted.messageType === 'document' ? `📄 ${quoted.mediaFilename || 'Documento'}` : shortText(quoted.body || 'Mensaje original no disponible', 100)}</small>
+            <small>{quoted.messageType === 'image' ? '📷 Foto' : quoted.messageType === 'sticker' ? '🏷️ Sticker' : quoted.messageType === 'video' ? '🎬 Video' : quoted.messageType === 'audio' ? '🎧 Audio' : quoted.messageType === 'document' ? `📄 ${quoted.mediaFilename || 'Documento'}` : shortText(quoted.body || 'Mensaje original no disponible', 100)}</small>
           </span>
         </div>
       )}
@@ -644,7 +648,7 @@ function MessageBubble({
       {media && image && message.mediaStatus !== 'failed' && message.mediaStatus !== 'pending' && (
         <button
           className="image-button"
-          onClick={() => onLightbox(thumbnailUrl(message.id, 960), message.mediaFilename || 'Imagen')}
+          onClick={() => onLightbox(thumbnailUrl(message.id, 960), message.mediaFilename || (message.messageType === 'sticker' ? 'Sticker' : 'Imagen'))}
         >
           <span className="image-placeholder" aria-hidden="true" />
           <img
@@ -653,21 +657,36 @@ function MessageBubble({
             decoding="async"
             width={message.mediaWidth || undefined}
             height={message.mediaHeight || undefined}
-            alt={message.mediaCaption || 'Imagen recibida'}
+            alt={message.mediaCaption || (message.messageType === 'sticker' ? 'Sticker recibido' : 'Imagen recibida')}
           />
-          <span className="image-label">Ver imagen</span>
+          <span className="image-label">{message.messageType === 'sticker' ? 'Ver sticker' : 'Ver imagen'}</span>
         </button>
       )}
 
       {media && image && message.mediaStatus === 'pending' && (
-        <div className="media-state"><span className="spinner" /> Preparando imagen…</div>
+        <div className="media-state"><span className="spinner" /> Preparando {message.messageType === 'sticker' ? 'sticker' : 'imagen'}…</div>
       )}
 
       {media && image && message.mediaStatus === 'failed' && (
-        <div className="media-state error"><SvgIcon name="info" size={15} /> No se pudo preparar esta imagen.</div>
+        <div className="media-state error"><SvgIcon name="info" size={15} /> No se pudo preparar este {message.messageType === 'sticker' ? 'sticker' : 'imagen'}.</div>
       )}
 
-      {media && !image && (
+      {media && video && message.mediaStatus === 'pending' && (
+        <div className="media-state"><span className="spinner" /> Preparando video…</div>
+      )}
+
+      {media && video && message.mediaStatus === 'failed' && (
+        <div className="media-state error"><SvgIcon name="info" size={15} /> No se pudo preparar este video.</div>
+      )}
+
+      {media && video && mediaReady && (
+        <div className="video-card">
+          <video controls preload="metadata" src={url} aria-label={message.mediaCaption || 'Video recibido'} />
+          <a className="file-download" href={mediaUrl(message.id, true)}><SvgIcon name="download" size={14} /><span>Descargar video</span></a>
+        </div>
+      )}
+
+      {media && !image && !video && (
         <div className="file-card">
           {message.messageType === 'audio' ? (
             <audio controls preload="metadata" src={url} />
@@ -687,8 +706,8 @@ function MessageBubble({
         </div>
       )}
 
-      {message.body && message.body !== `[Mensaje ${message.messageType} recibido]` && (
-        <p className="message-text">{formatBody(message.body)}</p>
+      {displayBody && (
+        <p className="message-text">{formatBody(displayBody)}</p>
       )}
 
       <time>

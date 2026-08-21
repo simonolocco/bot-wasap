@@ -7,7 +7,10 @@ import {
   resolveOptionIdFromText,
 } from '../src/botMenu';
 import {
+  ADVISOR_FOLLOWUP_DELAY_MS,
   automaticResponseAgeMs,
+  buildAdvisorFollowupMessage,
+  isMenuCommand,
   resolveIncomingMenuOption,
   shouldSkipAutomaticResponse,
 } from '../src/services/botProcessor';
@@ -52,15 +55,20 @@ assert.equal(shouldSkipAutomaticResponse(now - 121_000, new Date(now).toISOStrin
 assert.equal(shouldSkipAutomaticResponse(undefined, new Date(now - 121_000).toISOString(), now, 120), true);
 assert.equal(shouldSkipAutomaticResponse(now - 121_000, new Date(now).toISOString(), now, 120), true, 'Meta timestamp debe prevalecer sobre received_at');
 
-import { isMenuCommand } from '../src/services/botProcessor';
-
 assert.equal(isMenuCommand('Hola'), true);
 assert.equal(isMenuCommand('hola bot'), true);
 assert.equal(isMenuCommand('buenas tardes'), true);
 assert.equal(isMenuCommand('ver menu'), true);
 assert.equal(isMenuCommand('opciones'), true);
+assert.equal(isMenuCommand('Ver más info'), true);
+assert.equal(isMenuCommand('necesito información'), true);
+assert.equal(isMenuCommand('info sobre el negocio'), true);
+assert.equal(isMenuCommand('tienen información de precios?'), true);
 assert.equal(isMenuCommand('2 cajas de queso cremoso'), false);
 assert.equal(isMenuCommand('tienen manteca?'), false);
+assert.equal(ADVISOR_FOLLOWUP_DELAY_MS, 10 * 60 * 1000);
+assert.match(buildAdvisorFollowupMessage('https://wa.me/5493510000000'), /asesor humano/);
+assert.match(buildAdvisorFollowupMessage('https://wa.me/5493510000000'), /https:\/\/wa\.me/);
 
 // Classification logic verification
 function classifyInteraction(incoming: { text?: string; selectedOptionId?: string; buttonReplyId?: string }) {

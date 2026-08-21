@@ -78,7 +78,7 @@ function parseIncoming(message: any, profileName?: string): ParsedIncoming | nul
   if (Number.isFinite(timestamp) && timestamp > 0) incoming.sourceTimestamp = timestamp > 10_000_000_000 ? timestamp : timestamp * 1000;
   if (message.type === 'text') incoming.text = String(message.text?.body ?? '').slice(0, 4096);
   if (message.type === 'interactive') { if (message.interactive?.list_reply) { incoming.text = String(message.interactive.list_reply.title ?? ''); incoming.selectedOptionId = String(message.interactive.list_reply.id ?? ''); } if (message.interactive?.button_reply) { incoming.text = String(message.interactive.button_reply.title ?? ''); incoming.buttonReplyId = String(message.interactive.button_reply.id ?? ''); } }
-  if (['image', 'document', 'audio', 'video'].includes(incoming.type)) { const media = message[incoming.type] ?? {}; incoming.text = String(media.caption ?? ''); incoming.media = { id: media.id ? String(media.id) : undefined, mimeType: media.mime_type ? String(media.mime_type) : undefined, filename: media.filename ? String(media.filename) : undefined, caption: media.caption ? String(media.caption) : undefined }; }
+  if (['image', 'document', 'audio', 'video', 'sticker'].includes(incoming.type)) { const media = message[incoming.type] ?? {}; incoming.text = String(media.caption ?? ''); incoming.media = { id: media.id ? String(media.id) : undefined, mimeType: media.mime_type ? String(media.mime_type) : incoming.type === 'sticker' ? 'image/webp' : undefined, filename: media.filename ? String(media.filename) : incoming.type === 'sticker' ? 'sticker.webp' : undefined, caption: media.caption ? String(media.caption) : undefined }; }
   return incoming;
 }
 app.get('/webhook', (req, res) => { if (!VERIFY_TOKEN) return res.status(500).send('META_VERIFY_TOKEN no configurado'); if (req.query['hub.mode'] === 'subscribe' && req.query['hub.verify_token'] === VERIFY_TOKEN) return res.status(200).send(req.query['hub.challenge']); return res.sendStatus(403); });
@@ -281,7 +281,7 @@ async function sendMediaFile(req: Request, res: Response, download: boolean) {
     const filePath = await ensureMediaCached(asset.storageKey);
     res.type(asset.mimeType);
     res.setHeader('Cache-Control', 'private, max-age=300, must-revalidate');
-    const safeInline = /^(image\/(jpeg|png|gif|webp|heic|heif)|audio\/(mpeg|ogg|wav|x-wav|mp4|aac)|application\/pdf)$/i.test(asset.mimeType);
+    const safeInline = /^(image\/(jpeg|png|gif|webp|heic|heif)|audio\/(mpeg|ogg|wav|x-wav|mp4|aac)|video\/(mp4|webm|3gpp)|application\/pdf)$/i.test(asset.mimeType);
     res.setHeader('Content-Disposition', `${download || !safeInline ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(asset.filename)}`);
     return res.sendFile(filePath);
   } catch { return res.status(404).json({ error: 'Archivo inexistente.' }); }

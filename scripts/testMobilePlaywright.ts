@@ -102,9 +102,52 @@ async function run() {
             deliveryStatus: 'delivered',
             createdAt: new Date().toISOString(),
           },
+          {
+            id: 'msg-mob-sticker',
+            contactId: 'conv-mob-1',
+            direction: 'incoming',
+            body: '[Mensaje sticker recibido]',
+            messageType: 'sticker',
+            deliveryStatus: 'delivered',
+            mediaAssetId: 'asset-sticker-1',
+            mediaStatus: 'ready',
+            mediaMimeType: 'image/webp',
+            mediaFilename: 'saludo.webp',
+            mediaCaption: 'Sticker de saludo',
+            createdAt: new Date().toISOString(),
+          },
+          {
+            id: 'msg-mob-video',
+            contactId: 'conv-mob-1',
+            direction: 'incoming',
+            body: '[Mensaje video recibido]',
+            messageType: 'video',
+            deliveryStatus: 'delivered',
+            mediaAssetId: 'asset-video-1',
+            mediaStatus: 'ready',
+            mediaMimeType: 'video/mp4',
+            mediaFilename: 'consulta.mp4',
+            mediaCaption: 'Video de referencia',
+            createdAt: new Date().toISOString(),
+          },
         ],
         nextBefore: null,
       }));
+    }
+
+    if (pathname === '/api/messages/msg-mob-sticker/media/thumbnail') {
+      res.writeHead(200, { 'Content-Type': 'image/svg+xml' });
+      return res.end('<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160"><rect width="160" height="160" rx="24" fill="#73d7bd"/><text x="80" y="92" text-anchor="middle" font-size="22">sticker</text></svg>');
+    }
+
+    if (pathname === '/api/messages/msg-mob-sticker/media' || pathname === '/api/messages/msg-mob-sticker/media/download') {
+      res.writeHead(200, { 'Content-Type': 'image/webp' });
+      return res.end();
+    }
+
+    if (pathname === '/api/messages/msg-mob-video/media' || pathname === '/api/messages/msg-mob-video/media/download') {
+      res.writeHead(200, { 'Content-Type': 'video/mp4' });
+      return res.end();
     }
 
     if (pathname === '/api/conversations/conv-mob-1/messages' && req.method === 'POST') {
@@ -190,8 +233,12 @@ async function run() {
     await page.waitForSelector('.chat-head');
     await page.waitForSelector('.messages');
     await page.waitForSelector('.message-bubble');
-    const msgText = await page.locator('.message-text').innerText();
+    const msgText = (await page.locator('.message-text').allTextContents()).join('\n');
     assert.match(msgText, /Hola, consulta de prueba mobile/);
+    assert.match(msgText, /Sticker de saludo/);
+    assert.match(msgText, /Video de referencia/);
+    assert.equal(await page.locator('.image-label').filter({ hasText: 'Ver sticker' }).count(), 1, 'el sticker debe renderizarse como imagen');
+    assert.equal(await page.locator('video[controls]').count(), 1, 'el video debe renderizarse con controles');
 
     // 5. Verificar compositor y envio manual
     const textarea = page.locator('.composer-input textarea');

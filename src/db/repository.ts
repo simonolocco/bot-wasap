@@ -119,6 +119,11 @@ export async function storeIncomingEvent(input: {
       ON CONFLICT (provider_message_id) DO NOTHING RETURNING id`, [input.providerMessageId, input.sourceTimestamp ? new Date(input.sourceTimestamp).toISOString() : null, JSON.stringify(input.payload)]);
     if (!event.rows[0]) return { duplicate: true as const };
     const contact = await upsertContact(client, input.phone, input.profileName);
+    // Any new incoming message means the customer interacted again. Pending
+    // advisor reminders for older messages must not be sent afterward.
+    await client.query(`UPDATE advisor_followups
+      SET status='cancelled', completed_at=now(), locked_at=NULL, locked_by=NULL
+      WHERE contact_id=$1 AND status='pending'`, [contact.id]);
     await client.query(`INSERT INTO bot_sessions (contact_id, display_name) VALUES ($1, $2)
       ON CONFLICT (contact_id) DO UPDATE SET display_name = CASE WHEN bot_sessions.display_name = '' THEN EXCLUDED.display_name ELSE bot_sessions.display_name END, updated_at = now()`,
       [contact.id, input.profileName?.trim() ?? '']);
@@ -129,7 +134,7 @@ export async function storeIncomingEvent(input: {
       VALUES ($1, 'incoming', $2, $3, $4, $5, $6, $7, $8, $9, CASE WHEN $5::text IS NULL THEN NULL ELSE 'pending' END, $10, $11) RETURNING id`, [contact.id, input.body, input.messageType, input.providerMessageId,
       input.media?.id ?? null, input.media?.mimeType ?? null, input.media?.filename ?? null, input.media?.size ?? null, input.media?.caption ?? null, quoted?.rows[0]?.id ?? null, input.quotedProviderMessageId ?? null]);
     await client.query(`INSERT INTO jobs (type, contact_id, webhook_event_id) VALUES ('process_incoming', $1, $2)`, [contact.id, event.rows[0].id]);
-    if (input.media?.id && ['image', 'document', 'audio', 'video'].includes(input.messageType)) {
+    if (input.media?.id && ['image', 'document', 'audio', 'video', 'sticker'].includes(input.messageType)) {
       await client.query(`INSERT INTO jobs (type, contact_id, message_id, provider_media_id, media_filename, media_mime_type)
         VALUES ('download_media', $1, $2, $3, $4, $5)`, [contact.id, insertedMessage.rows[0].id, input.media.id, input.media.filename ?? 'archivo', input.media.mimeType ?? 'application/octet-stream']);
     }
@@ -163,6 +168,115 @@ export async function recoverStaleJobs(maxHeartbeatAgeSeconds = 30, maxProcessin
       NOT EXISTS (
         SELECT 1 FROM worker_heartbeats wh
         WHERE wh.worker_id=j.locked_by
+          AND wh.last_seen_at >= now() - ($1::int * interval '1 second')
+      )
+    )`, [maxHeartbeatAgeSeconds, maxProcessingSeconds]);
+  return result.rowCount ?? 0;
+}
+
+export type AdvisorFollowup = {
+  id: string;
+  contact_id: string;
+  trigger_provider_message_id: string;
+  attempts: number;
+};
+
+export async function scheduleAdvisorFollowup(contactId: string, triggerProviderMessageId: string, dueAt: Date) {
+  const result = await query<AdvisorFollowup>(`INSERT INTO advisor_followups
+    (contact_id, trigger_provider_message_id, due_at)
+    VALUES ($1, $2, $3)
+    ON CONFLICT (contact_id, trigger_provider_message_id) DO NOTHING
+    RETURNING id, contact_id, trigger_provider_message_id, attempts`,
+    [contactId, triggerProviderMessageId, dueAt]);
+  return result.rows[0] ?? null;
+}
+
+/** Claims one reminder only when the customer has not sent a newer message. */
+export async function claimDueAdvisorFollowup(workerId: string) {
+  return transaction(async client => {
+    const result = await client.query<AdvisorFollowup>(`
+      WITH candidate AS (
+        SELECT f.id
+        FROM advisor_followups f
+        JOIN contacts c ON c.id=f.contact_id
+        JOIN messages trigger_message
+          ON trigger_message.contact_id=f.contact_id
+         AND trigger_message.provider_message_id=f.trigger_provider_message_id
+        WHERE f.status='pending'
+          AND f.due_at <= now()
+          AND c.bot_paused=false
+          AND NOT EXISTS (
+            SELECT 1 FROM messages newer
+            WHERE newer.contact_id=f.contact_id
+              AND newer.direction='incoming'
+              AND newer.created_at > trigger_message.created_at
+          )
+        ORDER BY f.due_at ASC, f.created_at ASC, f.id ASC
+        FOR UPDATE SKIP LOCKED
+        LIMIT 1
+      )
+      UPDATE advisor_followups f
+      SET status='processing', attempts=f.attempts+1, locked_at=now(), locked_by=$1, last_error=NULL
+      FROM candidate
+      WHERE f.id=candidate.id
+      RETURNING f.id, f.contact_id, f.trigger_provider_message_id, f.attempts`, [workerId]);
+    return result.rows[0] ?? null;
+  });
+}
+
+export async function isAdvisorFollowupEligible(followupId: string) {
+  const result = await query<{ id: string }>(`
+    SELECT f.id
+    FROM advisor_followups f
+    JOIN contacts c ON c.id=f.contact_id
+    JOIN messages trigger_message
+      ON trigger_message.contact_id=f.contact_id
+     AND trigger_message.provider_message_id=f.trigger_provider_message_id
+    WHERE f.id=$1
+      AND f.status='processing'
+      AND c.bot_paused=false
+      AND NOT EXISTS (
+        SELECT 1 FROM messages newer
+        WHERE newer.contact_id=f.contact_id
+          AND newer.direction='incoming'
+          AND newer.created_at > trigger_message.created_at
+      )`, [followupId]);
+  return Boolean(result.rows[0]);
+}
+
+export async function completeAdvisorFollowup(followupId: string, sentMessageId?: string) {
+  await query(`UPDATE advisor_followups
+    SET status='sent', sent_message_id=COALESCE($2, sent_message_id), completed_at=now(), locked_at=NULL, locked_by=NULL
+    WHERE id=$1 AND status='processing'`, [followupId, sentMessageId ?? null]);
+}
+
+export async function cancelAdvisorFollowup(followupId: string) {
+  await query(`UPDATE advisor_followups
+    SET status='cancelled', completed_at=now(), locked_at=NULL, locked_by=NULL
+    WHERE id=$1 AND status IN ('pending', 'processing')`, [followupId]);
+}
+
+export async function retryAdvisorFollowup(followupId: string, attempts: number, error: unknown) {
+  const delaySeconds = Math.min(3600, 2 ** Math.min(attempts, 10));
+  const message = error instanceof Error ? error.message.slice(0, 1000) : String(error).slice(0, 1000);
+  await query(`UPDATE advisor_followups
+    SET status=CASE WHEN attempts >= 8 THEN 'failed' ELSE 'pending' END,
+      due_at=now() + ($2 || ' seconds')::interval,
+      last_error=$3, locked_at=NULL, locked_by=NULL,
+      completed_at=CASE WHEN attempts >= 8 THEN now() ELSE NULL END
+    WHERE id=$1 AND status='processing'`, [followupId, delaySeconds, message]);
+}
+
+export async function recoverStaleAdvisorFollowups(maxHeartbeatAgeSeconds = 30, maxProcessingSeconds = 60) {
+  const result = await query(`UPDATE advisor_followups f
+    SET status='pending', due_at=now(), locked_at=NULL, locked_by=NULL,
+      last_error=COALESCE(f.last_error, 'Worker interrumpido antes de enviar el seguimiento')
+    WHERE f.status='processing' AND (
+      f.locked_at IS NULL OR
+      f.locked_at < now() - ($2::int * interval '1 second') OR
+      NOT EXISTS (
+        SELECT 1 FROM worker_heartbeats wh
+        WHERE wh.worker_id=f.locked_by
           AND wh.last_seen_at >= now() - ($1::int * interval '1 second')
       )
     )`, [maxHeartbeatAgeSeconds, maxProcessingSeconds]);
@@ -314,7 +428,10 @@ export async function prepareOutgoingMessage(contactId: string, key: string, bod
     WITH stored AS (
       INSERT INTO messages (contact_id, direction, body, message_type, outbound_key, delivery_status)
       VALUES ($1, 'outgoing', $2, $3, $4, 'pending')
-      ON CONFLICT (outbound_key) DO UPDATE SET body = messages.body
+      ON CONFLICT (outbound_key) DO UPDATE SET
+        body = messages.body,
+        delivery_status = CASE WHEN messages.delivery_status='failed' THEN 'pending' ELSE messages.delivery_status END,
+        error = CASE WHEN messages.delivery_status='failed' THEN NULL ELSE messages.error END
       RETURNING id, delivery_status
     ), touched AS (
       UPDATE contacts SET last_message_at=now(), last_outgoing_at=now(), updated_at=now() WHERE id=$1 RETURNING id
