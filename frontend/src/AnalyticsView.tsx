@@ -724,7 +724,7 @@ export default function AnalyticsView({
 
           {data.trend.length > 0 && (
             <div className="recharts-responsive-box">
-              <ResponsiveContainer width="100%" height={290}>
+              <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={data.trend} margin={{ top: 15, right: 20, left: -10, bottom: 0 }}>
                   <defs>
                     <linearGradient id="colorIncoming" x1="0" y1="0" x2="0" y2="1">
@@ -745,8 +745,10 @@ export default function AnalyticsView({
                     dataKey="date"
                     tickFormatter={val => val.slice(5)}
                     stroke="var(--muted)"
-                    tick={{ fontSize: 11 }}
+                    tick={{ fontSize: 10 }}
                     tickLine={false}
+                    minTickGap={18}
+                    interval="preserveStartEnd"
                   />
                   <YAxis
                     stroke="var(--muted)"
@@ -822,7 +824,7 @@ export default function AnalyticsView({
             No se registraron mensajes en el período seleccionado.
           </div>
         ) : (
-          <div className="table-responsive">
+          <div className="table-responsive table-responsive-trend">
             <div className="trend-explainer legend-strip" role="note">
               <div className="legend-strip-head">
                 <Info size={14} className="text-emerald" />
@@ -908,7 +910,7 @@ export default function AnalyticsView({
               <div className="table-empty-notice">Sin elecciones en este período.</div>
             ) : (
               <div className="donut-chart-container">
-                <ResponsiveContainer width="100%" height={230}>
+                <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie
                       data={pieData}
@@ -1052,7 +1054,7 @@ export default function AnalyticsView({
                   : 'No se registraron mensajes no entendidos en el período.'}
               </div>
             ) : (
-              <div className="table-responsive">
+              <div className="table-responsive table-responsive-patterns">
                 <table className="modern-table analytics-table data-table">
                   <thead>
                     <tr>
@@ -1118,7 +1120,7 @@ export default function AnalyticsView({
                 No hay mensajes recientes no entendidos en este período.
               </div>
             ) : (
-              <div className="table-responsive">
+              <div className="table-responsive table-responsive-recent">
                 <table className="modern-table analytics-table data-table">
                   <thead>
                     <tr>
@@ -1237,7 +1239,7 @@ export default function AnalyticsView({
               : 'Todos los clientes que interactuaron en este período seleccionaron al menos una opción del menú.'}
           </div>
         ) : (
-          <div className="table-responsive">
+          <div className="table-responsive table-responsive-contacts">
             <table className="modern-table analytics-table data-table">
               <thead>
                 <tr>

@@ -329,6 +329,17 @@ async function run() {
     // Check tables (including daily trend table) are horizontally scrollable without breaking page viewport
     const mobileTrendRows = page.locator('.trend-row');
     assert.ok((await mobileTrendRows.count()) >= 3, 'Tabla de tendencia visible en mobile');
+    const trendTableScroll = await page.locator('.table-responsive-trend').evaluate((el) => ({
+      clientWidth: el.clientWidth,
+      scrollWidth: el.scrollWidth,
+    }));
+    assert.ok(trendTableScroll.scrollWidth > trendTableScroll.clientWidth, 'La tabla mobile debe quedar contenida en su propio scroll');
+    const mobileChartHeight = await page.locator('.recharts-responsive-box').evaluate((el) => el.getBoundingClientRect().height);
+    assert.ok(mobileChartHeight >= 240, 'El gráfico mobile debe conservar una altura útil (encontrado: ' + mobileChartHeight + ')');
+    const mobileFunnelDirection = await page.locator('.funnel-pipeline').first().evaluate((el) => window.getComputedStyle(el).flexDirection);
+    assert.equal(mobileFunnelDirection, 'column', 'El embudo debe apilarse en mobile');
+    const mobileTabHeight = await page.getByRole('button', { name: /Últimos mensajes/i }).evaluate((el) => el.getBoundingClientRect().height);
+    assert.ok(mobileTabHeight >= 40, 'Las pestañas de Analíticas deben ser táctiles en mobile');
 
     // Mobile navigation from analytics must open the selected chat, not only change the route.
     await page.getByRole('button', { name: /Todos sin menú \(/i }).click();
