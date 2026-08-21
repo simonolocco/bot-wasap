@@ -2179,6 +2179,74 @@ html[data-theme="dark"] .filter-select {
   .pipeline-connector { align-self: center; transform: rotate(90deg); }
   .table-responsive .analytics-table { min-width: 680px; }
   .table-responsive-trend .analytics-table { min-width: 720px; }
+  .table-responsive-contacts {
+    overflow: visible;
+  }
+  .table-responsive-contacts .analytics-table {
+    min-width: 0;
+    display: block;
+  }
+  .table-responsive-contacts .analytics-table thead {
+    display: none;
+  }
+  .table-responsive-contacts .analytics-table tbody {
+    display: grid;
+    gap: 10px;
+  }
+  .table-responsive-contacts .analytics-table tr,
+  .table-responsive-contacts .analytics-table td {
+    display: block;
+    width: 100%;
+  }
+  .table-responsive-contacts .analytics-table tr {
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface-2);
+  }
+  .table-responsive-contacts .analytics-table td {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 7px 0;
+    border: 0;
+    text-align: left !important;
+  }
+  .table-responsive-contacts .analytics-table td::before {
+    content: attr(data-label);
+    flex: 0 0 100px;
+    padding-top: 2px;
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+  .table-responsive-contacts .analytics-table td:first-child {
+    display: block;
+    padding-top: 0;
+  }
+  .table-responsive-contacts .analytics-table td:first-child::before,
+  .table-responsive-contacts .analytics-table td:last-child::before {
+    display: none;
+  }
+  .table-responsive-contacts .analytics-table td:last-child {
+    justify-content: flex-end;
+    padding-bottom: 0;
+  }
+  .table-responsive-contacts .analytics-table .contact-meta-cell,
+  .table-responsive-contacts .analytics-table .response-cell {
+    min-width: 0;
+    flex: 1;
+  }
+  .table-responsive-contacts .analytics-table .cell-primary {
+    min-width: 0;
+  }
+  .table-responsive-contacts .analytics-table .action-open-chat-btn {
+    width: 100%;
+    justify-content: center;
+  }
   .trend-explainer { min-width: 0; }
   .legend-strip-items { gap: 10px 14px; }
   .tab-pill { min-height: 44px; }

@@ -1254,7 +1254,7 @@ export default function AnalyticsView({
               <tbody>
                 {pagedContactsWithoutMenu.map(c => (
                   <tr key={c.id} className="interactive-row">
-                    <td>
+                    <td data-label="Contacto">
                       <div className="contact-meta-cell">
                         <div className="contact-avatar-pill">
                           {getInitials(cleanName(c.name || c.publicName, c.phone))}
@@ -1267,13 +1267,13 @@ export default function AnalyticsView({
                         </div>
                       </div>
                     </td>
-                    <td>
+                    <td data-label="Teléfono">
                       <span className="mono-phone cell-subtitle font-medium">{c.phone}</span>
                     </td>
-                    <td style={{ textAlign: 'center' }}>
+                    <td data-label="Mensajes" style={{ textAlign: 'center' }}>
                       <span className="chip-badge chip-blue font-bold">{c.messageCount} msgs</span>
                     </td>
-                    <td>
+                    <td data-label="Respuesta del bot">
                       <div className="response-cell">
                         <span
                           className={`chip-badge ${c.responseStatus === 'responded' ? 'chip-emerald' : 'chip-orange'}`}
@@ -1288,13 +1288,13 @@ export default function AnalyticsView({
                         </small>
                       </div>
                     </td>
-                    <td>
+                    <td data-label="Última actividad">
                       <div className="response-cell">
                         <span className="cell-time">{formatDate(c.lastIncomingAt || c.lastMessageAt, true)}</span>
                         {c.lastBotResponseAt && <small className="text-xs text-muted">Bot: {formatDate(c.lastBotResponseAt, true)}</small>}
                       </div>
                     </td>
-                    <td style={{ textAlign: 'right' }}>
+                    <td data-label="" style={{ textAlign: 'right' }}>
                       <button
                         type="button"
                         className="action-open-chat-btn"

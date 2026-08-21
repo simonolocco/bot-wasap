@@ -340,6 +340,18 @@ async function run() {
     assert.equal(mobileFunnelDirection, 'column', 'El embudo debe apilarse en mobile');
     const mobileTabHeight = await page.getByRole('button', { name: /Últimos mensajes/i }).evaluate((el) => el.getBoundingClientRect().height);
     assert.ok(mobileTabHeight >= 40, 'Las pestañas de Analíticas deben ser táctiles en mobile');
+    const contactsTable = page.locator('.table-responsive-contacts');
+    const contactsScroll = await contactsTable.evaluate((el) => ({
+      clientWidth: el.clientWidth,
+      scrollWidth: el.scrollWidth,
+    }));
+    assert.ok(
+      contactsScroll.scrollWidth <= contactsScroll.clientWidth + 1,
+      'La tabla de contactos mobile debe mostrarse sin desborde horizontal'
+    );
+    const contactRowDisplay = await contactsTable.locator('tbody tr').first().evaluate((el) => window.getComputedStyle(el).display);
+    assert.equal(contactRowDisplay, 'block', 'Los contactos deben presentarse como tarjetas en mobile');
+    assert.match(await contactsTable.locator('tbody tr').first().innerText(), /Abrir chat/);
 
     // Mobile navigation from analytics must open the selected chat, not only change the route.
     await page.getByRole('button', { name: /Todos sin menú \(/i }).click();
