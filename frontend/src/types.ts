@@ -1,6 +1,7 @@
 export type ConsentStatus = 'unknown' | 'opted_in' | 'opted_out';
 export type TicketType = 'question' | 'order';
 export type TicketStatus = 'open' | 'responded' | 'closed';
+export type SecondaryView = 'dashboard' | 'analytics' | 'contacts' | 'orders' | 'tickets' | 'templates';
 
 export type Contact = {
   id: string;
@@ -124,4 +125,102 @@ export type DashboardData = {
   mediaStorage: { healthy: boolean; driver: string; latencyMs: number; error: string | null };
   database: { bytes: number };
   thresholds: { workerStaleSeconds: number; queueOldestWarningSeconds: number; backupWarningSeconds: number; archiveRpoSeconds: number };
+};
+
+export type AnalyticsPeriodKey = '7d' | '30d' | '90d' | 'custom';
+
+export type BotAnalyticsSummary = {
+  totalUniqueContacts: number;
+  totalIncomingMessages: number;
+  totalMenuInteractions: number;
+  totalMenuOptionsRecognized: number;
+  totalUnrecognizedMessages: number;
+  totalOrdersStarted: number;
+  totalOrdersSubmitted: number;
+  totalAdvisorRequests: number;
+  contactsWithoutMenuCount: number;
+  contactsWithoutBotResponseCount: number;
+  menuOptionRate: number;
+  unrecognizedRate: number;
+};
+
+export type MenuOptionStat = {
+  id: string;
+  label: string;
+  number: string;
+  count: number;
+  uniqueContacts: number;
+  percentage: number;
+};
+
+export type TrendPoint = {
+  date: string;
+  incomingMessages: number;
+  menuInteractions: number;
+  menuRequested: number;
+  optionsRecognized: number;
+  unrecognized: number;
+  uniqueContacts: number;
+};
+
+export type UnrecognizedPattern = {
+  text: string;
+  normalizedText: string;
+  count: number;
+  uniqueContacts: number;
+  lastSeenAt: string;
+};
+
+export type UnrecognizedMessageItem = {
+  id: string;
+  contactId: string;
+  contactName: string;
+  phone: string;
+  rawText: string;
+  normalizedText: string;
+  messageType: string;
+  createdAt: string;
+};
+
+export type ContactWithoutMenuItem = {
+  id: string;
+  name: string;
+  publicName: string;
+  phone: string;
+  pipelineStatus: string;
+  lastMessageAt: string | null;
+  lastIncomingAt: string;
+  messageCount: number;
+  botResponseCount: number;
+  lastBotResponseAt: string | null;
+  responseStatus: 'responded' | 'unanswered';
+};
+
+export type BotAnalyticsData = {
+  period: {
+    key: AnalyticsPeriodKey;
+    from: string;
+    to: string;
+    label: string;
+  };
+  summary: BotAnalyticsSummary;
+  menuOptions: MenuOptionStat[];
+  trend: TrendPoint[];
+  unrecognizedMessages: {
+    total: number;
+    uniqueContacts: number;
+    topPatterns: UnrecognizedPattern[];
+    items: UnrecognizedMessageItem[];
+  };
+  contactsWithoutMenu: {
+    total: number;
+    withoutBotResponse: number;
+    items: ContactWithoutMenuItem[];
+  };
+  coverage: {
+    hasTrackingData: boolean;
+    earliestEventAt: string | null;
+    totalEventsTracked: number;
+    note: string;
+  };
 };

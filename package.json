@@ -56,11 +56,13 @@
     "express": "^4.22.2",
     "express-async-errors": "^3.1.1",
     "express-session": "^1.19.0",
+    "lucide-react": "^1.33.0",
     "multer": "^2.2.0",
     "pg": "^8.23.0",
     "qrcode-terminal": "^0.12.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "recharts": "^3.10.1",
     "sharp": "^0.35.3",
     "zod": "^4.4.3"
   },

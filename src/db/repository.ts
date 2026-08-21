@@ -856,3 +856,641 @@ export async function previewCampaignSegment(filters: { consentStatus?: ConsentS
   const result = await query<{ total: string }>(`SELECT count(*)::text AS total FROM contacts WHERE ${where.join(' AND ')}`, values);
   return { total: Number(result.rows[0].total), filters };
 }
+
+/* ═══════════════════════════════════════════════════════
+   BOT BEHAVIOR ANALYTICS
+   ═══════════════════════════════════════════════════════ */
+
+export type BotAnalyticsEventType =
+  | 'menu_option'
+  | 'menu_requested'
+  | 'order_started'
+  | 'order_submitted'
+  | 'human_advisor_requested'
+  | 'flow_command'
+  | 'unrecognized_message'
+  | 'bot_paused_message';
+
+export async function recordBotInteractionEvent(input: {
+  contactId: string;
+  providerMessageId: string;
+  eventType: BotAnalyticsEventType;
+  selectedOption?: string | null;
+  rawText?: string | null;
+  normalizedText?: string | null;
+  messageType?: string;
+  metadata?: Record<string, unknown>;
+  createdAt?: Date;
+}) {
+  try {
+    const result = await query<{ id: string }>(`
+      INSERT INTO bot_analytics_events (
+        contact_id, provider_message_id, event_type, selected_option,
+        raw_text, normalized_text, message_type, metadata, created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, COALESCE($9, now()))
+      ON CONFLICT (provider_message_id, event_type) DO NOTHING
+      RETURNING id`,
+      [
+        input.contactId,
+        input.providerMessageId,
+        input.eventType,
+        input.selectedOption ?? null,
+        input.rawText ?? null,
+        input.normalizedText ?? null,
+        input.messageType ?? 'text',
+        JSON.stringify(input.metadata ?? {}),
+        input.createdAt ? input.createdAt.toISOString() : null,
+      ]
+    );
+    return result.rows[0]?.id ?? null;
+  } catch (error) {
+    console.error('[repository] Error recording bot analytics event:', error);
+    return null;
+  }
+}
+
+export type AnalyticsPeriodKey = '7d' | '30d' | '90d' | 'custom';
+
+export type BotAnalyticsSummary = {
+  totalUniqueContacts: number;
+  totalIncomingMessages: number;
+  totalMenuInteractions: number;
+  totalMenuOptionsRecognized: number;
+  totalUnrecognizedMessages: number;
+  totalOrdersStarted: number;
+  totalOrdersSubmitted: number;
+  totalAdvisorRequests: number;
+  contactsWithoutMenuCount: number;
+  contactsWithoutBotResponseCount: number;
+  menuOptionRate: number;
+  unrecognizedRate: number;
+};
+
+export type MenuOptionStat = {
+  id: string;
+  label: string;
+  number: string;
+  count: number;
+  uniqueContacts: number;
+  percentage: number;
+};
+
+export type TrendPoint = {
+  date: string;
+  incomingMessages: number;
+  menuInteractions: number;
+  menuRequested: number;
+  optionsRecognized: number;
+  unrecognized: number;
+  uniqueContacts: number;
+};
+
+export type UnrecognizedPattern = {
+  text: string;
+  normalizedText: string;
+  count: number;
+  uniqueContacts: number;
+  lastSeenAt: string;
+};
+
+export type UnrecognizedMessageItem = {
+  id: string;
+  contactId: string;
+  contactName: string;
+  phone: string;
+  rawText: string;
+  normalizedText: string;
+  messageType: string;
+  createdAt: string;
+};
+
+export type ContactWithoutMenuItem = {
+  id: string;
+  name: string;
+  publicName: string;
+  phone: string;
+  pipelineStatus: string;
+  lastMessageAt: string | null;
+  lastIncomingAt: string;
+  messageCount: number;
+  botResponseCount: number;
+  lastBotResponseAt: string | null;
+  responseStatus: 'responded' | 'unanswered';
+};
+
+export type BotAnalyticsData = {
+  period: {
+    key: AnalyticsPeriodKey;
+    from: string;
+    to: string;
+    label: string;
+  };
+  summary: BotAnalyticsSummary;
+  menuOptions: MenuOptionStat[];
+  trend: TrendPoint[];
+  unrecognizedMessages: {
+    total: number;
+    uniqueContacts: number;
+    topPatterns: UnrecognizedPattern[];
+    items: UnrecognizedMessageItem[];
+  };
+  contactsWithoutMenu: {
+    total: number;
+    withoutBotResponse: number;
+    items: ContactWithoutMenuItem[];
+  };
+  coverage: {
+    hasTrackingData: boolean;
+    earliestEventAt: string | null;
+    totalEventsTracked: number;
+    note: string;
+  };
+};
+
+const MENU_OPTION_METADATA: Array<{ id: string; label: string; number: string }> = [
+  { id: 'horarios', label: 'Horarios', number: '1' },
+  { id: 'direccion', label: 'Dirección', number: '2' },
+  { id: 'lista_precio', label: 'Precios', number: '3' },
+  { id: 'hacer_pedido', label: 'Nuevo Pedido', number: '4' },
+  { id: 'asesor', label: 'Asesor Humano', number: '5' },
+  { id: 'preguntas_frecuentes', label: 'Preguntas frecuentes', number: '6' },
+];
+
+export async function getBotAnalytics(options: {
+  period?: AnalyticsPeriodKey;
+  from?: string;
+  to?: string;
+  limit?: number;
+} = {}): Promise<BotAnalyticsData> {
+  const periodKey: AnalyticsPeriodKey = options.period || '30d';
+  const now = new Date();
+  let fromDate: Date;
+  let toDate: Date = now;
+  let periodLabel = 'Últimos 30 días';
+
+  if (periodKey === '7d') {
+    fromDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    periodLabel = 'Últimos 7 días';
+  } else if (periodKey === '90d') {
+    fromDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+    periodLabel = 'Últimos 90 días';
+  } else if (periodKey === 'custom' && options.from && options.to) {
+    fromDate = new Date(options.from);
+    toDate = new Date(options.to);
+    // If toDate is YYYY-MM-DD without time, end of day
+    if (options.to.length === 10) {
+      toDate = new Date(`${options.to}T23:59:59.999Z`);
+    }
+    if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) {
+      fromDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      toDate = now;
+      periodLabel = 'Últimos 30 días';
+    } else {
+      periodLabel = 'Rango personalizado';
+    }
+  } else {
+    fromDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    periodLabel = 'Últimos 30 días';
+  }
+
+  const listLimit = Math.max(1, Math.min(Number(options.limit) || 50, 100));
+  const fromIso = fromDate.toISOString();
+  const toIso = toDate.toISOString();
+
+  // 1. Unique contacts and incoming messages from messages table in date range
+  const msgStatsQuery = await query<{ unique_contacts: string; incoming_count: string }>(`
+    SELECT
+      count(DISTINCT contact_id)::text AS unique_contacts,
+      count(*)::text AS incoming_count
+    FROM messages
+    WHERE direction = 'incoming' AND created_at >= $1 AND created_at <= $2
+  `, [fromIso, toIso]);
+
+  const totalIncomingMessages = Number(msgStatsQuery.rows[0]?.incoming_count || 0);
+  let totalUniqueContacts = Number(msgStatsQuery.rows[0]?.unique_contacts || 0);
+
+  // 2. Aggregated summary from bot_analytics_events
+  const eventStatsQuery = await query<{
+    menu_interactions: string;
+    options_recognized: string;
+    unrecognized: string;
+    orders_started: string;
+    orders_submitted: string;
+    advisor_requests: string;
+    unique_event_contacts: string;
+  }>(`
+    SELECT
+      count(*) FILTER (WHERE event_type IN ('menu_option', 'menu_requested'))::text AS menu_interactions,
+      count(*) FILTER (WHERE event_type = 'menu_option' AND selected_option IS NOT NULL)::text AS options_recognized,
+      count(*) FILTER (WHERE event_type = 'unrecognized_message')::text AS unrecognized,
+      count(*) FILTER (WHERE event_type = 'order_started')::text AS orders_started,
+      count(*) FILTER (WHERE event_type = 'order_submitted')::text AS orders_submitted,
+      count(DISTINCT provider_message_id) FILTER (
+        WHERE event_type = 'human_advisor_requested'
+          OR (event_type = 'menu_option' AND selected_option = 'asesor')
+      )::text AS advisor_requests,
+      count(DISTINCT contact_id)::text AS unique_event_contacts
+    FROM bot_analytics_events
+    WHERE created_at >= $1 AND created_at <= $2
+  `, [fromIso, toIso]);
+
+  const evRow = eventStatsQuery.rows[0];
+  const totalMenuInteractions = Number(evRow?.menu_interactions || 0);
+  const totalMenuOptionsRecognized = Number(evRow?.options_recognized || 0);
+  const totalUnrecognizedMessages = Number(evRow?.unrecognized || 0);
+  const totalOrdersStarted = Number(evRow?.orders_started || 0);
+  const totalOrdersSubmitted = Number(evRow?.orders_submitted || 0);
+  const totalAdvisorRequests = Number(evRow?.advisor_requests || 0);
+  if (totalUniqueContacts === 0 && evRow?.unique_event_contacts) {
+    totalUniqueContacts = Number(evRow.unique_event_contacts);
+  }
+
+  // 2. Coverage info & tracking boundary
+  const coverageQuery = await query<{
+    total_events: string;
+    earliest_event_at: string | null;
+  }>(`
+    SELECT
+      count(*)::text AS total_events,
+      min(created_at)::text AS earliest_event_at
+    FROM bot_analytics_events
+  `);
+
+  const totalEventsTracked = Number(coverageQuery.rows[0]?.total_events || 0);
+  const earliestEventAt = coverageQuery.rows[0]?.earliest_event_at || null;
+  const hasTrackingData = totalEventsTracked > 0 && earliestEventAt !== null;
+
+  let effectiveContactsFromIso = fromIso;
+  let coverageNote = 'Métricas generadas a partir de eventos persistidos en el pipeline del worker. No contiene datos simulados ni mockeados.';
+
+  if (!hasTrackingData) {
+    coverageNote = 'Sin eventos analíticos registrados todavía. Las métricas de uso de menú y contactos comenzarán a acumularse a medida que ingresen nuevas interacciones.';
+  } else if (earliestEventAt && fromDate.getTime() < new Date(earliestEventAt).getTime()) {
+    effectiveContactsFromIso = new Date(earliestEventAt).toISOString();
+    coverageNote = `Registro de interacciones activo desde ${earliestEventAt.slice(0, 10)}. Para garantizar exactitud, los contactos sin selección de menú se computan sobre el período con cobertura de eventos.`;
+  }
+
+  // 3. Contacts who sent messages in the period but selected 0 menu options (constrained to tracked period)
+  let contactsWithoutMenuCount = 0;
+  let contactsWithoutBotResponseCount = 0;
+  if (hasTrackingData) {
+    const contactsWithoutMenuCountQuery = await query<{ count: string; without_bot_response: string }>(`
+      WITH no_menu_contacts AS (
+        SELECT m.contact_id
+        FROM messages m
+        WHERE m.direction = 'incoming' AND m.created_at >= $1 AND m.created_at <= $2
+        GROUP BY m.contact_id
+        HAVING NOT EXISTS (
+          SELECT 1 FROM bot_analytics_events b
+          WHERE b.contact_id = m.contact_id
+            AND b.event_type = 'menu_option'
+            AND b.created_at >= $1 AND b.created_at <= $2
+        )
+      ), response_stats AS (
+        SELECT
+          nmc.contact_id,
+          count(DISTINCT out.id) AS bot_response_count
+        FROM no_menu_contacts nmc
+        LEFT JOIN messages out
+          ON out.contact_id = nmc.contact_id
+          AND out.direction = 'outgoing'
+          AND COALESCE(out.outbound_key, '') NOT LIKE 'manual:%'
+          AND (out.delivery_status IN ('sent', 'delivered', 'read') OR (out.delivery_status IS NULL AND out.sent_at IS NOT NULL))
+          AND out.created_at >= $1 AND out.created_at <= $2
+          AND EXISTS (
+            SELECT 1 FROM messages incoming
+            WHERE incoming.contact_id = nmc.contact_id
+              AND incoming.direction = 'incoming'
+              AND incoming.created_at >= $1 AND incoming.created_at <= $2
+              AND out.created_at >= incoming.created_at
+              AND out.created_at <= incoming.created_at + interval '10 minutes'
+          )
+        GROUP BY nmc.contact_id
+      )
+      SELECT
+        count(*)::text AS count,
+        count(*) FILTER (WHERE COALESCE(bot_response_count, 0) = 0)::text AS without_bot_response
+      FROM response_stats
+    `, [effectiveContactsFromIso, toIso]);
+    contactsWithoutMenuCount = Number(contactsWithoutMenuCountQuery.rows[0]?.count || 0);
+    contactsWithoutBotResponseCount = Number(contactsWithoutMenuCountQuery.rows[0]?.without_bot_response || 0);
+  }
+
+  // 4. Breakdown by the 6 menu options
+  const menuBreakdownQuery = await query<{
+    selected_option: string;
+    count: string;
+    unique_contacts: string;
+  }>(`
+    SELECT
+      selected_option,
+      count(*)::text AS count,
+      count(DISTINCT contact_id)::text AS unique_contacts
+    FROM bot_analytics_events
+    WHERE created_at >= $1 AND created_at <= $2
+      AND event_type = 'menu_option'
+      AND selected_option IS NOT NULL
+    GROUP BY selected_option
+  `, [fromIso, toIso]);
+
+  const breakdownMap = new Map<string, { count: number; uniqueContacts: number }>();
+  for (const row of menuBreakdownQuery.rows) {
+    breakdownMap.set(row.selected_option, {
+      count: Number(row.count),
+      uniqueContacts: Number(row.unique_contacts),
+    });
+  }
+
+  const menuOptions: MenuOptionStat[] = MENU_OPTION_METADATA.map(meta => {
+    const data = breakdownMap.get(meta.id) || { count: 0, uniqueContacts: 0 };
+    const percentage = totalMenuOptionsRecognized > 0
+      ? Math.round((data.count / totalMenuOptionsRecognized) * 1000) / 10
+      : 0;
+    return {
+      id: meta.id,
+      label: meta.label,
+      number: meta.number,
+      count: data.count,
+      uniqueContacts: data.uniqueContacts,
+      percentage,
+    };
+  });
+
+  // 5. Daily Trend
+  const dailyMessagesQuery = await query<{
+    day: string;
+    incoming_count: string;
+    unique_contacts: string;
+  }>(`
+    SELECT
+      to_char(date_trunc('day', created_at AT TIME ZONE 'America/Argentina/Cordoba'), 'YYYY-MM-DD') AS day,
+      count(*)::text AS incoming_count,
+      count(DISTINCT contact_id)::text AS unique_contacts
+    FROM messages
+    WHERE direction = 'incoming' AND created_at >= $1 AND created_at <= $2
+    GROUP BY 1
+    ORDER BY 1 ASC
+  `, [fromIso, toIso]);
+
+  const trendQuery = await query<{
+  day: string;
+  menu_interactions: string;
+  menu_requested: string;
+  options_recognized: string;
+    unrecognized: string;
+    unique_contacts: string;
+  }>(`
+    SELECT
+      to_char(date_trunc('day', created_at AT TIME ZONE 'America/Argentina/Cordoba'), 'YYYY-MM-DD') AS day,
+      count(*) FILTER (WHERE event_type IN ('menu_option', 'menu_requested'))::text AS menu_interactions,
+      count(*) FILTER (WHERE event_type = 'menu_requested')::text AS menu_requested,
+      count(*) FILTER (WHERE event_type = 'menu_option')::text AS options_recognized,
+      count(*) FILTER (WHERE event_type = 'unrecognized_message')::text AS unrecognized,
+      count(DISTINCT contact_id)::text AS unique_contacts
+    FROM bot_analytics_events
+    WHERE created_at >= $1 AND created_at <= $2
+    GROUP BY 1
+    ORDER BY 1 ASC
+  `, [fromIso, toIso]);
+
+  const dailyMsgMap = new Map<string, { incoming: number; uniqueContacts: number }>();
+  for (const row of dailyMessagesQuery.rows) {
+    dailyMsgMap.set(row.day, {
+      incoming: Number(row.incoming_count || 0),
+      uniqueContacts: Number(row.unique_contacts || 0),
+    });
+  }
+
+  const allDays = new Set<string>([
+    ...dailyMessagesQuery.rows.map(r => r.day),
+    ...trendQuery.rows.map(r => r.day),
+  ]);
+  const sortedDays = Array.from(allDays).sort();
+  const eventMap = new Map(trendQuery.rows.map(r => [r.day, r]));
+
+  const trend: TrendPoint[] = sortedDays.map(day => {
+    const ev = eventMap.get(day);
+    const msg = dailyMsgMap.get(day);
+    return {
+      date: day,
+      incomingMessages: msg?.incoming ?? (Number(ev?.options_recognized || 0) + Number(ev?.unrecognized || 0)),
+      menuInteractions: Number(ev?.menu_interactions || 0),
+      menuRequested: Number(ev?.menu_requested || 0),
+      optionsRecognized: Number(ev?.options_recognized || 0),
+      unrecognized: Number(ev?.unrecognized || 0),
+      uniqueContacts: msg?.uniqueContacts ?? Number(ev?.unique_contacts || 0),
+    };
+  });
+
+  // 6. Unrecognized messages - top patterns
+  const topPatternsQuery = await query<{
+    text: string;
+    normalized_text: string;
+    count: string;
+    unique_contacts: string;
+    last_seen_at: string;
+  }>(`
+    SELECT
+      COALESCE(NULLIF(TRIM(raw_text), ''), '[Mensaje sin texto]') AS text,
+      COALESCE(NULLIF(TRIM(normalized_text), ''), '[sin normalizar]') AS normalized_text,
+      count(*)::text AS count,
+      count(DISTINCT contact_id)::text AS unique_contacts,
+      max(created_at) AS last_seen_at
+    FROM bot_analytics_events
+    WHERE created_at >= $1 AND created_at <= $2
+      AND event_type = 'unrecognized_message'
+    GROUP BY 1, 2
+    ORDER BY count(*) DESC, max(created_at) DESC
+    LIMIT $3
+  `, [fromIso, toIso, listLimit]);
+
+  const topPatterns: UnrecognizedPattern[] = topPatternsQuery.rows.map(r => ({
+    text: r.text,
+    normalizedText: r.normalized_text,
+    count: Number(r.count),
+    uniqueContacts: Number(r.unique_contacts),
+    lastSeenAt: r.last_seen_at,
+  }));
+
+  // 7. Recent unrecognized messages list
+  const recentUnrecognizedQuery = await query<{
+    id: string;
+    contact_id: string;
+    contact_name: string;
+    phone: string;
+    raw_text: string | null;
+    normalized_text: string | null;
+    message_type: string;
+    created_at: string;
+  }>(`
+    SELECT
+      e.id,
+      e.contact_id,
+      COALESCE(NULLIF(c.name, ''), NULLIF(c.public_name, ''), c.phone) AS contact_name,
+      c.phone,
+      e.raw_text,
+      e.normalized_text,
+      e.message_type,
+      e.created_at
+    FROM bot_analytics_events e
+    JOIN contacts c ON c.id = e.contact_id
+    WHERE e.created_at >= $1 AND e.created_at <= $2
+      AND e.event_type = 'unrecognized_message'
+    ORDER BY e.created_at DESC
+    LIMIT $3
+  `, [fromIso, toIso, listLimit]);
+
+  const unrecognizedItems: UnrecognizedMessageItem[] = recentUnrecognizedQuery.rows.map(r => ({
+    id: r.id,
+    contactId: r.contact_id,
+    contactName: r.contact_name,
+    phone: r.phone,
+    rawText: r.raw_text || '',
+    normalizedText: r.normalized_text || '',
+    messageType: r.message_type,
+    createdAt: r.created_at,
+  }));
+
+  const unrecognizedUniqueContactsQuery = await query<{ count: string }>(`
+    SELECT count(DISTINCT contact_id)::text AS count
+    FROM bot_analytics_events
+    WHERE created_at >= $1 AND created_at <= $2
+      AND event_type = 'unrecognized_message'
+  `, [fromIso, toIso]);
+  const unrecognizedUniqueContacts = Number(unrecognizedUniqueContactsQuery.rows[0]?.count || 0);
+
+  // 8. Contacts without menu list (constrained to tracked period)
+  let contactsWithoutMenuItems: ContactWithoutMenuItem[] = [];
+  if (hasTrackingData) {
+    const contactsWithoutMenuListQuery = await query<{
+      id: string;
+      name: string;
+      public_name: string;
+      phone: string;
+      pipeline_status: string;
+      last_message_at: string | null;
+      message_count: string;
+      last_incoming_at: string;
+      bot_response_count: string;
+      last_bot_response_at: string | null;
+      response_status: 'responded' | 'unanswered';
+    }>(`
+      WITH no_menu_contacts AS (
+        SELECT
+          m.contact_id,
+          count(*)::text AS message_count,
+          max(m.created_at) AS last_incoming_at
+        FROM messages m
+        WHERE m.direction = 'incoming' AND m.created_at >= $1 AND m.created_at <= $2
+          AND NOT EXISTS (
+            SELECT 1 FROM bot_analytics_events b
+            WHERE b.contact_id = m.contact_id
+              AND b.event_type = 'menu_option'
+              AND b.created_at >= $1 AND b.created_at <= $2
+          )
+        GROUP BY m.contact_id
+      ), response_stats AS (
+        SELECT
+          nmc.contact_id,
+          count(DISTINCT out.id)::text AS bot_response_count,
+          max(out.created_at)::text AS last_bot_response_at
+        FROM no_menu_contacts nmc
+        LEFT JOIN messages out
+          ON out.contact_id = nmc.contact_id
+          AND out.direction = 'outgoing'
+          AND COALESCE(out.outbound_key, '') NOT LIKE 'manual:%'
+          AND (out.delivery_status IN ('sent', 'delivered', 'read') OR (out.delivery_status IS NULL AND out.sent_at IS NOT NULL))
+          AND out.created_at >= $1 AND out.created_at <= $2
+          AND EXISTS (
+            SELECT 1 FROM messages incoming
+            WHERE incoming.contact_id = nmc.contact_id
+              AND incoming.direction = 'incoming'
+              AND incoming.created_at >= $1 AND incoming.created_at <= $2
+              AND out.created_at >= incoming.created_at
+              AND out.created_at <= incoming.created_at + interval '10 minutes'
+          )
+        GROUP BY nmc.contact_id
+      )
+      SELECT
+        c.id,
+        c.name,
+        c.public_name,
+        c.phone,
+        c.pipeline_status,
+        c.last_message_at,
+        nmc.message_count,
+        nmc.last_incoming_at,
+        COALESCE(rs.bot_response_count, '0') AS bot_response_count,
+        rs.last_bot_response_at,
+        CASE WHEN COALESCE(rs.bot_response_count, '0')::integer > 0 THEN 'responded' ELSE 'unanswered' END AS response_status
+      FROM no_menu_contacts nmc
+      JOIN contacts c ON c.id = nmc.contact_id
+      LEFT JOIN response_stats rs ON rs.contact_id = nmc.contact_id
+      ORDER BY (COALESCE(rs.bot_response_count, '0')::integer = 0) DESC, nmc.last_incoming_at DESC
+      LIMIT $3
+    `, [effectiveContactsFromIso, toIso, listLimit]);
+
+    contactsWithoutMenuItems = contactsWithoutMenuListQuery.rows.map(r => ({
+      id: r.id,
+      name: r.name,
+      publicName: r.public_name,
+      phone: r.phone,
+      pipelineStatus: r.pipeline_status,
+      lastMessageAt: r.last_message_at,
+      lastIncomingAt: r.last_incoming_at,
+      messageCount: Number(r.message_count),
+      botResponseCount: Number(r.bot_response_count),
+      lastBotResponseAt: r.last_bot_response_at,
+      responseStatus: r.response_status,
+    }));
+  }
+
+  const menuOptionRate = totalIncomingMessages > 0
+    ? Math.round((totalMenuOptionsRecognized / totalIncomingMessages) * 1000) / 10
+    : 0;
+  const unrecognizedRate = totalIncomingMessages > 0
+    ? Math.round((totalUnrecognizedMessages / totalIncomingMessages) * 1000) / 10
+    : 0;
+
+  return {
+    period: {
+      key: periodKey,
+      from: fromIso,
+      to: toIso,
+      label: periodLabel,
+    },
+    summary: {
+      totalUniqueContacts,
+      totalIncomingMessages,
+      totalMenuInteractions,
+      totalMenuOptionsRecognized,
+      totalUnrecognizedMessages,
+      totalOrdersStarted,
+      totalOrdersSubmitted,
+      totalAdvisorRequests,
+      contactsWithoutMenuCount,
+      contactsWithoutBotResponseCount,
+      menuOptionRate,
+      unrecognizedRate,
+    },
+    menuOptions,
+    trend,
+    unrecognizedMessages: {
+      total: totalUnrecognizedMessages,
+      uniqueContacts: unrecognizedUniqueContacts,
+      topPatterns,
+      items: unrecognizedItems,
+    },
+    contactsWithoutMenu: {
+      total: contactsWithoutMenuCount,
+      withoutBotResponse: contactsWithoutBotResponseCount,
+      items: contactsWithoutMenuItems,
+    },
+    coverage: {
+      hasTrackingData,
+      earliestEventAt,
+      totalEventsTracked,
+      note: coverageNote,
+    },
+  };
+}

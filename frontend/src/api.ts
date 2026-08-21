@@ -41,6 +41,17 @@ export function formatDate(value?: string | null, withDate = false) {
   return new Date(value).toLocaleString('es-AR', withDate ? { dateStyle: 'medium', timeStyle: 'short' } : { timeStyle: 'short' });
 }
 
+export function formatDateOnly(value?: string | null) {
+  if (!value) return '—';
+  const datePart = value.slice(0, 10);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(datePart);
+  if (match) {
+    const [, year, month, day] = match;
+    return new Date(Number(year), Number(month) - 1, Number(day)).toLocaleDateString('es-AR', { dateStyle: 'medium' });
+  }
+  return new Date(value).toLocaleDateString('es-AR', { dateStyle: 'medium' });
+}
+
 export function initials(row: { name?: string; publicName?: string; phone?: string }) {
   return String(row.name || row.publicName || row.phone || '?').split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase();
 }

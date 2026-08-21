@@ -58,3 +58,11 @@ coverage/
 qa-artifacts/
 test-results/
 playwright-report/
+
+# Archives & workspace tools
+*.tar.gz
+*.tar
+.agent-loop/
+.agents/
+tool/
+abastobot-*-request.json

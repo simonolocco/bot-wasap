@@ -10,7 +10,7 @@ import type {
 } from './types';
 import './styles.css';
 
-type View = 'inbox' | 'dashboard' | 'contacts' | 'orders' | 'tickets' | 'templates';
+type View = 'inbox' | 'dashboard' | 'analytics' | 'contacts' | 'orders' | 'tickets' | 'templates';
 type Theme = 'system' | 'light' | 'dark';
 
 const stages: Record<string, string> = {
@@ -118,6 +118,7 @@ function Avatar({
 
 type IconName =
   | 'dashboard'
+  | 'analytics'
   | 'chat'
   | 'ticket'
   | 'contact'
@@ -144,6 +145,7 @@ type IconName =
 function SvgIcon({ name, size = 17 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, React.ReactNode> = {
     dashboard: <><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></>,
+    analytics: <><rect x="3" y="13" width="4" height="8" rx="1" /><rect x="10" y="8" width="4" height="13" rx="1" /><rect x="17" y="3" width="4" height="18" rx="1" /></>,
     chat: <><path d="M20 11.5a7.5 7.5 0 0 1-8 7.5 8.4 8.4 0 0 1-3.2-.6L4 20l1.6-3.9A7.2 7.2 0 0 1 4 11.5 7.5 7.5 0 0 1 12 4a7.5 7.5 0 0 1 8 7.5Z" /><path d="M8 11h.01M12 11h.01M16 11h.01" /></>,
     ticket: <><path d="M4 7a2 2 0 0 0 0 4 2 2 0 0 0 0 4v2h16v-2a2 2 0 0 0 0-4 2 2 0 0 0 0-4V5H4v2Z" /><path d="M12 7v8" /></>,
     contact: <><circle cx="12" cy="8" r="3.5" /><path d="M5 20a7 7 0 0 1 14 0" /></>,
@@ -172,6 +174,7 @@ function SvgIcon({ name, size = 17 }: { name: IconName; size?: number }) {
 
 const viewTitles: Record<View, [string, string]> = {
   dashboard: ['Resumen', 'Trabajo pendiente y actividad comercial.'],
+  analytics: ['Analíticas', 'Comportamiento del bot, uso de menús y mensajes no entendidos.'],
   inbox: ['Conversaciones', 'Bandeja comercial con historial completo.'],
   tickets: ['Tickets', 'Preguntas y pedidos que requieren atención.'],
   contacts: ['Contactos', 'Toda tu base, paginada y editable.'],
@@ -192,6 +195,7 @@ function Sidebar({
 }) {
   const items: Array<[View, IconName, string]> = [
     ['dashboard', 'dashboard', 'Resumen'],
+    ['analytics', 'analytics', 'Analíticas'],
     ['inbox', 'chat', 'Conversaciones'],
     ['tickets', 'ticket', 'Tickets'],
     ['contacts', 'contact', 'Contactos'],
@@ -797,13 +801,59 @@ function Chat({
   const [emojiOpen, setEmojiOpen] = useState(false);
   const textarea = useRef<HTMLTextAreaElement>(null);
 
-  if (!detail)
+  if (!detail) {
+    if (loading) {
+      return (
+        <section className="chat">
+          <header className="chat-head">
+            <button
+              type="button"
+              className="mobile-back"
+              onClick={() => document.body.classList.remove('mobile-chat-open')}
+            >
+              <SvgIcon name="back" size={16} />
+              <span>Volver a conversaciones</span>
+            </button>
+            <div className="chat-head-info">
+              <strong>Cargando conversación…</strong>
+            </div>
+          </header>
+          <div className="messages">
+            <LoadingState label="Cargando historial" />
+          </div>
+        </section>
+      );
+    }
+    if (error) {
+      return (
+        <section className="chat">
+          <header className="chat-head">
+            <button
+              type="button"
+              className="mobile-back"
+              onClick={() => document.body.classList.remove('mobile-chat-open')}
+            >
+              <SvgIcon name="back" size={16} />
+              <span>Volver a conversaciones</span>
+            </button>
+            <div className="chat-head-info">
+              <strong>Error al cargar</strong>
+            </div>
+          </header>
+          <div className="chat-error">
+            <span>{error}</span>
+            <ActionButton variant="secondary" icon="refresh" onClick={onRetryLoad}>Reintentar carga</ActionButton>
+          </div>
+        </section>
+      );
+    }
     return (
       <section className="chat-empty">
         <h2>Elegí una conversación</h2>
         <p>Seleccioná una conversación para ver el historial y responder.</p>
       </section>
     );
+  }
 
   const contact = detail.contact;
   const withinWindow = Boolean(
@@ -838,6 +888,7 @@ function Chat({
       {/* ── Chat header ── */}
       <header className="chat-head">
         <button
+          type="button"
           className="mobile-back"
           onClick={() => document.body.classList.remove('mobile-chat-open')}
         >
@@ -1016,7 +1067,7 @@ function ContactDrawer({
   const contact = detail.contact;
   const [name, setName] = useState(contact.name || contact.publicName || '');
   const [stage, setStage] = useState(contact.pipelineStatus);
-  const [labels, setLabels] = useState(contact.labels.join(', '));
+  const [labels, setLabels] = useState((contact.labels || []).join(', '));
   const [notes, setNotes] = useState(contact.notes);
   const [follow, setFollow] = useState(
     contact.followUpAt ? new Date(contact.followUpAt).toISOString().slice(0, 16) : '',
@@ -1111,7 +1162,7 @@ function ContactDrawer({
 
         <div className="ticket-history">
           <h3>Historial de tickets</h3>
-          {detail.tickets
+          {(detail.tickets || [])
             .filter(t => t.status === 'closed')
             .slice(0, 6)
             .map(t => (
@@ -1508,6 +1559,9 @@ export default function App() {
     void api('/api/auth/me')
       .then(() => setAuthenticated(true))
       .catch(() => setAuthenticated(false));
+    return () => {
+      document.body.classList.remove('mobile-chat-open');
+    };
   }, []);
 
   // ── Theme ──

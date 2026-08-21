@@ -142,3 +142,80 @@ test('botones seguros, cierre de ficha y detalle de pedido responden', async ({ 
     await expect(page.getByRole('dialog')).toHaveCount(0);
   }
 });
+
+test('flujo mobile de conversaciones: selección, historial, compositor y volver', async ({ page, request }) => {
+  // Asegurar que existe al menos una conversación mediante un evento sintético de WhatsApp
+  const run = Date.now().toString();
+  const phone = `549110${run.slice(-7)}`;
+  const webhookPayload = {
+    object: 'whatsapp_business_account',
+    entry: [{ changes: [{ value: {
+      contacts: [{ profile: { name: `QA Mobile ${run}` }, wa_id: phone }],
+      messages: [{ from: phone, id: `wamid.qa-mob-${run}`, timestamp: String(Math.floor(Date.now() / 1000)), type: 'text', text: { body: 'Mensaje de prueba mobile' } }],
+    } }] }],
+  };
+  const rawPayload = JSON.stringify(webhookPayload);
+  const signature = crypto.createHmac('sha256', process.env.META_APP_SECRET ?? 'qa-app-secret').update(rawPayload).digest('hex');
+  const incoming = await request.post('/webhook', {
+    data: rawPayload,
+    headers: { 'content-type': 'application/json', 'x-hub-signature-256': `sha256=${signature}` },
+  });
+  expect(incoming.status()).toBe(200);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await login(page);
+  await openNavigationOnMobile(page);
+  await page.getByRole('button', { name: 'Conversaciones', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Conversaciones', exact: true }).first()).toBeVisible();
+
+  // En mobile inicial: la lista de conversaciones es visible y el chat está oculto
+  await expect(page.locator('.conversation-pane')).toBeVisible();
+  await expect(page.locator('.chat')).toHaveCount(0);
+
+  // La conversación debe existir obligatoriamente y ser seleccionable
+  const firstConversation = page.locator('.conv-row').first();
+  await expect(firstConversation).toBeVisible({ timeout: 10_000 });
+  await firstConversation.click();
+
+  // Al seleccionar: el chat, cabecera, mensajes y compositor son visibles
+  await expect(page.locator('body')).toHaveClass(/mobile-chat-open/);
+  await expect(page.locator('.conversation-pane')).toBeHidden();
+  await expect(page.locator('.chat')).toBeVisible();
+  await expect(page.locator('.chat-head')).toBeVisible();
+  await expect(page.locator('.messages')).toBeVisible();
+  await expect(page.locator('.composer')).toBeVisible();
+
+  // El compositor y botón de envío están visibles y usables
+  const textarea = page.locator('.composer-input textarea');
+  await expect(textarea).toBeVisible();
+  await expect(textarea).toBeEnabled();
+  const sendBtn = page.locator('.send-btn');
+  await expect(sendBtn).toBeVisible();
+
+  await textarea.fill('Respuesta de prueba mobile');
+  await expect(sendBtn).toBeEnabled();
+
+  // El botón volver está disponible y visible
+  const backBtn = page.getByRole('button', { name: 'Volver a conversaciones' });
+  await expect(backBtn).toBeVisible();
+
+  // Sin overflow horizontal en mobile con chat abierto
+  const overflowChat = await page.evaluate(() => ({
+    documentWidth: document.documentElement.scrollWidth,
+    viewportWidth: document.documentElement.clientWidth,
+  }));
+  expect(overflowChat.documentWidth).toBeLessThanOrEqual(overflowChat.viewportWidth + 1);
+
+  // Al presionar volver: regresa a la lista
+  await backBtn.click();
+  await expect(page.locator('body')).not.toHaveClass(/mobile-chat-open/);
+  await expect(page.locator('.conversation-pane')).toBeVisible();
+  await expect(page.locator('.chat')).toBeHidden();
+
+  // Sin overflow horizontal en mobile con lista abierta
+  const overflowList = await page.evaluate(() => ({
+    documentWidth: document.documentElement.scrollWidth,
+    viewportWidth: document.documentElement.clientWidth,
+  }));
+  expect(overflowList.documentWidth).toBeLessThanOrEqual(overflowList.viewportWidth + 1);
+});

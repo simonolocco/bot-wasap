@@ -10,7 +10,7 @@ import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { buildMediaPayload, getWhatsAppTransport, hasCloudCredentials, sendCloudMessage, sendCloudTextMessage, uploadCloudMedia } from './cloudClient';
 import { pool, query } from './db/pool';
-import { audit, claimOrderTicketFallback, claimOrderTicketFallbackById, closeSupportTicket, createContact, dashboard, deleteContact, deleteTemplate, exportContacts, getConversation, getContactById, getMediaAssetById, getMediaAssetByMessageId, getMessageById, getTicketById, listAudit, listContacts, listConversations, listMessages, listOrders, listTemplates, listTickets, markConversationRead, markOutgoingFailed, markOutgoingSent, prepareManualMessage, prepareOutgoingMessage, previewCampaignSegment, recordMessageStatus, retryOutgoingMessage, saveTemplate, setBotPaused, storeIncomingEvent, updateContact, updateMediaAsset, updateOrder, type SupportTicket } from './db/repository';
+import { audit, claimOrderTicketFallback, claimOrderTicketFallbackById, closeSupportTicket, createContact, dashboard, deleteContact, deleteTemplate, exportContacts, getBotAnalytics, getConversation, getContactById, getMediaAssetById, getMediaAssetByMessageId, getMessageById, getTicketById, listAudit, listContacts, listConversations, listMessages, listOrders, listTemplates, listTickets, markConversationRead, markOutgoingFailed, markOutgoingSent, prepareManualMessage, prepareOutgoingMessage, previewCampaignSegment, recordMessageStatus, retryOutgoingMessage, saveTemplate, setBotPaused, storeIncomingEvent, updateContact, updateMediaAsset, updateOrder, type SupportTicket } from './db/repository';
 import { orderWindowExpired, sendOrderTicketFallback } from './services/orderTicketFallback';
 import { MENU_BUTTON_LABEL, MENU_HEADER_TEXT, MENU_PROMPT, buildMenuListSections, ticketClosureMessage } from './messageCatalog';
 import { checkMediaStorage, ensureMediaCached, ensureMediaThumbnail, isSafeUpload, markMediaUploadFailed, storeMedia } from './services/mediaStorage';
@@ -231,6 +231,49 @@ function openStream(req: Request, res: Response, contactId: string | null) {
   req.on('close', () => { clearInterval(heartbeat); streams.delete(res); });
 }
 app.get('/api/dashboard', async (_req, res) => res.json({ ...(await dashboard()), cloudReady: hasCloudCredentials(), transport: getWhatsAppTransport(), mediaStorage: await checkMediaStorage() }));
+app.get('/api/analytics', async (req, res) => {
+  const schema = z.object({
+    period: z.enum(['7d', '30d', '90d', 'custom']).optional().default('30d'),
+    from: z.string().optional(),
+    to: z.string().optional(),
+    limit: z.coerce.number().int().min(1).max(100).optional().default(50),
+  }).superRefine((val, ctx) => {
+    if (val.period === 'custom') {
+      if (!val.from || !/^\d{4}-\d{2}-\d{2}/.test(val.from) || Number.isNaN(Date.parse(val.from))) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'El parámetro "from" es obligatorio y debe ser una fecha válida (YYYY-MM-DD) para períodos personalizados.',
+          path: ['from'],
+        });
+      }
+      if (!val.to || !/^\d{4}-\d{2}-\d{2}/.test(val.to) || Number.isNaN(Date.parse(val.to))) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'El parámetro "to" es obligatorio y debe ser una fecha válida (YYYY-MM-DD) para períodos personalizados.',
+          path: ['to'],
+        });
+      }
+      if (val.from && val.to && !Number.isNaN(Date.parse(val.from)) && !Number.isNaN(Date.parse(val.to))) {
+        const fromDate = new Date(val.from);
+        const toDate = new Date(val.to);
+        if (fromDate > toDate) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'El rango de fechas personalizado es inválido. "Desde" debe ser anterior o igual a "Hasta".',
+            path: ['from'],
+          });
+        }
+      }
+    }
+  });
+  const parsed = schema.safeParse(req.query);
+  if (!parsed.success) {
+    const message = parsed.error.issues[0]?.message || 'Parámetros de consulta de analíticas inválidos.';
+    return res.status(400).json({ error: message, issues: parsed.error.issues });
+  }
+  const data = await getBotAnalytics(parsed.data);
+  return res.json(data);
+});
 async function sendMediaFile(req: Request, res: Response, download: boolean) {
   const asset = await getMediaAssetByMessageId(req.params.id);
   if (!asset || asset.status !== 'ready') return res.status(404).json({ error: 'El archivo todavía no está disponible.' });
