@@ -20,15 +20,22 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
+  FileText,
+  Heart,
   HelpCircle,
+  Image as ImageIcon,
+  Info,
   Layers,
   MessageCircle,
   MessageSquare,
+  Mic,
   Package,
+  Phone,
   PieChart as PieChartIcon,
   RefreshCw,
   Search,
   ShieldCheck,
+  Smile,
   Sparkles,
   TrendingUp,
   UserCheck,
@@ -57,6 +64,36 @@ function cleanName(value?: string | null, fallback = 'Sin nombre') {
   const name = String(value || '').trim();
   if (!name || /^Pedido #[0-9a-f-]{16,}$/i.test(name)) return fallback;
   return name;
+}
+
+function getInitials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 0 || !parts[0]) return 'W';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[1][0]).toUpperCase();
+}
+
+function getMediaTagInfo(text: string): { isMedia: boolean; label: string; icon: React.ReactNode; tone: string } {
+  const lower = text.toLowerCase();
+  if (lower.includes('audio')) {
+    return { isMedia: true, label: 'Nota de voz / Audio', icon: <Mic size={13} />, tone: 'tone-purple' };
+  }
+  if (lower.includes('image') || lower.includes('foto') || lower.includes('imagen')) {
+    return { isMedia: true, label: 'Imagen / Foto', icon: <ImageIcon size={13} />, tone: 'tone-blue' };
+  }
+  if (lower.includes('reaction') || lower.includes('reaccion')) {
+    return { isMedia: true, label: 'Reacción emoji', icon: <Heart size={13} />, tone: 'tone-rose' };
+  }
+  if (lower.includes('sticker')) {
+    return { isMedia: true, label: 'Sticker recibido', icon: <Smile size={13} />, tone: 'tone-amber' };
+  }
+  if (lower.includes('document') || lower.includes('documento') || lower.includes('pdf')) {
+    return { isMedia: true, label: 'Documento / Archivo', icon: <FileText size={13} />, tone: 'tone-blue' };
+  }
+  if (lower.startsWith('[mensaje') && lower.endsWith('recibido]')) {
+    return { isMedia: true, label: 'Contenido multimedia', icon: <HelpCircle size={13} />, tone: 'tone-gray' };
+  }
+  return { isMedia: false, label: text, icon: null, tone: '' };
 }
 
 function pageCount(total: number, limit: number) {
@@ -153,7 +190,6 @@ export default function AnalyticsView({
   const [error, setError] = useState('');
 
   // Tabs & Filters
-  const [trendView, setTrendView] = useState<'chart_table' | 'chart' | 'table'>('chart_table');
   const [unrecognizedTab, setUnrecognizedTab] = useState<'patterns' | 'recent'>('patterns');
   const [patternFilter, setPatternFilter] = useState('');
   const [patternPage, setPatternPage] = useState(0);
@@ -288,7 +324,7 @@ export default function AnalyticsView({
         <div className="analytics-header-main">
           <div className="analytics-badge-title">
             <div className="analytics-badge-icon">
-              <Sparkles size={18} />
+              <Sparkles size={20} />
             </div>
             <div>
               <div className="analytics-title-row">
@@ -391,7 +427,7 @@ export default function AnalyticsView({
         {/* Coverage Context Ribbon */}
         <div className="analytics-ribbon analytics-coverage-banner">
           <div className="ribbon-left coverage-info">
-            <ShieldCheck size={15} className="text-emerald" />
+            <ShieldCheck size={16} className="text-emerald" />
             <span className="ribbon-text coverage-text">
               <strong>{data.period.label}:</strong> {formatDate(data.period.from)} al {formatDate(data.period.to)}.
               {data.coverage.earliestEventAt
@@ -431,7 +467,7 @@ export default function AnalyticsView({
             <div className="stat-meta-row">
               <span className="meta-pill">
                 <MessageSquare size={12} />
-                {summary.totalIncomingMessages.toLocaleString('es-AR')} mensajes entrantes recibidos
+                {summary.totalIncomingMessages.toLocaleString('es-AR')} mensajes entrantes
               </span>
               <span className="meta-sub">
                 {summary.totalUniqueContacts > 0
@@ -787,47 +823,55 @@ export default function AnalyticsView({
           </div>
         ) : (
           <div className="table-responsive">
-            <div className="trend-explainer" role="note">
-              <strong>Cómo leer esta tabla</strong>
-              <span><b>Entrantes</b> = mensajes recibidos.</span>
-              <span><b>Menú solicitado</b> = mensajes que pidieron ver las opciones.</span>
-              <span><b>Opciones elegidas</b> = clics o respuestas reconocidas.</span>
-              <span><b>No entendidos</b> = mensajes que el bot no pudo clasificar.</span>
-              <span><b>Contactos únicos</b> = personas distintas, no cantidad de mensajes.</span>
+            <div className="trend-explainer legend-strip" role="note">
+              <div className="legend-strip-head">
+                <Info size={14} className="text-emerald" />
+                <strong>Cómo leer esta tabla</strong>
+              </div>
+              <div className="legend-strip-items">
+                <span className="legend-item"><span className="legend-dot bg-blue" /> <b>Entrantes:</b> mensajes recibidos</span>
+                <span className="legend-item"><span className="legend-dot" style={{ backgroundColor: '#6366f1' }} /> <b>Menú solicitado:</b> pidieron ver opciones</span>
+                <span className="legend-item"><span className="legend-dot bg-emerald" /> <b>Opciones elegidas:</b> reconocidas (1-6)</span>
+                <span className="legend-item"><span className="legend-dot bg-rose" /> <b>No entendidos:</b> fuera de menú</span>
+                <span className="legend-item"><span className="legend-dot bg-amber" /> <b>Contactos únicos:</b> personas distintas</span>
+              </div>
             </div>
-            <table className="data-table">
+
+            <table className="modern-table analytics-table data-table">
               <thead>
                 <tr>
-                  <th style={{ width: '18%' }}>Fecha</th>
-                  <th style={{ width: '16%', textAlign: 'right' }}>Entrantes</th>
-                  <th style={{ width: '16%', textAlign: 'right' }}>Menú solicitado</th>
-                  <th style={{ width: '18%', textAlign: 'right' }}>Opciones elegidas</th>
+                  <th style={{ width: '22%' }}>Fecha</th>
+                  <th style={{ width: '15%', textAlign: 'right' }}>Entrantes</th>
+                  <th style={{ width: '15%', textAlign: 'right' }}>Menú solicitado</th>
+                  <th style={{ width: '16%', textAlign: 'right' }}>Opciones elegidas</th>
                   <th style={{ width: '16%', textAlign: 'right' }}>No entendidos</th>
                   <th style={{ width: '16%', textAlign: 'right' }}>Contactos únicos</th>
                 </tr>
               </thead>
               <tbody>
                 {data.trend.map(t => (
-                  <tr key={t.date} className="trend-row">
+                  <tr key={t.date} className="trend-row interactive-row">
                     <td>
-                      <strong className="trend-date">{formatDateOnly(t.date)}</strong>
+                      <div className="cell-primary">
+                        <strong className="trend-date cell-title">{formatDateOnly(t.date)}</strong>
+                      </div>
                     </td>
                     <td style={{ textAlign: 'right' }}>
-                      <strong className="metric-val">{t.incomingMessages.toLocaleString('es-AR')}</strong>
+                      <strong className="metric-val text-ink">{t.incomingMessages.toLocaleString('es-AR')}</strong>
                     </td>
                     <td style={{ textAlign: 'right' }}>
-                      <span className="count-tag blue">{t.menuRequested.toLocaleString('es-AR')}</span>
+                      <span className="chip-badge chip-blue">{t.menuRequested.toLocaleString('es-AR')}</span>
                     </td>
                     <td style={{ textAlign: 'right' }}>
-                      <span className="count-tag emerald">{t.optionsRecognized.toLocaleString('es-AR')}</span>
+                      <span className="chip-badge chip-emerald">{t.optionsRecognized.toLocaleString('es-AR')}</span>
                     </td>
                     <td style={{ textAlign: 'right' }}>
-                      <span className={`count-tag ${t.unrecognized > 0 ? 'rose' : 'gray'}`}>
+                      <span className={`chip-badge ${t.unrecognized > 0 ? 'chip-orange' : 'chip-badge'}`}>
                         {t.unrecognized.toLocaleString('es-AR')}
                       </span>
                     </td>
                     <td style={{ textAlign: 'right' }}>
-                      <span className="metric-sub">{t.uniqueContacts.toLocaleString('es-AR')}</span>
+                      <span className="metric-sub font-semibold">{t.uniqueContacts.toLocaleString('es-AR')} pers.</span>
                     </td>
                   </tr>
                 ))}
@@ -838,7 +882,7 @@ export default function AnalyticsView({
       </section>
 
       {/* ─────────────────────────────────────────────────────────────
-          5. MENU BREAKDOWN & PREFERENCES (PIE + CARDS + TABLE)
+          5. MENU BREAKDOWN & PREFERENCES (PIE + CARDS)
           ───────────────────────────────────────────────────────────── */}
       <section className="analytics-section-card" aria-label="Uso de Opciones de Menú">
         <div className="section-card-header">
@@ -1009,36 +1053,53 @@ export default function AnalyticsView({
               </div>
             ) : (
               <div className="table-responsive">
-                <table className="data-table">
+                <table className="modern-table analytics-table data-table">
                   <thead>
                     <tr>
                       <th style={{ width: '48%' }}>Texto / Patrón Recibido</th>
-                      <th style={{ width: '16%', textAlign: 'right' }}>Frecuencia</th>
-                      <th style={{ width: '16%', textAlign: 'right' }}>Personas</th>
+                      <th style={{ width: '16%', textAlign: 'center' }}>Frecuencia</th>
+                      <th style={{ width: '16%', textAlign: 'center' }}>Personas</th>
                       <th style={{ width: '20%', textAlign: 'right' }}>Última vez visto</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {pagedPatterns.map((pat, idx) => (
-                      <tr key={`${pat.normalizedText}-${idx}`}>
-                        <td>
-                          <div className="raw-message-box">
-                            <code>{pat.text}</code>
-                          </div>
-                        </td>
-                        <td style={{ textAlign: 'right' }}>
-                          <span className="count-tag rose">
-                            {pat.count.toLocaleString('es-AR')} {pat.count === 1 ? 'vez' : 'veces'}
-                          </span>
-                        </td>
-                        <td style={{ textAlign: 'right' }}>
-                          <span className="metric-sub">{pat.uniqueContacts.toLocaleString('es-AR')}</span>
-                        </td>
-                        <td style={{ textAlign: 'right' }}>
-                          <span className="timestamp-text">{formatDate(pat.lastSeenAt, true)}</span>
-                        </td>
-                      </tr>
-                    ))}
+                    {pagedPatterns.map((pat, idx) => {
+                      const media = getMediaTagInfo(pat.text);
+                      return (
+                        <tr key={`${pat.normalizedText}-${idx}`} className="interactive-row">
+                          <td>
+                            <div className="pattern-content-cell">
+                              {media.isMedia ? (
+                                <span className={`chip-badge ${media.tone} media-tag-pill`}>
+                                  {media.icon}
+                                  <span>{media.label}</span>
+                                </span>
+                              ) : (
+                                <div className="raw-message-box pattern-quote-box">
+                                  <span className="pattern-quote-mark">“</span>
+                                  <code>{pat.text}</code>
+                                  <span className="pattern-quote-mark">”</span>
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                          <td style={{ textAlign: 'center' }}>
+                            <span className="chip-badge chip-orange font-bold">
+                              {pat.count.toLocaleString('es-AR')} {pat.count === 1 ? 'vez' : 'veces'}
+                            </span>
+                          </td>
+                          <td style={{ textAlign: 'center' }}>
+                            <span className="chip-badge chip-blue">
+                              <Users size={11} />
+                              <span>{pat.uniqueContacts.toLocaleString('es-AR')} pers.</span>
+                            </span>
+                          </td>
+                          <td style={{ textAlign: 'right' }}>
+                            <span className="cell-time">{formatDate(pat.lastSeenAt, true)}</span>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
                 <Pager
@@ -1058,45 +1119,64 @@ export default function AnalyticsView({
               </div>
             ) : (
               <div className="table-responsive">
-                <table className="data-table">
+                <table className="modern-table analytics-table data-table">
                   <thead>
                     <tr>
                       <th style={{ width: '18%' }}>Fecha / Hora</th>
-                      <th style={{ width: '25%' }}>Contacto</th>
-                      <th style={{ width: '43%' }}>Texto Original Recibido</th>
+                      <th style={{ width: '24%' }}>Contacto</th>
+                      <th style={{ width: '44%' }}>Texto Original Recibido</th>
                       <th style={{ width: '14%', textAlign: 'right' }}>Acción</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {pagedRecentUnrecognized.map(item => (
-                      <tr key={item.id}>
-                        <td>
-                          <span className="timestamp-text">{formatDate(item.createdAt, true)}</span>
-                        </td>
-                        <td>
-                          <div className="contact-cell">
-                            <strong className="contact-name">{cleanName(item.contactName, item.phone)}</strong>
-                            <small className="phone-code">{item.phone}</small>
-                          </div>
-                        </td>
-                        <td>
-                          <div className="raw-message-box full">
-                            <code>{item.rawText || '[Sin texto legible]'}</code>
-                          </div>
-                        </td>
-                        <td style={{ textAlign: 'right' }}>
-                          <button
-                            type="button"
-                            className="button secondary sm action-chat-btn"
-                            onClick={() => onOpenContact(item.contactId)}
-                            title="Abrir conversación en bandeja"
-                          >
-                            <MessageCircle size={13} />
-                            <span>Ver chat</span>
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {pagedRecentUnrecognized.map(item => {
+                      const media = getMediaTagInfo(item.rawText || '');
+                      return (
+                        <tr key={item.id} className="interactive-row">
+                          <td>
+                            <span className="cell-time">{formatDate(item.createdAt, true)}</span>
+                          </td>
+                          <td>
+                            <div className="contact-meta-cell">
+                              <div className="contact-avatar-pill">
+                                {getInitials(cleanName(item.contactName, item.phone))}
+                              </div>
+                              <div className="cell-primary">
+                                <strong className="contact-name cell-title">{cleanName(item.contactName, item.phone)}</strong>
+                                <small className="mono-phone cell-subtitle">{item.phone}</small>
+                              </div>
+                            </div>
+                          </td>
+                          <td>
+                            <div className="pattern-content-cell">
+                              {media.isMedia ? (
+                                <span className={`chip-badge ${media.tone} media-tag-pill`}>
+                                  {media.icon}
+                                  <span>{media.label}</span>
+                                </span>
+                              ) : (
+                                <div className="raw-message-box full pattern-quote-box">
+                                  <span className="pattern-quote-mark">“</span>
+                                  <code>{item.rawText || '[Sin texto legible]'}</code>
+                                  <span className="pattern-quote-mark">”</span>
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                          <td style={{ textAlign: 'right' }}>
+                            <button
+                              type="button"
+                              className="action-open-chat-btn"
+                              onClick={() => onOpenContact(item.contactId)}
+                              title="Abrir conversación en bandeja"
+                            >
+                              <MessageCircle size={13} />
+                              <span>Ver chat</span>
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
                 <Pager
@@ -1122,7 +1202,7 @@ export default function AnalyticsView({
             </div>
             <div>
               <h3>Contactos Sin Selección de Menú</h3>
-              <p>Clientes con mensajes entrantes que no registran una selección de las opciones 1 a 6. La respuesta se verifica contra mensajes automáticos enviados y confirmados.</p>
+              <p>Clientes con mensajes entrantes que no registran una selección de las opciones 1 a 6. La respuesta se verifica contra mensajes automáticos confirmados.</p>
             </div>
           </div>
 
@@ -1158,58 +1238,64 @@ export default function AnalyticsView({
           </div>
         ) : (
           <div className="table-responsive">
-            <table className="data-table">
+            <table className="modern-table analytics-table data-table">
               <thead>
                 <tr>
                   <th style={{ width: '28%' }}>Contacto</th>
                   <th style={{ width: '18%' }}>Teléfono</th>
-                  <th style={{ width: '14%', textAlign: 'center' }}>Mensajes</th>
-                  <th style={{ width: '20%' }}>Respuesta del bot</th>
-                  <th style={{ width: '20%' }}>Última Actividad</th>
+                  <th style={{ width: '12%', textAlign: 'center' }}>Mensajes</th>
+                  <th style={{ width: '18%' }}>Respuesta del bot</th>
+                  <th style={{ width: '14%' }}>Última Actividad</th>
                   <th style={{ width: '10%', textAlign: 'right' }}>Acción</th>
                 </tr>
               </thead>
               <tbody>
                 {pagedContactsWithoutMenu.map(c => (
-                  <tr key={c.id}>
+                  <tr key={c.id} className="interactive-row">
                     <td>
-                      <div className="contact-cell">
-                        <strong className="contact-name">{cleanName(c.name || c.publicName, c.phone)}</strong>
-                        <span className={`status-badge-sm ${stages[c.pipelineStatus]?.tone || 'tone-gray'}`}>
-                          {stages[c.pipelineStatus]?.label || c.pipelineStatus}
-                        </span>
+                      <div className="contact-meta-cell">
+                        <div className="contact-avatar-pill">
+                          {getInitials(cleanName(c.name || c.publicName, c.phone))}
+                        </div>
+                        <div className="cell-primary">
+                          <strong className="contact-name cell-title">{cleanName(c.name || c.publicName, c.phone)}</strong>
+                          <span className={`chip-badge ${stages[c.pipelineStatus]?.tone || 'tone-gray'} text-xs`}>
+                            {stages[c.pipelineStatus]?.label || c.pipelineStatus}
+                          </span>
+                        </div>
                       </div>
                     </td>
                     <td>
-                      <span className="phone-code">{c.phone}</span>
+                      <span className="mono-phone cell-subtitle font-medium">{c.phone}</span>
                     </td>
                     <td style={{ textAlign: 'center' }}>
-                      <span className="count-tag blue">{c.messageCount} msgs</span>
+                      <span className="chip-badge chip-blue font-bold">{c.messageCount} msgs</span>
                     </td>
                     <td>
                       <div className="response-cell">
                         <span
-                          className={`status-badge-sm ${c.responseStatus === 'responded' ? 'tone-emerald' : 'tone-rose'}`}
+                          className={`chip-badge ${c.responseStatus === 'responded' ? 'chip-emerald' : 'chip-orange'}`}
                         >
+                          <span className="dot" />
                           {c.responseStatus === 'responded' ? 'Respondió' : 'Sin respuesta'}
                         </span>
-                        <small>
+                        <small className="text-xs text-muted">
                           {c.botResponseCount > 0
-                            ? `${c.botResponseCount} mensajes automáticos`
-                            : 'No hay envío automático confirmado'}
+                            ? `${c.botResponseCount} msgs automáticos`
+                            : 'Sin envío confirmado'}
                         </small>
                       </div>
                     </td>
                     <td>
                       <div className="response-cell">
-                        <span className="timestamp-text">{formatDate(c.lastIncomingAt || c.lastMessageAt, true)}</span>
-                        {c.lastBotResponseAt && <small>Bot: {formatDate(c.lastBotResponseAt, true)}</small>}
+                        <span className="cell-time">{formatDate(c.lastIncomingAt || c.lastMessageAt, true)}</span>
+                        {c.lastBotResponseAt && <small className="text-xs text-muted">Bot: {formatDate(c.lastBotResponseAt, true)}</small>}
                       </div>
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       <button
                         type="button"
-                        className="button secondary sm action-chat-btn"
+                        className="action-open-chat-btn"
                         onClick={() => onOpenContact(c.id)}
                         title="Abrir chat para revisar interacción"
                       >
