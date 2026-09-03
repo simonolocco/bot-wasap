@@ -10,10 +10,11 @@ import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { buildMediaPayload, getWhatsAppTransport, hasCloudCredentials, sendCloudMessage, sendCloudTextMessage, uploadCloudMedia } from './cloudClient';
 import { pool, query } from './db/pool';
-import { audit, claimOrderTicketFallback, claimOrderTicketFallbackById, closeSupportTicket, createContact, dashboard, deleteContact, deleteTemplate, exportContacts, getBotAnalytics, getConversation, getContactById, getMediaAssetById, getMediaAssetByMessageId, getMessageById, getTicketById, listAudit, listContacts, listConversations, listMessages, listOrders, listTemplates, listTickets, markConversationRead, markOutgoingFailed, markOutgoingSent, prepareManualMessage, prepareOutgoingMessage, previewCampaignSegment, recordMessageStatus, retryOutgoingMessage, saveTemplate, setBotPaused, storeIncomingEvent, updateContact, updateMediaAsset, updateOrder, type SupportTicket } from './db/repository';
+import { audit, claimOrderTicketFallback, claimOrderTicketFallbackById, closeSupportTicket, createContact, dashboard, deleteContact, deleteTemplate, exportContacts, getBotAnalytics, getConversation, getConversationStats, getContactById, getMediaAssetById, getMediaAssetByMessageId, getMessageById, getTicketById, isValidAnalyticsDateOnly, listAudit, listContacts, listConversations, listMessages, listOrders, listTemplates, listTickets, markAllConversationsRead, markConversationRead, markOutgoingFailed, markOutgoingSent, prepareManualMessage, prepareOutgoingMessage, previewCampaignSegment, recordMessageStatus, resolveAnalyticsPeriod, retryOutgoingMessage, saveTemplate, setBotPaused, storeIncomingEvent, updateContact, updateMediaAsset, updateOrder, type SupportTicket } from './db/repository';
 import { orderWindowExpired, sendOrderTicketFallback } from './services/orderTicketFallback';
 import { MENU_BUTTON_LABEL, MENU_HEADER_TEXT, MENU_PROMPT, buildMenuListSections, ticketClosureMessage } from './messageCatalog';
 import { checkMediaStorage, ensureMediaCached, ensureMediaThumbnail, isSafeUpload, markMediaUploadFailed, storeMedia } from './services/mediaStorage';
+import { parseIncoming } from './whatsappIncoming';
 
 declare global { namespace Express { interface Request { rawBody?: Buffer; } } }
 declare module 'express-session' { interface SessionData { user?: string; } }
@@ -65,21 +66,6 @@ function verifyMetaSignature(req: Request) {
   const received = req.header('x-hub-signature-256'); if (!received?.startsWith('sha256=') || !req.rawBody) return false;
   const expected = `sha256=${crypto.createHmac('sha256', APP_SECRET).update(req.rawBody).digest('hex')}`;
   return expected.length === received.length && crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(received));
-}
-type ParsedIncoming = { providerMessageId: string; from: string; profileName?: string; text?: string; selectedOptionId?: string; buttonReplyId?: string; type: string; sourceTimestamp?: number; quotedProviderMessageId?: string; media?: { id?: string; mimeType?: string; filename?: string; caption?: string } };
-function parseIncoming(message: any, profileName?: string): ParsedIncoming | null {
-  if (!message?.id || !message?.from) return null;
-  const providerMessageId = String(message.id).slice(0, 512);
-  const from = String(message.from).replace(/\D/g, '');
-  if (!providerMessageId || from.length < 6 || from.length > 20) return null;
-  const incoming: ParsedIncoming = { providerMessageId, from, profileName: profileName?.slice(0, 200), type: String(message.type ?? 'unknown').slice(0, 40) };
-  if (message.context?.id) incoming.quotedProviderMessageId = String(message.context.id).slice(0, 512);
-  const timestamp = Number(message.timestamp);
-  if (Number.isFinite(timestamp) && timestamp > 0) incoming.sourceTimestamp = timestamp > 10_000_000_000 ? timestamp : timestamp * 1000;
-  if (message.type === 'text') incoming.text = String(message.text?.body ?? '').slice(0, 4096);
-  if (message.type === 'interactive') { if (message.interactive?.list_reply) { incoming.text = String(message.interactive.list_reply.title ?? ''); incoming.selectedOptionId = String(message.interactive.list_reply.id ?? ''); } if (message.interactive?.button_reply) { incoming.text = String(message.interactive.button_reply.title ?? ''); incoming.buttonReplyId = String(message.interactive.button_reply.id ?? ''); } }
-  if (['image', 'document', 'audio', 'video', 'sticker'].includes(incoming.type)) { const media = message[incoming.type] ?? {}; incoming.text = String(media.caption ?? ''); incoming.media = { id: media.id ? String(media.id) : undefined, mimeType: media.mime_type ? String(media.mime_type) : incoming.type === 'sticker' ? 'image/webp' : undefined, filename: media.filename ? String(media.filename) : incoming.type === 'sticker' ? 'sticker.webp' : undefined, caption: media.caption ? String(media.caption) : undefined }; }
-  return incoming;
 }
 app.get('/webhook', (req, res) => { if (!VERIFY_TOKEN) return res.status(500).send('META_VERIFY_TOKEN no configurado'); if (req.query['hub.mode'] === 'subscribe' && req.query['hub.verify_token'] === VERIFY_TOKEN) return res.status(200).send(req.query['hub.challenge']); return res.sendStatus(403); });
 app.post('/webhook', async (req, res) => {
@@ -239,24 +225,22 @@ app.get('/api/analytics', async (req, res) => {
     limit: z.coerce.number().int().min(1).max(100).optional().default(50),
   }).superRefine((val, ctx) => {
     if (val.period === 'custom') {
-      if (!val.from || !/^\d{4}-\d{2}-\d{2}/.test(val.from) || Number.isNaN(Date.parse(val.from))) {
+      if (!val.from || !isValidAnalyticsDateOnly(val.from)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: 'El parámetro "from" es obligatorio y debe ser una fecha válida (YYYY-MM-DD) para períodos personalizados.',
           path: ['from'],
         });
       }
-      if (!val.to || !/^\d{4}-\d{2}-\d{2}/.test(val.to) || Number.isNaN(Date.parse(val.to))) {
+      if (!val.to || !isValidAnalyticsDateOnly(val.to)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: 'El parámetro "to" es obligatorio y debe ser una fecha válida (YYYY-MM-DD) para períodos personalizados.',
           path: ['to'],
         });
       }
-      if (val.from && val.to && !Number.isNaN(Date.parse(val.from)) && !Number.isNaN(Date.parse(val.to))) {
-        const fromDate = new Date(val.from);
-        const toDate = new Date(val.to);
-        if (fromDate > toDate) {
+      if (val.from && val.to && isValidAnalyticsDateOnly(val.from) && isValidAnalyticsDateOnly(val.to)) {
+        if (val.from > val.to) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
             message: 'El rango de fechas personalizado es inválido. "Desde" debe ser anterior o igual a "Hasta".',
@@ -371,7 +355,22 @@ app.post('/api/messages/:id/retry', async (req, res) => {
     return res.status(502).json({ error: error instanceof Error ? error.message : 'No se pudo reintentar el mensaje.', messageId: message.id });
   }
 });
-app.get('/api/conversations', async (req, res) => res.json(await listConversations({ q: qs(req.query.q), consent: qs(req.query.consent), pipeline: qs(req.query.pipeline), unread: req.query.unread === 'true', botPaused: req.query.botPaused === 'true' ? true : req.query.botPaused === 'false' ? false : undefined, followUp: req.query.followUp === 'overdue' || req.query.followUp === 'scheduled' ? req.query.followUp : undefined, ticket: req.query.ticket === 'open' ? 'open' : undefined, cursor: qs(req.query.cursor), limit: positive(req.query.limit, 30, 100) })));
+app.get('/api/conversations', async (req, res) => {
+  const analyticsFrom = qs(req.query.analyticsNoMenuFrom);
+  const analyticsTo = qs(req.query.analyticsNoMenuTo);
+  let analyticsNoMenu: { from: string; to: string } | undefined;
+  if (analyticsFrom && analyticsTo && isValidAnalyticsDateOnly(analyticsFrom) && isValidAnalyticsDateOnly(analyticsTo) && analyticsFrom <= analyticsTo) {
+    const { fromDate, toDate } = resolveAnalyticsPeriod({ period: 'custom', from: analyticsFrom, to: analyticsTo });
+    analyticsNoMenu = { from: fromDate.toISOString(), to: toDate.toISOString() };
+  }
+  return res.json(await listConversations({ q: qs(req.query.q), consent: qs(req.query.consent), pipeline: qs(req.query.pipeline), unread: req.query.unread === 'true', botPaused: req.query.botPaused === 'true' ? true : req.query.botPaused === 'false' ? false : undefined, followUp: req.query.followUp === 'overdue' || req.query.followUp === 'scheduled' ? req.query.followUp : undefined, ticket: req.query.ticket === 'open' ? 'open' : undefined, analyticsNoMenu, cursor: qs(req.query.cursor), limit: positive(req.query.limit, 30, 100) }));
+});
+app.get('/api/conversations/stats', async (_req, res) => res.json(await getConversationStats()));
+app.post('/api/conversations/read-all', async (req, res) => {
+  const result = await markAllConversationsRead();
+  await audit(req.session.user ?? 'admin', 'conversations_marked_read', undefined, undefined, result);
+  return res.json({ ...result, stats: await getConversationStats() });
+});
 app.get('/api/conversations/:id', async (req, res) => { const detail = await getConversation(req.params.id); return detail ? res.json(detail) : res.status(404).json({ error: 'Conversación inexistente.' }); });
 app.get('/api/stream', (req, res) => openStream(req, res, null));
 app.get('/api/conversations/:id/stream', (req, res) => openStream(req, res, req.params.id));

@@ -31,6 +31,14 @@ export type ConversationRow = Contact & {
   ticketStatus?: string | null;
 };
 
+export type ConversationStats = {
+  totalConversations: number;
+  unreadConversations: number;
+  unreadMessages: number;
+  totalMessages: number;
+  openTickets: number;
+};
+
 export type MediaAsset = {
   id: string;
   mimeType: string;
@@ -131,6 +139,8 @@ export type AnalyticsPeriodKey = '7d' | '30d' | '90d' | 'custom';
 
 export type BotAnalyticsSummary = {
   totalUniqueContacts: number;
+  totalNewContacts: number;
+  totalReturningContacts: number;
   totalIncomingMessages: number;
   totalMenuInteractions: number;
   totalMenuOptionsRecognized: number;
@@ -161,6 +171,17 @@ export type TrendPoint = {
   optionsRecognized: number;
   unrecognized: number;
   uniqueContacts: number;
+};
+
+export type NewContactsByDayPoint = {
+  date: string;
+  /** Number of contacts whose very first message ever falls on this day */
+  newContacts: number;
+};
+
+export type ReturningContactsByDayPoint = {
+  date: string;
+  returningContacts: number;
 };
 
 export type UnrecognizedPattern = {
@@ -206,6 +227,10 @@ export type BotAnalyticsData = {
   summary: BotAnalyticsSummary;
   menuOptions: MenuOptionStat[];
   trend: TrendPoint[];
+  /** New contacts by day: first-ever message for each contact that occurred within the period */
+  newContactsByDay: NewContactsByDayPoint[];
+  /** Returning contacts by day: contacts who wrote that day and had written before that day. */
+  returningContactsByDay: ReturningContactsByDayPoint[];
   unrecognizedMessages: {
     total: number;
     uniqueContacts: number;

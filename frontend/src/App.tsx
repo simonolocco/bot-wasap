@@ -1,9 +1,10 @@
-import { FormEvent, KeyboardEvent, Suspense, lazy, useEffect, useRef, useState } from 'react';
+import { FormEvent, Fragment, KeyboardEvent, Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { api, formatDate, initials, mediaUrl, shortText, thumbnailUrl } from './api';
 import type {
   Contact,
   ConversationDetail,
   ConversationRow,
+  ConversationStats,
   DashboardData,
   Message,
   SupportTicket,
@@ -140,7 +141,8 @@ type IconName =
   | 'copy'
   | 'download'
   | 'search'
-  | 'check';
+  | 'check'
+  | 'moreHorizontal';
 
 function SvgIcon({ name, size = 17 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, React.ReactNode> = {
@@ -168,6 +170,7 @@ function SvgIcon({ name, size = 17 }: { name: IconName; size?: number }) {
     download: <><path d="M12 3v12M7 10l5 5 5-5M5 21h14" /></>,
     search: <><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" /></>,
     check: <><path d="m5 12 4 4L19 6" /></>,
+    moreHorizontal: <><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></>,
   };
   return <svg className="svg-icon" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
@@ -442,24 +445,26 @@ function ConversationList({
   selectedId,
   loading,
   error,
-  hasMore,
+  stats,
+  markAllBusy,
   search,
   filter,
   onSearch,
   onFilter,
-  onMore,
+  onMarkAllRead,
   onSelect,
   onRetry,
 }: {
   items: ConversationRow[];
   selectedId: string | null;
   loading: boolean;
-  hasMore: boolean;
+  stats: ConversationStats | null;
+  markAllBusy: boolean;
   search: string;
   filter: string;
   onSearch: (v: string) => void;
   onFilter: (v: string) => void;
-  onMore: () => void;
+  onMarkAllRead: () => void;
   onSelect: (id: string) => void;
   error?: string | null;
   onRetry?: () => void;
@@ -488,13 +493,53 @@ function ConversationList({
           <option value="order_received">Pedidos</option>
           <option value="paused">Bot pausado</option>
           <option value="overdue">Vencidas</option>
+          <option value="tickets">Tickets abiertos</option>
         </select>
+      </div>
+
+      <div className="conversation-summary" aria-label="Resumen global de conversaciones">
+        <div className="conversation-summary-grid">
+          <div className="conversation-metric">
+            <span>Conversaciones</span>
+            <strong>{stats?.totalConversations ?? '—'}</strong>
+          </div>
+          <button
+            type="button"
+            className={`conversation-metric clickable ${filter === 'unread' ? 'active' : ''}`}
+            onClick={() => onFilter(filter === 'unread' ? '' : 'unread')}
+          >
+            <span>Sin leer</span>
+            <strong>{stats?.unreadConversations ?? '—'}</strong>
+            <small>{stats?.unreadMessages ?? '—'} mensajes</small>
+          </button>
+          <div className="conversation-metric">
+            <span>Mensajes totales</span>
+            <strong>{stats?.totalMessages ?? '—'}</strong>
+          </div>
+          <button
+            type="button"
+            className={`conversation-metric clickable ${filter === 'tickets' ? 'active' : ''}`}
+            onClick={() => onFilter(filter === 'tickets' ? '' : 'tickets')}
+          >
+            <span>Tickets abiertos</span>
+            <strong>{stats?.openTickets ?? '—'}</strong>
+          </button>
+        </div>
+        <button
+          type="button"
+          className="mark-all-read"
+          disabled={markAllBusy || !stats?.unreadMessages}
+          onClick={onMarkAllRead}
+        >
+          {markAllBusy && <span className="spinner small" />}
+          {markAllBusy ? 'Marcando…' : 'Marcar todo como leído'}
+        </button>
       </div>
 
       <div className="panel-content">
         <div className="list-count">
           {items.length}
-          {hasMore ? '+' : ''} conversaciones
+          {' '}conversaciones {loading ? '· cargando todas' : ''}
           {loading && <span className="spinner" />}
         </div>
 
@@ -518,7 +563,7 @@ function ConversationList({
               </span>
               <span className="conv-meta">
                 <time>{formatDate(item.lastMessageAt)}</time>
-                {item.unreadCount > 0 && <b>{item.unreadCount}</b>}
+                {item.unreadCount > 0 && <b className="unread-badge">{item.unreadCount}</b>}
               </span>
             </button>
           ))}
@@ -528,15 +573,6 @@ function ConversationList({
 
         {!error && !loading && items.length === 0 && (
           <EmptyState title="No hay conversaciones" description="Probá cambiar los filtros o iniciar una búsqueda." />
-        )}
-
-        {hasMore && (
-          <div className="load-more-wrap">
-            <button className="load-more" disabled={loading} onClick={onMore}>
-              {loading && <span className="spinner small" />}
-              <span>{loading ? 'Cargando más conversaciones...' : 'Cargar más conversaciones'}</span>
-            </button>
-          </div>
         )}
       </div>
     </>
@@ -551,6 +587,45 @@ function formatBytes(size?: number | null) {
   if (!size) return '';
   if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
+const CHAT_TIME_ZONE = 'America/Argentina/Cordoba';
+
+function chatDateKey(value: string | Date) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: CHAT_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(typeof value === 'string' ? new Date(value) : value);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find(item => item.type === type)?.value || '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
+function shiftChatDate(key: string, days: number) {
+  const [year, month, day] = key.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}
+
+function formatChatDateLabel(value: string) {
+  const key = chatDateKey(value);
+  const today = chatDateKey(new Date());
+  if (key === today) return 'Hoy';
+  if (key === shiftChatDate(today, -1)) return 'Ayer';
+  return new Date(value).toLocaleDateString('es-AR', { dateStyle: 'medium', timeZone: CHAT_TIME_ZONE });
+}
+
+function formatChatTime(value: string) {
+  return new Date(value).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: CHAT_TIME_ZONE });
+}
+
+function mergeMessages(current: Message[], incoming: Message[]) {
+  const byId = new Map(current.map(message => [message.id, message]));
+  for (const message of incoming) byId.set(message.id, message);
+  return [...byId.values()].sort((a, b) => {
+    const byDate = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+    return byDate || a.id.localeCompare(b.id);
+  });
 }
 
 function formatBody(body: string) {
@@ -576,6 +651,20 @@ function deliveryStatus(msg: Message) {
   return ' · Pendiente';
 }
 
+function fallbackMessageBody(messageType: string) {
+  const labels: Record<string, string> = {
+    reaction: 'Reacción recibida',
+    location: '📍 Ubicación compartida',
+    contacts: '👤 Contacto compartido',
+    order: '🛒 Pedido recibido',
+    button: 'Respuesta de botón recibida',
+    interactive: 'Respuesta interactiva recibida',
+    system: 'Mensaje del sistema de WhatsApp',
+    unknown: 'Mensaje de WhatsApp no compatible',
+  };
+  return labels[messageType] || `Mensaje de WhatsApp (${messageType || 'tipo desconocido'})`;
+}
+
 /* ═══════════════════════════════════════════════════════
    MESSAGE BUBBLE
    ═══════════════════════════════════════════════════════ */
@@ -593,6 +682,8 @@ function MessageBubble({
   onLightbox: (url: string, name: string) => void;
   onRetry: (id: string) => void;
 }) {
+  const [copied, setCopied] = useState(false);
+  const [actionsVisible, setActionsVisible] = useState(false);
   const media = Boolean(
     message.mediaAssetId ||
       message.mediaId ||
@@ -601,9 +692,10 @@ function MessageBubble({
   const url = mediaUrl(message.id);
   const image = message.messageType === 'image' || message.messageType === 'sticker';
   const video = message.messageType === 'video';
-  const mediaReady = message.mediaStatus !== 'failed' && message.mediaStatus !== 'pending';
+  const mediaReady = message.mediaStatus === 'ready';
   const placeholderBody = `[Mensaje ${message.messageType} recibido]`;
-  const displayBody = message.body && message.body !== placeholderBody ? message.body : message.mediaCaption || '';
+  const storedBody = message.body && message.body !== placeholderBody ? message.body : message.mediaCaption || '';
+  const displayBody = storedBody || (!media ? fallbackMessageBody(message.messageType) : '');
   const pdf =
     message.mediaMimeType === 'application/pdf' ||
     message.mediaFilename?.toLowerCase().endsWith('.pdf');
@@ -622,14 +714,65 @@ function MessageBubble({
     mediaHeight: null,
   } : null);
 
+  function handleCopy(e: React.MouseEvent) {
+    e.stopPropagation();
+    const text = displayBody || message.body || '';
+    if (!text) return;
+    if (!navigator.clipboard) {
+      // Fallback for non-secure contexts
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      } catch {
+        // Silently ignore copy failure
+      }
+      return;
+    }
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }).catch(() => {
+      // Silently ignore clipboard rejection
+    });
+  }
+
   return (
     <article
-      className={`message-bubble ${message.direction} ${message.deliveryStatus === 'failed' ? 'failed' : ''}`}
+      className={`message-bubble ${message.direction} ${message.deliveryStatus === 'failed' ? 'failed' : ''} ${actionsVisible ? 'actions-visible' : ''}`}
+      data-message-id={message.id}
+      data-message-type={message.messageType}
       onDoubleClick={() => onReply(message)}
     >
-      <div className="message-actions">
-        <button onClick={() => onReply(message)} title="Responder"><SvgIcon name="reply" size={14} /><span>Responder</span></button>
-        <button onClick={() => navigator.clipboard?.writeText(message.body)} title="Copiar mensaje"><SvgIcon name="copy" size={14} /><span>Copiar</span></button>
+      <button
+        type="button"
+        className="message-actions-trigger"
+        aria-expanded={actionsVisible}
+        aria-label="Opciones de mensaje"
+        onClick={() => setActionsVisible(!actionsVisible)}
+      >
+        <SvgIcon name="moreHorizontal" size={16} />
+      </button>
+      <div className="message-actions" onClick={e => e.stopPropagation()}>
+        <button type="button" onClick={() => onReply(message)} title="Responder"><SvgIcon name="reply" size={14} /><span>Responder</span></button>
+        <button
+          type="button"
+          onClick={handleCopy}
+          title={copied ? 'Copiado' : 'Copiar mensaje'}
+          className={copied ? 'action-copied' : ''}
+          aria-live="polite"
+          aria-label={copied ? 'Mensaje copiado' : 'Copiar mensaje'}
+        >
+          <SvgIcon name={copied ? 'check' : 'copy'} size={14} />
+          <span>{copied ? 'Copiado' : 'Copiar'}</span>
+        </button>
         {media && <a href={mediaUrl(message.id, true)} title="Descargar archivo"><SvgIcon name="download" size={14} /><span>Descargar</span></a>}
       </div>
 
@@ -671,6 +814,10 @@ function MessageBubble({
         <div className="media-state error"><SvgIcon name="info" size={15} /> No se pudo preparar este {message.messageType === 'sticker' ? 'sticker' : 'imagen'}.</div>
       )}
 
+      {media && image && !message.mediaStatus && (
+        <div className="media-state error"><SvgIcon name="info" size={15} /> {message.messageType === 'sticker' ? 'Sticker' : 'Imagen'} no disponible. Podés revisar el mensaje desde WhatsApp.</div>
+      )}
+
       {media && video && message.mediaStatus === 'pending' && (
         <div className="media-state"><span className="spinner" /> Preparando video…</div>
       )}
@@ -686,7 +833,23 @@ function MessageBubble({
         </div>
       )}
 
-      {media && !image && !video && (
+      {media && video && !message.mediaStatus && (
+        <div className="media-state error"><SvgIcon name="info" size={15} /> Video no disponible. Podés revisar el mensaje desde WhatsApp.</div>
+      )}
+
+      {media && !image && !video && message.mediaStatus === 'pending' && (
+        <div className="media-state"><span className="spinner" /> Preparando {message.messageType === 'audio' ? 'audio' : 'archivo'}…</div>
+      )}
+
+      {media && !image && !video && message.mediaStatus === 'failed' && (
+        <div className="media-state error"><SvgIcon name="info" size={15} /> No se pudo preparar este {message.messageType === 'audio' ? 'audio' : 'archivo'}.</div>
+      )}
+
+      {media && !image && !video && !message.mediaStatus && (
+        <div className="media-state error"><SvgIcon name="info" size={15} /> Contenido no disponible. Podés revisar el mensaje desde WhatsApp.</div>
+      )}
+
+      {media && !image && !video && mediaReady && (
         <div className="file-card">
           {message.messageType === 'audio' ? (
             <audio controls preload="metadata" src={url} />
@@ -711,7 +874,7 @@ function MessageBubble({
       )}
 
       <time>
-        {formatDate(message.createdAt)}
+        {formatChatTime(message.createdAt)}
         <span className="delivery">{deliveryStatus(message)}</span>
         {message.deliveryStatus === 'failed' && (
           <button className="retry-link" onClick={() => onRetry(message.id)}>
@@ -772,10 +935,8 @@ function Chat({
   messages,
   loading,
   error,
-  hasOlder,
   newMessages,
   messagesRef,
-  onLoadOlder,
   onSend,
   onReply,
   quote,
@@ -795,10 +956,8 @@ function Chat({
   messages: Message[];
   loading: boolean;
   error: string | null;
-  hasOlder: boolean;
   newMessages: number;
   messagesRef: React.RefObject<HTMLDivElement | null>;
-  onLoadOlder: () => void;
   onSend: (body: string, file: File | null, quoteId: string | null) => Promise<void>;
   onReply: (m: Message) => void;
   quote: Message | null;
@@ -956,24 +1115,27 @@ function Chat({
 
       {/* ── Messages ── */}
       <div className="messages" ref={messagesRef}>
-        {hasOlder && (
-          <button className="older-link" onClick={onLoadOlder} disabled={loading}>
-            {loading ? 'Cargando mensajes anteriores' : 'Cargar mensajes anteriores'}
-          </button>
-        )}
-
         {loading && messages.length === 0 && <LoadingState label="Cargando historial" />}
 
-        {messages.map(msg => (
-          <MessageBubble
-            key={msg.id}
-            message={msg}
-            messages={messages}
-            onReply={onReply}
-            onLightbox={onLightbox}
-            onRetry={onRetry}
-          />
-        ))}
+        {messages.map((msg, index) => {
+          const dateChanged = index === 0 || chatDateKey(messages[index - 1].createdAt) !== chatDateKey(msg.createdAt);
+          return (
+            <Fragment key={msg.id}>
+              {dateChanged && (
+                <div className="message-date-separator" role="separator" aria-label={`Mensajes del ${formatChatDateLabel(msg.createdAt)}`}>
+                  <span>{formatChatDateLabel(msg.createdAt)}</span>
+                </div>
+              )}
+              <MessageBubble
+                message={msg}
+                messages={messages}
+                onReply={onReply}
+                onLightbox={onLightbox}
+                onRetry={onRetry}
+              />
+            </Fragment>
+          );
+        })}
 
         {!loading && messages.length === 0 && <EmptyState title="Sin mensajes todavía" />}
       </div>
@@ -985,20 +1147,43 @@ function Chat({
       >
         <div className="composer-main">
           {quote && (
-            <div className="reply-bar">
-              <span>
-                <b>Respondiendo</b>
-                <small>{shortText(quote.body, 100)}</small>
-              </span>
-              <button type="button" onClick={clearQuote}><SvgIcon name="close" size={15} /><span>Quitar respuesta</span></button>
+            <div className="reply-bar" role="note" aria-label="Respondiendo a un mensaje">
+              <div className="reply-bar__label">
+                <SvgIcon name="reply" size={13} />
+                <div className="reply-bar__text">
+                  <b>Respondiendo</b>
+                  <span>{shortText(quote.body || (quote.messageType ? `[${quote.messageType}]` : 'Mensaje original'), 80)}</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="reply-bar__dismiss"
+                onClick={clearQuote}
+                title="Quitar respuesta"
+                aria-label="Quitar respuesta"
+              >
+                <SvgIcon name="close" size={14} />
+                <span>Quitar</span>
+              </button>
             </div>
           )}
 
           {file && (
-            <div className="file-bar">
-              <span><b>{file.name}</b></span>
-              <small>{formatBytes(file.size)}</small>
-              <button type="button" onClick={() => setFile(null)}><SvgIcon name="close" size={15} /><span>Quitar archivo</span></button>
+            <div className="file-bar" role="note" aria-label="Archivo adjunto seleccionado">
+              <div className="file-bar__info">
+                <b>{file.name}</b>
+                <span>{formatBytes(file.size)}</span>
+              </div>
+              <button
+                type="button"
+                className="reply-bar__dismiss"
+                onClick={() => setFile(null)}
+                title="Quitar archivo"
+                aria-label="Quitar archivo adjunto"
+              >
+                <SvgIcon name="close" size={14} />
+                <span>Quitar</span>
+              </button>
             </div>
           )}
 
@@ -1229,6 +1414,20 @@ function CloseModal({
 
   const [reason, setReason] = useState(reasons[0][0]);
   const [loading, setLoading] = useState(false);
+  const modalRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const prev = document.activeElement as HTMLElement | null;
+    modalRef.current?.focus();
+    function onKeyDown(e: globalThis.KeyboardEvent) {
+      if (e.key === 'Escape') onCancel();
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      prev?.focus();
+    };
+  }, [onCancel]);
 
   const text =
     reason === 'order_completed'
@@ -1241,19 +1440,28 @@ function CloseModal({
 
   return (
     <div className="modal-backdrop">
-      <section className="modal">
-        <p className="eyebrow">Cierre explícito</p>
-        <h2>Finalizar {ticket.ticketType === 'order' ? 'pedido' : 'consulta'}</h2>
-        <p>El tipo del ticket define el texto final.</p>
-        <label>
-          Motivo
-          <select value={reason} onChange={e => setReason(e.target.value)}>
-            {reasons.map(([k, v]) => (
-              <option key={k} value={k}>{v}</option>
-            ))}
-          </select>
-        </label>
-        <div className="message-preview">{text}</div>
+      <section
+        ref={modalRef}
+        tabIndex={-1}
+        className="modal-sheet close-modal-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="close-modal-title"
+      >
+        <div className="modal-scroll-area">
+          <p className="eyebrow">Cierre explícito</p>
+          <h2 id="close-modal-title">Finalizar {ticket.ticketType === 'order' ? 'pedido' : 'consulta'}</h2>
+          <p>El tipo del ticket define el texto final.</p>
+          <label className="modal-label">
+            Motivo
+            <select className="modal-select" value={reason} onChange={e => setReason(e.target.value)}>
+              {reasons.map(([k, v]) => (
+                <option key={k} value={k}>{v}</option>
+              ))}
+            </select>
+          </label>
+          <div className="message-preview">{text}</div>
+        </div>
         <div className="modal-actions">
           <button className="button secondary" onClick={onCancel}>Cancelar</button>
           <button
@@ -1548,16 +1756,19 @@ export default function App() {
   );
 
   const [conversations, setConversations] = useState<ConversationRow[]>([]);
-  const [cursor, setCursor] = useState<string | null>(null);
+  const [conversationStats, setConversationStats] = useState<ConversationStats | null>(null);
   const [listLoading, setListLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
+  const [markAllReadBusy, setMarkAllReadBusy] = useState(false);
   const [search, setSearch] = useState('');
   const [searchDraft, setSearchDraft] = useState('');
   const [filter, setFilter] = useState('');
+  // analyticsNoMenuFilter: when set, the conversation list is filtered to contacts
+  // who had incoming messages in that period but never selected a menu option.
+  const [analyticsNoMenuFilter, setAnalyticsNoMenuFilter] = useState<{ from: string; to: string } | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ConversationDetail | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [before, setBefore] = useState<string | null>(null);
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [messagesError, setMessagesError] = useState<string | null>(null);
   const [newMessages, setNewMessages] = useState(0);
@@ -1602,40 +1813,83 @@ export default function App() {
   }, [notifications]);
 
   // ── Load conversations ──
-  async function loadConversations(reset = true) {
+  async function loadConversations() {
     const requestId = ++conversationListRequestRef.current;
     setListLoading(true);
     setListError(null);
     try {
-      const params = new URLSearchParams({ limit: '40' });
-      if (search) params.set('q', search);
-      if (filter === 'unread') params.set('unread', 'true');
-      else if (filter === 'paused') params.set('botPaused', 'true');
-      else if (filter === 'overdue') params.set('followUp', 'overdue');
-      else if (filter) params.set('pipeline', filter);
-      if (!reset && cursor) params.set('cursor', cursor);
-      const result = await api<{ items: ConversationRow[]; nextCursor: string | null }>(
-        `/api/conversations?${params}`,
-      );
-      // A slower polling/SSE response must never restore an older unread count.
-      if (requestId !== conversationListRequestRef.current) return;
-      setConversations(prev => {
-        if (reset) return result.items;
-        const existing = new Set(prev.map(i => i.id));
-        const newRows = result.items.filter(i => !existing.has(i.id));
-        return [...prev, ...newRows];
-      });
-      setCursor(result.nextCursor);
+      const statsPromise = api<ConversationStats>('/api/conversations/stats').catch(() => null);
+      const collected: ConversationRow[] = [];
+      const seenIds = new Set<string>();
+      const seenCursors = new Set<string>();
+      let nextCursor: string | null = null;
+
+      do {
+        const params = new URLSearchParams({ limit: '100' });
+        if (search) params.set('q', search);
+        if (filter === 'unread') params.set('unread', 'true');
+        else if (filter === 'paused') params.set('botPaused', 'true');
+        else if (filter === 'overdue') params.set('followUp', 'overdue');
+        else if (filter === 'tickets') params.set('ticket', 'open');
+        else if (filter) params.set('pipeline', filter);
+        if (analyticsNoMenuFilter) {
+          params.set('analyticsNoMenuFrom', analyticsNoMenuFilter.from);
+          params.set('analyticsNoMenuTo', analyticsNoMenuFilter.to);
+        }
+        if (nextCursor) params.set('cursor', nextCursor);
+
+        const result = await api<{ items: ConversationRow[]; nextCursor: string | null }>(
+          `/api/conversations?${params}`,
+        );
+        // A slower polling/SSE response must never restore older rows or badges.
+        if (requestId !== conversationListRequestRef.current) return;
+        for (const row of result.items) {
+          if (!seenIds.has(row.id)) {
+            seenIds.add(row.id);
+            collected.push(row);
+          }
+        }
+        setConversations([...collected]);
+        nextCursor = result.nextCursor;
+        if (nextCursor) {
+          if (seenCursors.has(nextCursor)) throw new Error('La lista devolvió una página repetida.');
+          seenCursors.add(nextCursor);
+        }
+      } while (nextCursor);
+
+      const stats = await statsPromise;
+      if (requestId === conversationListRequestRef.current && stats) setConversationStats(stats);
     } catch (reason) {
-      setListError(reason instanceof Error ? reason.message : 'No se pudieron cargar las conversaciones.');
+      if (requestId === conversationListRequestRef.current)
+        setListError(reason instanceof Error ? reason.message : 'No se pudieron cargar las conversaciones.');
     } finally {
-      setListLoading(false);
+      if (requestId === conversationListRequestRef.current) setListLoading(false);
+    }
+  }
+
+  async function markAllRead() {
+    if (markAllReadBusy || !conversationStats?.unreadMessages) return;
+    setMarkAllReadBusy(true);
+    setListError(null);
+    try {
+      const result = await api<{
+        contactsUpdated: number;
+        messagesMarkedRead: number;
+        stats: ConversationStats;
+      }>('/api/conversations/read-all', { method: 'POST' });
+      setConversationStats(result.stats);
+      setConversations(prev => filter === 'unread' ? [] : prev.map(row => ({ ...row, unreadCount: 0 })));
+      await loadConversations();
+    } catch (reason) {
+      setListError(reason instanceof Error ? reason.message : 'No se pudieron marcar las conversaciones como leídas.');
+    } finally {
+      setMarkAllReadBusy(false);
     }
   }
 
   useEffect(() => {
     if (authenticated) void loadConversations();
-  }, [authenticated, search, filter]);
+  }, [authenticated, search, filter, analyticsNoMenuFilter]);
 
   useEffect(() => {
     const id = window.setTimeout(() => setSearch(searchDraft.trim()), 250);
@@ -1661,7 +1915,7 @@ export default function App() {
     source.addEventListener('contact.updated', refresh);
     source.addEventListener('media.ready', refresh);
     return () => source.close();
-  }, [authenticated, search, filter, notifications]);
+  }, [authenticated, search, filter, analyticsNoMenuFilter, notifications]);
 
   // ── Select conversation ──
   async function selectConversation(id: string) {
@@ -1671,7 +1925,6 @@ export default function App() {
     setInfoOpen(false);
     setQuote(null);
     setMessages([]);
-    setBefore(null);
     setMessagesError(null);
     setNewMessages(0);
     document.body.classList.add('mobile-chat-open');
@@ -1692,17 +1945,36 @@ export default function App() {
     let alive = true;
     setMessagesLoading(true);
     setMessagesError(null);
-    void Promise.all([
-      api<ConversationDetail>(`/api/conversations/${selectedId}`),
-      api<{ items: Message[]; nextBefore: string | null }>(`/api/conversations/${selectedId}/messages?limit=15`),
-    ]).then(([conv, hist]) => {
-      if (!alive) return;
-      setDetail(conv);
-      setMessages(hist.items);
-      messageIdsRef.current = new Set(hist.items.map(m => m.id));
-      setBefore(hist.nextBefore);
-      requestAnimationFrame(() => { if (messagesRef.current) messagesRef.current.scrollTop = messagesRef.current.scrollHeight; });
-    }).catch(reason => {
+    const detailPromise = api<ConversationDetail>(`/api/conversations/${selectedId}`).then(conv => {
+      if (alive) setDetail(conv);
+    });
+    const historyPromise = (async () => {
+      let allMessages: Message[] = [];
+      let nextBefore: string | null = null;
+      const seenCursors = new Set<string>();
+      do {
+        const suffix: string = nextBefore ? `&before=${encodeURIComponent(nextBefore)}` : '';
+        const history: { items: Message[]; nextBefore: string | null } = await api<{ items: Message[]; nextBefore: string | null }>(
+          `/api/conversations/${selectedId}/messages?limit=100${suffix}`,
+        );
+        if (!alive) return;
+        allMessages = mergeMessages(history.items, allMessages);
+        setMessages(previous => {
+          const merged = mergeMessages(allMessages, previous);
+          messageIdsRef.current = new Set(merged.map(message => message.id));
+          return merged;
+        });
+        nextBefore = history.nextBefore;
+        if (nextBefore) {
+          if (seenCursors.has(nextBefore)) throw new Error('El historial devolvió una página repetida.');
+          seenCursors.add(nextBefore);
+        }
+      } while (nextBefore);
+      requestAnimationFrame(() => {
+        if (messagesRef.current) messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
+      });
+    })();
+    void Promise.all([detailPromise, historyPromise]).catch(reason => {
       if (alive) setMessagesError(reason instanceof Error ? reason.message : 'No se pudo cargar el historial.');
     }).finally(() => alive && setMessagesLoading(false));
     return () => { alive = false; };
@@ -1718,8 +1990,11 @@ export default function App() {
         .then(r => {
           const known = messageIdsRef.current;
           const inc = r.items.filter(m => !known.has(m.id));
-          setMessages(r.items);
-          messageIdsRef.current = new Set(r.items.map(m => m.id));
+          setMessages(previous => {
+            const merged = mergeMessages(previous, r.items);
+            messageIdsRef.current = new Set(merged.map(message => message.id));
+            return merged;
+          });
           if (inc.length) {
             if (document.hidden) setNewMessages(v => v + inc.length);
             inc.forEach(message => notifyNewMessage(message, selectedId));
@@ -1765,29 +2040,6 @@ export default function App() {
     } catch {}
   }
 
-  // ── Load older ──
-  async function loadOlder() {
-    if (!selectedId || !before) return;
-    setMessagesLoading(true);
-    try {
-      const result = await api<{ items: Message[]; nextBefore: string | null }>(
-        `/api/conversations/${selectedId}/messages?limit=15&before=${encodeURIComponent(before)}`,
-      );
-      const height = messagesRef.current?.scrollHeight || 0;
-      setMessages(prev => {
-        const merged = [...result.items, ...prev.filter(i => !result.items.some(n => n.id === i.id))];
-        messageIdsRef.current = new Set(merged.map(i => i.id));
-        return merged;
-      });
-      setBefore(result.nextBefore);
-      requestAnimationFrame(() => { if (messagesRef.current) messagesRef.current.scrollTop = messagesRef.current.scrollHeight - height; });
-    } catch (reason) {
-      setMessagesError(reason instanceof Error ? reason.message : 'No se pudieron cargar mensajes anteriores.');
-    } finally {
-      setMessagesLoading(false);
-    }
-  }
-
   // ── Send ──
   async function sendMessage(body: string, file: File | null, quoteMessageId: string | null) {
     if (!selectedId) return;
@@ -1814,10 +2066,12 @@ export default function App() {
 
   async function reloadMessages(stick = false) {
     if (!selectedId) return;
-    const result = await api<{ items: Message[]; nextBefore: string | null }>(`/api/conversations/${selectedId}/messages?limit=15`);
-    setMessages(result.items);
-    messageIdsRef.current = new Set(result.items.map(m => m.id));
-    setBefore(result.nextBefore);
+    const result = await api<{ items: Message[]; nextBefore: string | null }>(`/api/conversations/${selectedId}/messages?limit=100`);
+    setMessages(previous => {
+      const merged = mergeMessages(previous, result.items);
+      messageIdsRef.current = new Set(merged.map(message => message.id));
+      return merged;
+    });
     if (stick) requestAnimationFrame(() => { if (messagesRef.current) messagesRef.current.scrollTop = messagesRef.current.scrollHeight; });
   }
 
@@ -1886,7 +2140,14 @@ export default function App() {
     await reloadMessages(true);
   }
 
-  function navigate(viewToOpen: View) {
+  function navigate(viewToOpen: View, options?: { analyticsNoMenuFilter?: { from: string; to: string } | null }) {
+    // Apply analytics filter when navigating to inbox from analytics KPI
+    if (options?.analyticsNoMenuFilter !== undefined) {
+      setAnalyticsNoMenuFilter(options.analyticsNoMenuFilter);
+    } else if (viewToOpen === 'inbox') {
+      // Clear analytics filter when navigating to inbox normally (no filter options passed)
+      setAnalyticsNoMenuFilter(null);
+    }
     setView(viewToOpen);
     setSidebarOpen(false);
     if (viewToOpen !== 'inbox') document.body.classList.remove('mobile-chat-open');
@@ -1911,7 +2172,7 @@ export default function App() {
       <Sidebar
         view={view}
         onNavigate={navigate}
-        unread={conversations.reduce((s, r) => s + (r.unreadCount || 0), 0)}
+        unread={conversationStats?.unreadMessages ?? conversations.reduce((s, r) => s + (r.unreadCount || 0), 0)}
         sidebarOpen={sidebarOpen}
       />
       {sidebarOpen && <button className="sidebar-backdrop" aria-label="Cerrar menú" onClick={() => setSidebarOpen(false)} />}
@@ -1930,17 +2191,33 @@ export default function App() {
         {view === 'inbox' ? (
           <div className={`inbox-shell ${detail && infoOpen ? 'info-visible' : ''}`}>
             <aside className="conversation-pane">
+              {analyticsNoMenuFilter && (
+                <div className="analytics-filter-banner" role="status">
+                  <span className="analytics-filter-banner-text">
+                    🔍 Contactos sin menú · {analyticsNoMenuFilter.from.slice(0, 10)} → {analyticsNoMenuFilter.to.slice(0, 10)}
+                  </span>
+                  <button
+                    type="button"
+                    className="analytics-filter-banner-clear"
+                    onClick={() => setAnalyticsNoMenuFilter(null)}
+                    aria-label="Quitar filtro de analíticas"
+                  >
+                    ✕ Quitar filtro
+                  </button>
+                </div>
+              )}
               <ConversationList
                 items={conversations}
                 selectedId={selectedId}
                 loading={listLoading}
-                hasMore={Boolean(cursor)}
+                stats={conversationStats}
+                markAllBusy={markAllReadBusy}
                 error={listError}
                 search={searchDraft}
                 filter={filter}
                 onSearch={setSearchDraft}
                 onFilter={setFilter}
-                onMore={() => void loadConversations(false)}
+                onMarkAllRead={() => void markAllRead()}
                 onSelect={id => void selectConversation(id)}
                 onRetry={() => void loadConversations()}
               />
@@ -1951,10 +2228,8 @@ export default function App() {
               messages={messages}
               loading={messagesLoading}
               error={messagesError}
-              hasOlder={Boolean(before)}
               newMessages={newMessages}
               messagesRef={messagesRef}
-              onLoadOlder={() => void loadOlder()}
               onSend={sendMessage}
               onReply={setQuote}
               quote={quote}

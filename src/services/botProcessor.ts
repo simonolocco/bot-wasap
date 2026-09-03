@@ -17,6 +17,10 @@ const DUPLICATE_AUTO_RESPONSE_WINDOW_SECONDS = Math.max(0, Number.parseInt(proce
 const AUTO_RESPONSE_MAX_DELAY_SECONDS = Math.max(0, Number.parseInt(process.env.AUTO_RESPONSE_MAX_DELAY_SECONDS ?? '120', 10) || 120);
 export const ADVISOR_FOLLOWUP_DELAY_MS = 10 * 60 * 1000;
 
+export function shouldIgnoreIncomingForAutomaticResponse(type: string) {
+  return type === 'reaction';
+}
+
 export function automaticResponseAgeMs(sourceTimestamp: number | undefined, receivedAt: string, now = Date.now()) {
   const source = Number(sourceTimestamp);
   const sourceAt = Number.isFinite(source) && source > 0 ? source : Date.parse(receivedAt);
@@ -172,6 +176,12 @@ export async function processIncomingJob(job: { id: string; contact_id: string; 
     const contact = await getContactById(job.contact_id);
     if (!contact) throw new Error('Contacto inexistente');
     console.info(`[worker] Evento recibido para ${job.contact_id}: tipo=${incoming.type}, botPaused=${contact.botPaused}.`);
+
+    if (shouldIgnoreIncomingForAutomaticResponse(incoming.type)) {
+      console.info(`[worker] Reacción registrada para ${job.contact_id}; no genera respuesta ni seguimiento automático.`);
+      await completeJob(job.id);
+      return;
+    }
 
     const rawText = incoming.text?.trim() || '';
     const normText = normalizeText(rawText);

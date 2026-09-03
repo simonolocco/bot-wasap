@@ -11,6 +11,50 @@ async function run() {
   let lastRequestedPeriod = '';
   let lastRequestedFrom = '';
   let lastRequestedTo = '';
+  let customRequestCount = 0;
+
+  const topPatterns = [
+    { text: 'Tienen queso azul?', normalizedText: 'tienen queso azul', count: 12, uniqueContacts: 10, lastSeenAt: '2026-08-20T14:30:00.000Z' },
+    { text: 'Hacen envíos especiales?', normalizedText: 'hacen envios especiales', count: 8, uniqueContacts: 7, lastSeenAt: '2026-08-20T12:00:00.000Z' },
+    { text: 'Aceptan tarjeta de crédito?', normalizedText: 'aceptan tarjeta de credito', count: 6, uniqueContacts: 5, lastSeenAt: '2026-08-19T10:15:00.000Z' },
+    ...Array.from({ length: 9 }, (_, index) => ({
+      text: `Consulta adicional ${index + 1}`,
+      normalizedText: `consulta adicional ${index + 1}`,
+      count: 5 - Math.min(index, 4),
+      uniqueContacts: 2,
+      lastSeenAt: `2026-08-${String(18 - index).padStart(2, '0')}T10:00:00.000Z`,
+    })),
+  ];
+  const recentUnrecognizedItems = Array.from({ length: 12 }, (_, index) => ({
+    id: `unrec-${index + 1}`,
+    contactId: `cont-${index + 1}`,
+    contactName: index === 0 ? 'Juan Perez' : `Contacto ${index + 1}`,
+    phone: `549111234${String(5678 + index).padStart(4, '0')}`,
+    rawText: index === 0 ? 'Tienen queso azul?' : `Consulta adicional ${index}`,
+    normalizedText: index === 0 ? 'tienen queso azul' : `consulta adicional ${index}`,
+    messageType: 'text',
+    createdAt: `2026-08-20T${String(14 - Math.min(index, 9)).padStart(2, '0')}:30:00.000Z`,
+  }));
+  const contactsWithoutMenuItems = [
+    { id: 'cont-no-menu-1', name: 'Maria Gomez', publicName: 'Maria Gomez', phone: '5491199887766', pipelineStatus: 'new', lastMessageAt: '2026-08-20T16:00:00.000Z', lastIncomingAt: '2026-08-20T16:00:00.000Z', messageCount: 3, botResponseCount: 1, lastBotResponseAt: '2026-08-20T16:00:10.000Z', responseStatus: 'responded' as const },
+    { id: 'cont-no-menu-2', name: 'Roberto Sanchez', publicName: 'Roberto Sanchez', phone: '5491144332211', pipelineStatus: 'in_attention', lastMessageAt: '2026-08-19T18:00:00.000Z', lastIncomingAt: '2026-08-19T18:00:00.000Z', messageCount: 2, botResponseCount: 0, lastBotResponseAt: null, responseStatus: 'unanswered' as const },
+    ...Array.from({ length: 16 }, (_, index) => {
+      const unanswered = index < 9;
+      return {
+        id: `cont-no-menu-${index + 3}`,
+        name: `Cliente ${index + 3}`,
+        publicName: `Cliente ${index + 3}`,
+        phone: `549115550${String(index + 3).padStart(4, '0')}`,
+        pipelineStatus: 'new',
+        lastMessageAt: '2026-08-18T16:00:00.000Z',
+        lastIncomingAt: '2026-08-18T16:00:00.000Z',
+        messageCount: 1,
+        botResponseCount: unanswered ? 0 : 1,
+        lastBotResponseAt: unanswered ? null : '2026-08-18T16:00:10.000Z',
+        responseStatus: unanswered ? 'unanswered' as const : 'responded' as const,
+      };
+    }),
+  ];
 
   const server = http.createServer((req, res) => {
     const url = new URL(req.url || '/', 'http://127.0.0.1');
@@ -40,6 +84,17 @@ async function run() {
     if (pathname === '/api/auth/me') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ username: 'qa-admin' }));
+    }
+
+    if (pathname === '/api/conversations/stats' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({
+        totalConversations: 1,
+        unreadConversations: 0,
+        unreadMessages: 0,
+        totalMessages: 2,
+        openTickets: 0,
+      }));
     }
 
     if (pathname === '/api/conversations' && req.method === 'GET') {
@@ -93,18 +148,24 @@ async function run() {
       lastRequestedPeriod = url.searchParams.get('period') || '30d';
       lastRequestedFrom = url.searchParams.get('from') || '';
       lastRequestedTo = url.searchParams.get('to') || '';
+      if (lastRequestedPeriod === 'custom') customRequestCount += 1;
 
       const is7d = lastRequestedPeriod === '7d';
+      const is90d = lastRequestedPeriod === '90d';
+      const isCustom = lastRequestedPeriod === 'custom';
+      const totalUniqueContacts = is7d ? 48 : is90d ? 365 : isCustom ? 77 : 142;
 
       const mockAnalytics = {
         period: {
           key: lastRequestedPeriod,
           from: lastRequestedFrom || (is7d ? '2026-08-14T00:00:00.000Z' : '2026-07-22T00:00:00.000Z'),
           to: lastRequestedTo || '2026-08-21T18:00:00.000Z',
-          label: is7d ? 'Últimos 7 días' : lastRequestedPeriod === 'custom' ? 'Rango personalizado' : 'Últimos 30 días',
+          label: is7d ? 'Últimos 7 días' : is90d ? 'Últimos 90 días' : isCustom ? 'Rango personalizado' : 'Últimos 30 días',
         },
         summary: {
-          totalUniqueContacts: is7d ? 48 : 142,
+          totalUniqueContacts,
+          totalNewContacts: is7d ? 23 : 35,
+          totalReturningContacts: is7d ? 16 : 29,
           totalIncomingMessages: is7d ? 110 : 380,
           totalMenuInteractions: is7d ? 85 : 295,
           totalMenuOptionsRecognized: is7d ? 72 : 260,
@@ -130,26 +191,26 @@ async function run() {
           { date: '2026-08-20', incomingMessages: 30, menuInteractions: 24, menuRequested: 2, optionsRecognized: 22, unrecognized: 4, uniqueContacts: 18 },
           { date: '2026-08-21', incomingMessages: 20, menuInteractions: 16, menuRequested: 1, optionsRecognized: 15, unrecognized: 2, uniqueContacts: 12 },
         ],
+        newContactsByDay: [
+          { date: '2026-08-19', newContacts: is7d ? 8 : 12 },
+          { date: '2026-08-20', newContacts: is7d ? 10 : 15 },
+          { date: '2026-08-21', newContacts: is7d ? 5 : 8 },
+        ],
+        returningContactsByDay: [
+          { date: '2026-08-19', returningContacts: is7d ? 4 : 9 },
+          { date: '2026-08-20', returningContacts: is7d ? 7 : 11 },
+          { date: '2026-08-21', returningContacts: is7d ? 5 : 9 },
+        ],
         unrecognizedMessages: {
           total: is7d ? 12 : 45,
           uniqueContacts: is7d ? 10 : 38,
-          topPatterns: [
-            { text: 'Tienen queso azul?', normalizedText: 'tienen queso azul', count: is7d ? 4 : 12, uniqueContacts: is7d ? 3 : 10, lastSeenAt: '2026-08-20T14:30:00.000Z' },
-            { text: 'Hacen envios a Villa Carlos Paz?', normalizedText: 'hacen envios a villa carlos paz', count: is7d ? 3 : 8, uniqueContacts: is7d ? 3 : 7, lastSeenAt: '2026-08-20T12:00:00.000Z' },
-            { text: 'Aceptan tarjeta de credito?', normalizedText: 'aceptan tarjeta de credito', count: is7d ? 2 : 6, uniqueContacts: is7d ? 2 : 5, lastSeenAt: '2026-08-19T10:15:00.000Z' },
-          ],
-          items: [
-            { id: 'unrec-1', contactId: 'cont-1', contactName: 'Juan Perez', phone: '5491112345678', rawText: 'Tienen queso azul?', normalizedText: 'tienen queso azul', messageType: 'text', createdAt: '2026-08-20T14:30:00.000Z' },
-            { id: 'unrec-2', contactId: 'cont-2', contactName: 'Carlos Lopez', phone: '5491187654321', rawText: 'Hacen envios a Villa Carlos Paz?', normalizedText: 'hacen envios a villa carlos paz', messageType: 'text', createdAt: '2026-08-20T12:00:00.000Z' },
-          ],
+          topPatterns,
+          items: recentUnrecognizedItems,
         },
         contactsWithoutMenu: {
           total: is7d ? 5 : 18,
           withoutBotResponse: is7d ? 3 : 10,
-          items: [
-            { id: 'cont-no-menu-1', name: 'Maria Gomez', publicName: 'Maria Gomez', phone: '5491199887766', pipelineStatus: 'new', lastMessageAt: '2026-08-20T16:00:00.000Z', lastIncomingAt: '2026-08-20T16:00:00.000Z', messageCount: 3, botResponseCount: 1, lastBotResponseAt: '2026-08-20T16:00:10.000Z', responseStatus: 'responded' },
-            { id: 'cont-no-menu-2', name: 'Roberto Sanchez', publicName: 'Roberto Sanchez', phone: '5491144332211', pipelineStatus: 'in_attention', lastMessageAt: '2026-08-19T18:00:00.000Z', lastIncomingAt: '2026-08-19T18:00:00.000Z', messageCount: 2, botResponseCount: 0, lastBotResponseAt: null, responseStatus: 'unanswered' },
-          ],
+          items: contactsWithoutMenuItems,
         },
         coverage: {
           hasTrackingData: true,
@@ -159,8 +220,12 @@ async function run() {
         },
       };
 
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify(mockAnalytics));
+      const respond = () => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(mockAnalytics));
+      };
+      if (is90d) return setTimeout(respond, 180);
+      return respond();
     }
 
     res.writeHead(404, { 'Content-Type': 'text/plain' });
@@ -228,10 +293,53 @@ async function run() {
     assert.ok(await page.getByText('Cómo leer esta tabla', { exact: true }).count() > 0, 'La tendencia debe explicar sus métricas');
     assert.equal(await page.locator('.trend-row').first().locator('td').count(), 6, 'La tendencia debe mostrar las métricas diarias explicadas');
 
+    // 4.2 Verify Desktop Chart Height > 0
+    const desktopChartHeight = await page.locator('.recharts-responsive-box').first().evaluate((el) => el.getBoundingClientRect().height);
+    assert.ok(desktopChartHeight > 0, 'El gráfico desktop debe tener una altura computable mayor que cero (encontrado: ' + desktopChartHeight + ')');
+
+    // 4.2b Verify New Contacts by Day Bar Chart
+    const newContactsSection = page.locator('section[aria-label="Contactos nuevos y recurrentes por día"]');
+    assert.ok(await newContactsSection.count() > 0, 'Sección de contactos nuevos por día debe existir');
+    const newContactsBarBox = newContactsSection.locator('.recharts-bar-box');
+    const barBoxHeight = await newContactsBarBox.evaluate((el) => el.getBoundingClientRect().height);
+    assert.ok(barBoxHeight > 0, 'El gráfico de barras de contactos nuevos debe tener altura computable');
+    assert.equal(await newContactsBarBox.locator('.recharts-bar-rectangle').count(), 6, 'Deben renderizarse las barras de contactos nuevos y recurrentes');
+
+    // 4.2c Verify Activity Chart date filter (From / To)
+    const chartFromInput = page.locator('.chart-date-input').first();
+    await chartFromInput.fill('2026-08-20');
+    assert.equal(await page.locator('.trend-row').count(), 2, 'Filtrar desde el 20 debe mostrar 2 días');
+    await page.locator('.chart-date-clear').click();
+    assert.equal(await page.locator('.trend-row').count(), 3, 'Limpiar filtro del gráfico debe restaurar todos los días');
+
+    // 4.3 Every chart-series filter must hide and restore its real series.
+    const seriesLabels = ['Mensajes Entrantes', 'Opciones Reconocidas', 'Menú Solicitado', 'No Entendidos', 'Contactos Únicos'];
+    assert.equal(await page.locator('.recharts-area').count(), 5, 'El gráfico debe comenzar con sus 5 series visibles');
+    for (const label of seriesLabels) {
+      const toggle = page.getByRole('button', { name: label, exact: true });
+      await toggle.click();
+      assert.equal(await toggle.getAttribute('aria-pressed'), 'false', `${label} debe quedar desactivada`);
+      assert.equal(await page.locator('.recharts-area').count(), 4, `${label} debe ocultar una serie real`);
+      await toggle.click();
+      assert.equal(await toggle.getAttribute('aria-pressed'), 'true', `${label} debe poder restaurarse`);
+      assert.equal(await page.locator('.recharts-area').count(), 5, `${label} debe restaurar la serie`);
+    }
+
     // 5. Verify Unrecognized messages section: Patterns tab
     await page.waitForSelector('.analytics-section-card');
     const patternText = await page.locator('.raw-message-box code').first().innerText();
     assert.match(patternText, /Tienen queso azul\?/i, 'Debe mostrarse el texto del patrón no entendido');
+
+    const patternTable = page.locator('.table-responsive-patterns');
+    assert.match(await patternTable.locator('.page-indicator').innerText(), /Página 1 de 2/, 'Los patrones deben paginarse');
+    await patternTable.getByRole('button', { name: 'Siguiente' }).click();
+    assert.match(await patternTable.locator('.page-indicator').innerText(), /Página 2 de 2/, 'La segunda página de patrones debe abrirse');
+    const patternSearch = page.getByPlaceholder('Filtrar patrones por palabra…');
+    await patternSearch.fill('envios especiales');
+    assert.equal(await page.locator('.table-responsive-patterns tbody tr').count(), 1, 'La búsqueda debe ignorar tildes y resetear la página');
+    assert.match(await page.locator('.table-responsive-patterns tbody tr').innerText(), /envíos especiales/i, 'Debe encontrar “envíos” buscando “envios”');
+    await page.getByRole('button', { name: 'Limpiar búsqueda' }).click();
+    assert.match(await patternTable.locator('.page-indicator').innerText(), /Página 1 de 2/, 'Limpiar búsqueda debe volver a la primera página');
 
     // 6. Switch to "Últimos mensajes" tab
     const recentTabBtn = page.getByRole('button', { name: /Últimos mensajes/i });
@@ -239,12 +347,23 @@ async function run() {
     await page.waitForSelector('.raw-message-box.full');
     const recentRawText = await page.locator('.raw-message-box.full code').first().innerText();
     assert.match(recentRawText, /Tienen queso azul\?/i, 'Debe mostrarse el texto original en la pestaña de mensajes recientes');
+    const recentTable = page.locator('.table-responsive-recent');
+    assert.match(await recentTable.locator('.page-indicator').innerText(), /Página 1 de 2/, 'Los mensajes recientes deben paginarse');
+    await recentTable.getByRole('button', { name: 'Siguiente' }).click();
+    assert.match(await recentTable.locator('.page-indicator').innerText(), /Página 2 de 2/, 'La segunda página de mensajes recientes debe abrirse');
+    await page.getByRole('button', { name: /Patrones más frecuentes/i }).click();
 
     // 7. Verify Contacts without menu section
     const contactNoMenuName = await page.locator('strong:has-text("Maria Gomez")').first().innerText();
     assert.match(contactNoMenuName, /Maria Gomez/, 'Debe listarse el contacto sin menú');
     assert.ok(await page.getByText('Respondió', { exact: true }).count() > 0, 'Debe distinguir contactos con respuesta automática');
     assert.ok(await page.getByText('Sin respuesta', { exact: true }).count() > 0, 'Debe distinguir contactos sin respuesta automática');
+
+    const contactsTableDesktop = page.locator('.table-responsive-contacts');
+    assert.match(await contactsTableDesktop.locator('.page-indicator').innerText(), /Página 1 de 2/, 'Los contactos deben paginarse');
+    await contactsTableDesktop.getByRole('button', { name: 'Siguiente' }).click();
+    assert.match(await contactsTableDesktop.locator('.page-indicator').innerText(), /Página 2 de 2/, 'La segunda página de contactos debe abrirse');
+    await contactsTableDesktop.getByRole('button', { name: 'Anterior' }).click();
 
     const unansweredFilter = page.getByRole('button', { name: /Sin respuesta \(/i });
     await unansweredFilter.click();
@@ -260,6 +379,16 @@ async function run() {
     await page.getByRole('button', { name: 'Analíticas', exact: true }).click();
     await page.waitForSelector('.analytics-layout');
 
+    // 7.2 Clicking KPI card "Contactos sin menú" must navigate to inbox with active filter banner
+    const kpiNoMenu = page.locator('.stat-card-actionable');
+    await kpiNoMenu.click();
+    await page.waitForSelector('.analytics-filter-banner');
+    assert.match(await page.locator('.analytics-filter-banner').innerText(), /Contactos sin menú/i);
+    await page.locator('.analytics-filter-banner-clear').click();
+    assert.equal(await page.locator('.analytics-filter-banner').count(), 0, 'Limpiar filtro debe remover el banner');
+    await page.getByRole('button', { name: 'Analíticas', exact: true }).click();
+    await page.waitForSelector('.analytics-layout');
+
     // 8. Verify Range Filtering: switch to 7 days
     const btn7d = page.getByRole('button', { name: '7 días', exact: true });
     await btn7d.click();
@@ -268,6 +397,19 @@ async function run() {
       return el && el.textContent === '48';
     });
     assert.equal(lastRequestedPeriod, '7d', 'El parámetro period debe ser 7d');
+
+    // 8.1 30/90-day filters and stale-response protection.
+    const btn90d = page.getByRole('button', { name: '90 días', exact: true });
+    await btn90d.click();
+    await page.waitForFunction(() => document.querySelector('.analytics-kpi-grid .stat-value')?.textContent === '365');
+    assert.equal(lastRequestedPeriod, '90d', 'El parámetro period debe ser 90d');
+    const btn30d = page.getByRole('button', { name: '30 días', exact: true });
+    await btn90d.click();
+    await btn30d.click();
+    await page.waitForFunction(() => document.querySelector('.analytics-kpi-grid .stat-value')?.textContent === '142');
+    await page.waitForTimeout(250);
+    assert.equal(await page.locator('.analytics-kpi-grid .stat-value').first().innerText(), '142', 'Una respuesta vieja de 90 días no debe sobrescribir el filtro de 30 días');
+    assert.equal(await btn30d.getAttribute('aria-pressed'), 'true', '30 días debe seguir siendo el período activo');
 
     // 9. Verify Custom Range Filtering & Invalidation
     const btnCustom = page.getByRole('button', { name: 'Personalizado', exact: true });
@@ -290,11 +432,23 @@ async function run() {
     await fromInput.fill('2026-08-01');
     await toInput.fill('2026-08-15');
     assert.equal(await applyBtn.isDisabled(), false, 'El botón debe habilitarse con fechas válidas');
+    const customRequestsBeforeApply = customRequestCount;
     await applyBtn.click();
     await page.waitForFunction(() => document.querySelector('.analytics-layout') !== null);
+    await page.waitForTimeout(50);
     assert.equal(lastRequestedPeriod, 'custom', 'El parámetro period debe ser custom');
     assert.equal(lastRequestedFrom, '2026-08-01', 'Fecha desde en custom');
     assert.equal(lastRequestedTo, '2026-08-15', 'Fecha hasta en custom');
+    assert.equal(customRequestCount - customRequestsBeforeApply, 1, 'Aplicar un rango personalizado debe hacer una sola consulta');
+
+    await fromInput.fill('2026-08-02');
+    await toInput.fill('2026-08-16');
+    const customRequestsBeforeReapply = customRequestCount;
+    await applyBtn.click();
+    await page.waitForFunction(() => document.querySelector('.analytics-coverage-banner')?.textContent?.includes('Rango personalizado'));
+    assert.equal(lastRequestedFrom, '2026-08-02', 'Reaplicar debe usar la fecha desde actualizada');
+    assert.equal(lastRequestedTo, '2026-08-16', 'Reaplicar debe usar la fecha hasta actualizada');
+    assert.equal(customRequestCount - customRequestsBeforeReapply, 1, 'Reaplicar el rango debe hacer una sola consulta');
 
     // ══════════════════════════════════════════════════════
     // MOBILE VERIFICATION (390x844)
@@ -334,7 +488,7 @@ async function run() {
       scrollWidth: el.scrollWidth,
     }));
     assert.ok(trendTableScroll.scrollWidth > trendTableScroll.clientWidth, 'La tabla mobile debe quedar contenida en su propio scroll');
-    const mobileChartHeight = await page.locator('.recharts-responsive-box').evaluate((el) => el.getBoundingClientRect().height);
+    const mobileChartHeight = await page.locator('.recharts-responsive-box').first().evaluate((el) => el.getBoundingClientRect().height);
     assert.ok(mobileChartHeight >= 240, 'El gráfico mobile debe conservar una altura útil (encontrado: ' + mobileChartHeight + ')');
     const mobileFunnelDirection = await page.locator('.funnel-pipeline').first().evaluate((el) => window.getComputedStyle(el).flexDirection);
     assert.equal(mobileFunnelDirection, 'column', 'El embudo debe apilarse en mobile');

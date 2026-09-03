@@ -1,14 +1,17 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ResponsiveContainer,
   AreaChart,
   Area,
+  BarChart,
+  Bar,
   PieChart,
   Pie,
   Cell,
   XAxis,
   YAxis,
   CartesianGrid,
+  LabelList,
   Tooltip,
 } from 'recharts';
 import {
@@ -39,6 +42,7 @@ import {
   Sparkles,
   TrendingUp,
   UserCheck,
+  UserPlus,
   Users,
   X,
 } from 'lucide-react';
@@ -46,10 +50,37 @@ import { api, formatDate, formatDateOnly } from './api';
 import type {
   AnalyticsPeriodKey,
   BotAnalyticsData,
+  NewContactsByDayPoint,
+  ReturningContactsByDayPoint,
   SecondaryView,
 } from './types';
 
 const MENU_COLORS = ['#10b981', '#06b6d4', '#6366f1', '#f59e0b', '#ec4899', '#8b5cf6'];
+const ANALYTICS_TIME_ZONE = 'America/Argentina/Cordoba';
+
+function dateOnlyInArgentina(value = new Date()): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: ANALYTICS_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(value);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find(item => item.type === type)?.value || '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
+function shiftDateOnly(value: string, days: number): string {
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}
+
+function formatAnalyticsDate(value: string): string {
+  return new Date(value).toLocaleDateString('es-AR', { dateStyle: 'medium', timeZone: ANALYTICS_TIME_ZONE });
+}
+
+function normalizeFilterText(value: string): string {
+  return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es-AR').trim();
+}
 
 const stages: Record<string, { label: string; tone: string }> = {
   new: { label: 'Nueva', tone: 'tone-blue' },
@@ -176,18 +207,16 @@ export default function AnalyticsView({
   onNavigate,
 }: {
   onOpenContact: (id: string) => void;
-  onNavigate: (view: SecondaryView | 'inbox') => void;
+  onNavigate: (view: SecondaryView | 'inbox', options?: { analyticsNoMenuFilter?: { from: string; to: string } | null }) => void;
 }) {
+  const today = dateOnlyInArgentina();
   const [period, setPeriod] = useState<AnalyticsPeriodKey>('30d');
-  const [customFrom, setCustomFrom] = useState(() => {
-    const d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    return d.toISOString().slice(0, 10);
-  });
-  const [customTo, setCustomTo] = useState(() => new Date().toISOString().slice(0, 10));
-  const [appliedCustom, setAppliedCustom] = useState(false);
+  const [customFrom, setCustomFrom] = useState(() => shiftDateOnly(dateOnlyInArgentina(), -29));
+  const [customTo, setCustomTo] = useState(() => dateOnlyInArgentina());
   const [data, setData] = useState<BotAnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const latestRequestRef = useRef(0);
 
   // Tabs & Filters
   const [unrecognizedTab, setUnrecognizedTab] = useState<'patterns' | 'recent'>('patterns');
@@ -206,43 +235,58 @@ export default function AnalyticsView({
     uniqueContacts: true,
   });
 
+  // Activity chart date range filter (independently from global period)
+  const [chartFrom, setChartFrom] = useState('');
+  const [chartTo, setChartTo] = useState('');
+  const [chartFromError, setChartFromError] = useState('');
+
   const toggleSeries = (key: keyof typeof seriesVisibility) => {
     setSeriesVisibility(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
-  const load = () => {
+  const load = (request: { period?: AnalyticsPeriodKey; from?: string; to?: string } = {}) => {
+    const requestPeriod = request.period || period;
+    const requestFrom = request.from || customFrom;
+    const requestTo = request.to || customTo;
+    const requestId = ++latestRequestRef.current;
     setLoading(true);
     setError('');
-    let url = `/api/analytics?period=${period}&limit=100`;
-    if (period === 'custom') {
-      url += `&from=${encodeURIComponent(customFrom)}&to=${encodeURIComponent(customTo)}`;
+    let url = `/api/analytics?period=${requestPeriod}&limit=100`;
+    if (requestPeriod === 'custom') {
+      url += `&from=${encodeURIComponent(requestFrom)}&to=${encodeURIComponent(requestTo)}`;
     }
     api<BotAnalyticsData>(url)
       .then(res => {
+        if (requestId !== latestRequestRef.current) return;
         setData(res);
         setPatternPage(0);
         setRecentUnrecognizedPage(0);
         setContactsWithoutMenuPage(0);
-        setContactResponseFilter('all');
       })
-      .catch(e => setError(e instanceof Error ? e.message : 'No se pudieron cargar las analíticas'))
-      .finally(() => setLoading(false));
+      .catch(e => {
+        if (requestId === latestRequestRef.current) {
+          setError(e instanceof Error ? e.message : 'No se pudieron cargar las analíticas');
+        }
+      })
+      .finally(() => {
+        if (requestId === latestRequestRef.current) setLoading(false);
+      });
   };
 
   useEffect(() => {
-    if (period !== 'custom' || appliedCustom) {
-      load();
-    }
-  }, [period, appliedCustom]);
+    if (period !== 'custom') load({ period });
+  }, [period]);
+
+  useEffect(() => () => {
+    latestRequestRef.current += 1;
+  }, []);
 
   const handlePeriodChange = (next: AnalyticsPeriodKey) => {
     setPeriod(next);
-    if (next !== 'custom') {
-      setAppliedCustom(false);
-    }
   };
 
   const customRangeInvalid = period === 'custom' && Boolean(customFrom && customTo && customFrom > customTo);
+  const customRangeIncomplete = period === 'custom' && (!customFrom || !customTo);
 
   const handleApplyCustom = (e: React.FormEvent) => {
     e.preventDefault();
@@ -251,8 +295,7 @@ export default function AnalyticsView({
         setError('El rango de fechas personalizado es inválido. "Desde" debe ser anterior o igual a "Hasta".');
         return;
       }
-      setAppliedCustom(true);
-      load();
+      load({ period: 'custom', from: customFrom, to: customTo });
     }
   };
 
@@ -274,7 +317,7 @@ export default function AnalyticsView({
         <div className="state-icon-wrap error-icon">!</div>
         <strong>No se pudieron cargar las analíticas</strong>
         <p>{error}</p>
-        <button className="button primary sm" onClick={load}>
+        <button className="button primary sm" onClick={() => load()}>
           Reintentar conexión
         </button>
       </div>
@@ -287,8 +330,8 @@ export default function AnalyticsView({
 
   const filteredPatterns = data.unrecognizedMessages.topPatterns.filter(p => {
     if (!patternFilter) return true;
-    const term = patternFilter.toLowerCase();
-    return p.text.toLowerCase().includes(term) || p.normalizedText.toLowerCase().includes(term);
+    const term = normalizeFilterText(patternFilter);
+    return normalizeFilterText(p.text).includes(term) || normalizeFilterText(p.normalizedText).includes(term);
   });
 
   const PAGE_SIZE = 10;
@@ -314,6 +357,23 @@ export default function AnalyticsView({
       percentage: opt.percentage,
       uniqueContacts: opt.uniqueContacts,
     }));
+
+  const returningByDay = new Map((data.returningContactsByDay ?? []).map(point => [point.date, point.returningContacts]));
+  const contactActivityByDay: Array<NewContactsByDayPoint & ReturningContactsByDayPoint> = data.newContactsByDay.map(point => ({
+    ...point,
+    returningContacts: returningByDay.get(point.date) ?? 0,
+  }));
+
+  // Activity chart filtered trend (chart date filter is a client-side slice of trend data)
+  const chartFromValid = /^\d{4}-\d{2}-\d{2}$/.test(chartFrom);
+  const chartToValid = /^\d{4}-\d{2}-\d{2}$/.test(chartTo);
+  const chartRangeInvalid = chartFromValid && chartToValid && chartFrom > chartTo;
+  const filteredTrend = data.trend.filter(pt => {
+    if (chartFromValid && pt.date < chartFrom) return false;
+    if (chartToValid && pt.date > chartTo) return false;
+    return true;
+  });
+  const displayTrend = (!chartFromValid && !chartToValid) ? data.trend : (chartRangeInvalid ? data.trend : filteredTrend);
 
   return (
     <div className="analytics-layout animate-fade-in">
@@ -345,6 +405,7 @@ export default function AnalyticsView({
               <button
                 type="button"
                 className={`period-seg-btn ${period === '7d' ? 'active' : ''}`}
+                aria-pressed={period === '7d'}
                 onClick={() => handlePeriodChange('7d')}
               >
                 7 días
@@ -352,6 +413,7 @@ export default function AnalyticsView({
               <button
                 type="button"
                 className={`period-seg-btn ${period === '30d' ? 'active' : ''}`}
+                aria-pressed={period === '30d'}
                 onClick={() => handlePeriodChange('30d')}
               >
                 30 días
@@ -359,6 +421,7 @@ export default function AnalyticsView({
               <button
                 type="button"
                 className={`period-seg-btn ${period === '90d' ? 'active' : ''}`}
+                aria-pressed={period === '90d'}
                 onClick={() => handlePeriodChange('90d')}
               >
                 90 días
@@ -366,6 +429,7 @@ export default function AnalyticsView({
               <button
                 type="button"
                 className={`period-seg-btn ${period === 'custom' ? 'active' : ''}`}
+                aria-pressed={period === 'custom'}
                 onClick={() => handlePeriodChange('custom')}
               >
                 <Calendar size={13} />
@@ -377,8 +441,10 @@ export default function AnalyticsView({
             <button
               type="button"
               className="button secondary sm refresh-btn"
-              onClick={load}
-              disabled={loading}
+              onClick={() => load(period === 'custom'
+                ? { period, from: customFrom, to: customTo }
+                : { period })}
+              disabled={loading || customRangeInvalid || customRangeIncomplete}
               title="Recargar métricas actualizadas"
             >
               <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
@@ -396,8 +462,11 @@ export default function AnalyticsView({
                 <input
                   type="date"
                   value={customFrom}
-                  max={customTo || undefined}
-                  onChange={e => setCustomFrom(e.target.value)}
+                  max={customTo && customTo < today ? customTo : today}
+                  onChange={e => {
+                    setCustomFrom(e.target.value);
+                    setError('');
+                  }}
                   required
                 />
               </label>
@@ -408,13 +477,17 @@ export default function AnalyticsView({
                   type="date"
                   value={customTo}
                   min={customFrom || undefined}
-                  onChange={e => setCustomTo(e.target.value)}
+                  max={today}
+                  onChange={e => {
+                    setCustomTo(e.target.value);
+                    setError('');
+                  }}
                   required
                 />
               </label>
             </div>
             <div className="drawer-actions">
-              <button type="submit" className="button primary sm" disabled={customRangeInvalid || loading}>
+              <button type="submit" className="button primary sm" disabled={customRangeInvalid || customRangeIncomplete || loading}>
                 Aplicar rango
               </button>
               {customRangeInvalid && (
@@ -424,12 +497,18 @@ export default function AnalyticsView({
           </form>
         )}
 
+        {error && data && (
+          <div className="form-error-banner" role="alert">
+            No se pudo actualizar el filtro: {error}. Se conservan los últimos datos cargados.
+          </div>
+        )}
+
         {/* Coverage Context Ribbon */}
         <div className="analytics-ribbon analytics-coverage-banner">
           <div className="ribbon-left coverage-info">
             <ShieldCheck size={16} className="text-emerald" />
             <span className="ribbon-text coverage-text">
-              <strong>{data.period.label}:</strong> {formatDate(data.period.from)} al {formatDate(data.period.to)}.
+              <strong>{data.period.label}:</strong> {formatAnalyticsDate(data.period.from)} al {formatAnalyticsDate(data.period.to)}.
               {data.coverage.earliestEventAt
                 ? ` Registro tracking activo desde ${formatDate(data.coverage.earliestEventAt)}.`
                 : ' Tracking de interacciones en vivo.'}
@@ -537,8 +616,32 @@ export default function AnalyticsView({
           <div className="stat-bottom-bar bg-rose" />
         </article>
 
-        {/* Card 4: Contactos Sin Menú */}
-        <article className="stat-card modern-kpi">
+        {/* Card 4: Contactos Sin Menú — clickable, navigates to Conversaciones with real filter */}
+        <article
+          className="stat-card modern-kpi stat-card-actionable"
+          role="button"
+          tabIndex={0}
+          aria-label={`Ver ${summary.contactsWithoutMenuCount} contactos sin menú en Conversaciones`}
+          onClick={() => {
+            onNavigate('inbox', {
+              analyticsNoMenuFilter: {
+                from: dateOnlyInArgentina(new Date(data.period.from)),
+                to: dateOnlyInArgentina(new Date(data.period.to)),
+              },
+            });
+          }}
+          onKeyDown={e => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              onNavigate('inbox', {
+                analyticsNoMenuFilter: {
+                  from: dateOnlyInArgentina(new Date(data.period.from)),
+                  to: dateOnlyInArgentina(new Date(data.period.to)),
+                },
+              });
+            }
+          }}
+        >
           <div className="stat-header">
             <div className="stat-label-wrap">
               <span className="stat-category">Comportamiento</span>
@@ -562,6 +665,9 @@ export default function AnalyticsView({
                 {summary.contactsWithoutMenuCount - summary.contactsWithoutBotResponseCount} atendidos
               </span>
             </div>
+          </div>
+          <div className="stat-action-hint">
+            <ArrowRight size={13} /> Ver en Conversaciones
           </div>
           <div className="stat-bottom-bar bg-amber" />
         </article>
@@ -663,10 +769,55 @@ export default function AnalyticsView({
             </div>
           </div>
 
-          <div className="section-header-controls">
+          <div className="section-header-controls chart-date-filter-controls">
             <span className="section-counter">
-              {data.trend.length} {data.trend.length === 1 ? 'día con actividad' : 'días con actividad'}
+              {displayTrend.length} {displayTrend.length === 1 ? 'día con actividad' : 'días con actividad'}
             </span>
+            <div className="chart-date-filter" role="group" aria-label="Filtrar rango del gráfico">
+              <label className="chart-date-input-wrap" aria-label="Desde">
+                <Calendar size={11} />
+                <input
+                  type="date"
+                  className="chart-date-input"
+                  value={chartFrom}
+                  max={chartTo || today}
+                  placeholder="Desde"
+                  aria-label="Desde"
+                  onChange={e => {
+                    setChartFrom(e.target.value);
+                    setChartFromError('');
+                  }}
+                />
+              </label>
+              <span className="chart-date-sep">→</span>
+              <label className="chart-date-input-wrap" aria-label="Hasta">
+                <Calendar size={11} />
+                <input
+                  type="date"
+                  className="chart-date-input"
+                  value={chartTo}
+                  min={chartFrom || undefined}
+                  max={today}
+                  placeholder="Hasta"
+                  aria-label="Hasta"
+                  onChange={e => setChartTo(e.target.value)}
+                />
+              </label>
+              {(chartFrom || chartTo) && (
+                <button
+                  type="button"
+                  className="chart-date-clear"
+                  onClick={() => { setChartFrom(''); setChartTo(''); setChartFromError(''); }}
+                  aria-label="Quitar filtro de fechas del gráfico"
+                  title="Quitar filtro"
+                >
+                  <X size={12} />
+                </button>
+              )}
+            </div>
+            {chartRangeInvalid && (
+              <span className="range-error-text" role="alert">«Desde» debe ser ≤ «Hasta»</span>
+            )}
           </div>
         </div>
 
@@ -678,6 +829,7 @@ export default function AnalyticsView({
             <button
               type="button"
               className={`series-toggle-chip ${seriesVisibility.incomingMessages ? 'active' : ''}`}
+              aria-pressed={seriesVisibility.incomingMessages}
               style={{ borderColor: '#0ea5e9' }}
               onClick={() => toggleSeries('incomingMessages')}
             >
@@ -687,6 +839,7 @@ export default function AnalyticsView({
             <button
               type="button"
               className={`series-toggle-chip ${seriesVisibility.optionsRecognized ? 'active' : ''}`}
+              aria-pressed={seriesVisibility.optionsRecognized}
               style={{ borderColor: '#10b981' }}
               onClick={() => toggleSeries('optionsRecognized')}
             >
@@ -696,6 +849,7 @@ export default function AnalyticsView({
             <button
               type="button"
               className={`series-toggle-chip ${seriesVisibility.menuRequested ? 'active' : ''}`}
+              aria-pressed={seriesVisibility.menuRequested}
               style={{ borderColor: '#6366f1' }}
               onClick={() => toggleSeries('menuRequested')}
             >
@@ -705,6 +859,7 @@ export default function AnalyticsView({
             <button
               type="button"
               className={`series-toggle-chip ${seriesVisibility.unrecognized ? 'active' : ''}`}
+              aria-pressed={seriesVisibility.unrecognized}
               style={{ borderColor: '#f43f5e' }}
               onClick={() => toggleSeries('unrecognized')}
             >
@@ -714,6 +869,7 @@ export default function AnalyticsView({
             <button
               type="button"
               className={`series-toggle-chip ${seriesVisibility.uniqueContacts ? 'active' : ''}`}
+              aria-pressed={seriesVisibility.uniqueContacts}
               style={{ borderColor: '#f59e0b' }}
               onClick={() => toggleSeries('uniqueContacts')}
             >
@@ -725,7 +881,7 @@ export default function AnalyticsView({
           {data.trend.length > 0 && (
             <div className="recharts-responsive-box">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={data.trend} margin={{ top: 15, right: 20, left: -10, bottom: 0 }}>
+                <AreaChart data={displayTrend} margin={{ top: 15, right: 20, left: -10, bottom: 0 }}>
                   <defs>
                     <linearGradient id="colorIncoming" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.35} />
@@ -851,7 +1007,7 @@ export default function AnalyticsView({
                 </tr>
               </thead>
               <tbody>
-                {data.trend.map(t => (
+                {displayTrend.map(t => (
                   <tr key={t.date} className="trend-row interactive-row">
                     <td>
                       <div className="cell-primary">
@@ -879,6 +1035,103 @@ export default function AnalyticsView({
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+      </section>
+
+      {/* ─────────────────────────────────────────────────────────────
+          4b. CONTACTOS NUEVOS Y RECURRENTES POR DÍA
+          ───────────────────────────────────────────────────────────── */}
+      <section className="analytics-section-card chart-card" aria-label="Contactos nuevos y recurrentes por día">
+        <div className="section-card-header">
+          <div className="section-title-wrap">
+            <div className="section-icon-badge bg-primary-subtle text-primary">
+              <UserPlus size={18} />
+            </div>
+            <div>
+              <h3>Contactos nuevos y recurrentes por día</h3>
+              <p>
+                <strong>Nuevos:</strong> escribieron por primera vez ese día. <strong>Recurrentes:</strong> ya habían escrito antes y volvieron a hacerlo ese día.
+              </p>
+            </div>
+          </div>
+          <div className="section-header-controls">
+            <div className="contact-activity-summary" aria-label="Resumen de contactos">
+              <span className="contact-activity-counter new"><i aria-hidden="true" />{(data.summary.totalNewContacts ?? 0).toLocaleString('es-AR')} nuevos</span>
+              <span className="contact-activity-counter returning"><i aria-hidden="true" />{(data.summary.totalReturningContacts ?? 0).toLocaleString('es-AR')} recurrentes</span>
+            </div>
+          </div>
+        </div>
+
+        {contactActivityByDay.length === 0 ? (
+          <div className="empty-chart-state" role="status">
+            <UserPlus size={28} className="empty-chart-icon" />
+            <p>No hay contactos nuevos ni recurrentes en este período.</p>
+          </div>
+        ) : (
+          <div className="recharts-responsive-box recharts-bar-box">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                data={contactActivityByDay}
+                margin={{ top: 28, right: 20, left: -10, bottom: 0 }}
+                barGap={5}
+              >
+                <defs>
+                  <linearGradient id="colorNewContacts" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.95} />
+                    <stop offset="95%" stopColor="#10b981" stopOpacity={0.55} />
+                  </linearGradient>
+                  <linearGradient id="colorReturningContacts" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#38bdf8" stopOpacity={0.95} />
+                    <stop offset="95%" stopColor="#38bdf8" stopOpacity={0.55} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--line)" opacity={0.6} />
+                <XAxis
+                  dataKey="date"
+                  tickFormatter={val => (val as string).slice(5)}
+                  stroke="var(--muted)"
+                  tick={{ fontSize: 10 }}
+                  tickLine={false}
+                  minTickGap={18}
+                  interval="preserveStartEnd"
+                />
+                <YAxis
+                  stroke="var(--muted)"
+                  tick={{ fontSize: 10 }}
+                  tickLine={false}
+                  axisLine={false}
+                  allowDecimals={false}
+                />
+                <Tooltip
+                  content={({ active, payload }) => {
+                    if (!active || !payload?.length) return null;
+                    const d = payload[0]?.payload as NewContactsByDayPoint & ReturningContactsByDayPoint;
+                    return (
+                      <div className="custom-tooltip">
+                        <p className="tooltip-date">{formatDateOnly(d.date)}</p>
+                        <div className="tooltip-row">
+                          <span className="tooltip-dot" style={{ background: '#10b981' }} />
+                          <span className="tooltip-label">Contactos nuevos</span>
+                          <strong className="tooltip-value">{d.newContacts.toLocaleString('es-AR')}</strong>
+                        </div>
+                        <div className="tooltip-row">
+                          <span className="tooltip-dot" style={{ background: '#38bdf8' }} />
+                          <span className="tooltip-label">Contactos recurrentes</span>
+                          <strong className="tooltip-value">{d.returningContacts.toLocaleString('es-AR')}</strong>
+                        </div>
+                      </div>
+                    );
+                  }}
+                />
+                <Bar dataKey="newContacts" name="Contactos nuevos" fill="url(#colorNewContacts)" radius={[3, 3, 0, 0]} maxBarSize={34}>
+                  <LabelList dataKey="newContacts" position="top" formatter={(value: unknown) => Number(value || 0) > 0 ? Number(value).toLocaleString('es-AR') : ''} fill="var(--text)" fontSize={11} fontWeight={700} />
+                </Bar>
+                <Bar dataKey="returningContacts" name="Contactos recurrentes" fill="url(#colorReturningContacts)" radius={[3, 3, 0, 0]} maxBarSize={34}>
+                  <LabelList dataKey="returningContacts" position="top" formatter={(value: unknown) => Number(value || 0) > 0 ? Number(value).toLocaleString('es-AR') : ''} fill="var(--text)" fontSize={11} fontWeight={700} />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
           </div>
         )}
       </section>
@@ -1003,6 +1256,7 @@ export default function AnalyticsView({
             <button
               type="button"
               className={`tab-pill ${unrecognizedTab === 'patterns' ? 'active' : ''}`}
+              aria-pressed={unrecognizedTab === 'patterns'}
               onClick={() => setUnrecognizedTab('patterns')}
             >
               Patrones más frecuentes ({data.unrecognizedMessages.topPatterns.length})
@@ -1010,6 +1264,7 @@ export default function AnalyticsView({
             <button
               type="button"
               className={`tab-pill ${unrecognizedTab === 'recent' ? 'active' : ''}`}
+              aria-pressed={unrecognizedTab === 'recent'}
               onClick={() => setUnrecognizedTab('recent')}
             >
               Últimos mensajes ({data.unrecognizedMessages.items.length})
@@ -1212,6 +1467,7 @@ export default function AnalyticsView({
             <button
               type="button"
               className={`tab-pill ${contactResponseFilter === 'all' ? 'active' : ''}`}
+              aria-pressed={contactResponseFilter === 'all'}
               onClick={() => {
                 setContactResponseFilter('all');
                 setContactsWithoutMenuPage(0);
@@ -1222,6 +1478,7 @@ export default function AnalyticsView({
             <button
               type="button"
               className={`tab-pill ${contactResponseFilter === 'unanswered' ? 'active' : ''}`}
+              aria-pressed={contactResponseFilter === 'unanswered'}
               onClick={() => {
                 setContactResponseFilter('unanswered');
                 setContactsWithoutMenuPage(0);

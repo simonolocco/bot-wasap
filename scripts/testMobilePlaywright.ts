@@ -1,327 +1,294 @@
-import assert from 'node:assert/strict';
-import http from 'node:http';
-import fs from 'node:fs';
-import path from 'node:path';
-import { chromium } from '@playwright/test';
+import { chromium } from 'playwright';
+import * as http from 'http';
+import * as path from 'path';
+import * as fs from 'fs';
+import * as assert from 'assert';
 
-const root = process.cwd();
-const adminDir = path.join(root, 'public', 'admin');
+async function startServer(): Promise<http.Server> {
+  return new Promise((resolve) => {
+    let allRead = false;
+    const server = http.createServer((req, res) => {
+      const url = new URL(req.url || '', `http://${req.headers.host}`);
+      const pathname = url.pathname;
+      console.log('REQ:', req.method, req.url);
+
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+      if (req.method === 'OPTIONS') { res.writeHead(200); return res.end(); }
+
+      const sendJson = (data: any) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(data)); };
+
+      if (pathname === '/api/auth/me') { allRead = false; return sendJson({ user: 'qa-admin' }); }
+      if (pathname === '/sw.js') { res.writeHead(200, { 'Content-Type': 'application/javascript' }); return res.end('self.addEventListener("install", () => {});'); }
+      if (pathname.startsWith('/api/stream') || pathname.match(/^\/api\/conversations\/[^\/]+\/stream$/)) { res.writeHead(200, { 'Content-Type': 'text/event-stream' }); return; }
+
+      if (pathname === '/api/dashboard') return sendJson({ work: { unread: 0, overdueFollowUps: 0, newOrders: 0, openTickets: 0 }, stats: { total: 0 }, transport: 'mock', cloudReady: true, worker: { healthy: true } });
+      if (pathname === '/api/dashboard/work') return sendJson({ unread: 0, overdueFollowUps: 0, newOrders: 0, openTickets: 0 });
+      if (pathname === '/api/analytics') return sendJson({
+        period: { label: 'Últimos 30 días', from: new Date().toISOString(), to: new Date().toISOString() },
+        coverage: { earliestEventAt: null, totalEventsTracked: 0 },
+        summary: { totalNewContacts: 0, unrecognizedCount: 0, contactsWithoutMenuCount: 0, contactsWithoutBotResponseCount: 0, totalUniqueContacts: 0, totalIncomingMessages: 0, totalMenuOptionsRecognized: 0, totalMenuInteractions: 0, totalUnrecognizedMessages: 0, totalOrdersStarted: 0, totalOrdersSubmitted: 0, totalAdvisorRequests: 0 },
+        trend: [],
+        newContactsByDay: [],
+        menuOptions: [],
+        unrecognizedMessages: { uniqueContacts: 0, topPatterns: [], items: [] },
+        contactsWithoutMenu: { items: [], total: 0 }
+      });
+      if (pathname === '/api/conversations/stats') return sendJson({
+        totalConversations: 2,
+        unreadConversations: allRead ? 0 : 2,
+        unreadMessages: allRead ? 0 : 3,
+        totalMessages: 7,
+        openTickets: 1,
+      });
+      if (pathname === '/api/conversations/read-all' && req.method === 'POST') {
+        allRead = true;
+        return sendJson({
+          contactsUpdated: 2,
+          messagesMarkedRead: 3,
+          stats: { totalConversations: 2, unreadConversations: 0, unreadMessages: 0, totalMessages: 7, openTickets: 1 },
+        });
+      }
+      if (pathname === '/api/orders') return sendJson({ items: [], total: 0 });
+      if (pathname === '/api/contacts') return sendJson({ items: [], total: 0 });
+      if (pathname === '/api/templates') return sendJson({ items: [] });
+      if (pathname === '/api/tickets') return sendJson({ items: [{ id: 'tick-mob-1', contactId: 'conv-mob-1', ticketType: 'question', status: 'open', openedAt: new Date().toISOString(), openedBy: 'user', createdAt: new Date().toISOString(), contactName: 'Cliente' }], total: 1 });
+      if (pathname === '/api/conversations') {
+        const cursor = url.searchParams.get('cursor');
+        if (cursor === 'page-2') return sendJson({
+          items: [{ id: 'conv-mob-2', phone: '5491109876543', name: 'Segundo cliente', pipelineStatus: 'new', lastMessageAt: new Date(Date.now() - 1000).toISOString(), lastIncomingAt: new Date(Date.now() - 1000).toISOString(), unreadCount: allRead ? 0 : 2, botPaused: false, labels: [] }],
+          nextCursor: null,
+        });
+        return sendJson({
+          items: [{ id: 'conv-mob-1', phone: '5491101234567', name: 'Cliente', pipelineStatus: 'new', lastMessageAt: new Date().toISOString(), lastIncomingAt: new Date().toISOString(), unreadCount: allRead ? 0 : 1, ticketStatus: 'open', botPaused: false, labels: [] }],
+          nextCursor: 'page-2',
+        });
+      }
+      if (pathname.match(/^\/api\/conversations\/[^\/]+$/)) return sendJson({ contact: { id: 'conv-mob-1', phone: '54911', name: 'Cliente', pipelineStatus: 'new', botPaused: false, labels: [], fields: {}, lastMessageAt: new Date().toISOString(), lastIncomingAt: new Date().toISOString() }, openTicket: { id: 'tick-mob-1', contactId: 'conv-mob-1', ticketType: 'question', status: 'open', openedAt: new Date().toISOString(), openedBy: 'user', createdAt: new Date().toISOString() }, tickets: [] });
+      if (pathname.match(/^\/api\/conversations\/[^\/]+\/read/)) return sendJson({ unreadCount: 0 });
+      if (pathname.match(/^\/api\/tickets\/[^\/]+\/close$/)) return sendJson({ success: true });
+
+      if (pathname.match(/^\/api\/conversations\/[^\/]+\/messages/)) {
+        if (req.method === 'GET') {
+          if (url.searchParams.get('before') === 'older-page') return sendJson({
+            items: [{ id: 'msg-old', contactId: 'conv-mob-1', direction: 'incoming', body: 'Mensaje anterior cargado automáticamente', messageType: 'text', createdAt: new Date(Date.now() - 86_400_000).toISOString(), deliveryStatus: 'delivered' }],
+            nextBefore: null,
+          });
+          return sendJson({ items: [
+            { id: 'msg-1', contactId: 'conv-mob-1', direction: 'incoming', body: 'Mensaje', createdAt: new Date().toISOString(), deliveryStatus: 'delivered' },
+            { id: 'msg-reaction', contactId: 'conv-mob-1', direction: 'incoming', body: '[Mensaje reaction recibido]', messageType: 'reaction', createdAt: new Date().toISOString(), deliveryStatus: 'delivered' },
+            { id: 'msg-sticker', contactId: 'conv-mob-1', direction: 'incoming', body: '', messageType: 'sticker', mediaId: 'stk-1', mediaStatus: 'ready', createdAt: new Date().toISOString(), deliveryStatus: 'delivered' },
+            { id: 'msg-video', contactId: 'conv-mob-1', direction: 'incoming', body: '', messageType: 'video', mediaId: 'vid-1', mediaStatus: 'ready', createdAt: new Date().toISOString(), deliveryStatus: 'delivered' },
+            { id: 'msg-audio-pending', contactId: 'conv-mob-1', direction: 'incoming', body: '', messageType: 'audio', mediaId: 'aud-1', mediaStatus: 'pending', createdAt: new Date().toISOString(), deliveryStatus: 'delivered' },
+            { id: 'msg-document-failed', contactId: 'conv-mob-1', direction: 'incoming', body: '', messageType: 'document', mediaId: 'doc-1', mediaStatus: 'failed', createdAt: new Date().toISOString(), deliveryStatus: 'delivered' }
+          ], nextBefore: 'older-page' });
+        }
+        if (req.method === 'POST') {
+          let body = '';
+          req.on('data', chunk => body += chunk.toString());
+          req.on('end', () => {
+            let data; try { data = JSON.parse(body); } catch { data = {}; }
+            sendJson({ id: 'msg-new', contactId: 'conv-mob-1', direction: 'outgoing', body: data.body, createdAt: new Date().toISOString(), deliveryStatus: 'sent' });
+          });
+          return;
+        }
+      }
+
+      if (pathname.match(/^\/api\/media\//)) {
+        res.writeHead(200, { 'Content-Type': 'image/png' });
+        return res.end();
+      }
+
+      const filePath = path.join(process.cwd(), 'public', 'admin', pathname === '/' ? 'index.html' : pathname);
+      fs.stat(filePath, (err, stats) => {
+        if (err || !stats.isFile()) {
+          const fallbackPath = path.join(process.cwd(), 'public', 'admin', 'index.html');
+          fs.readFile(fallbackPath, (fallbackErr, data) => {
+            if (fallbackErr) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end('Not found'); }
+            res.writeHead(200, { 'Content-Type': 'text/html' }); res.end(data);
+          });
+          return;
+        }
+        const ext = path.extname(filePath);
+        const mimeTypes: Record<string, string> = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' };
+        res.writeHead(200, { 'Content-Type': mimeTypes[ext] || 'application/octet-stream' });
+        fs.createReadStream(filePath).pipe(res);
+      });
+    });
+    server.listen(0, '127.0.0.1', () => resolve(server));
+  });
+}
 
 async function run() {
-  let sentMessageBody = '';
-  const server = http.createServer((req, res) => {
-    const url = new URL(req.url || '/', 'http://127.0.0.1');
-    const pathname = url.pathname;
+  const server = await startServer();
+  const address = server.address();
+  const port = typeof address === 'string' ? 0 : address?.port;
+  if (!port) throw new Error('Servidor no inicio puerto');
 
-    if (pathname === '/' || pathname === '/index.html') {
-      const html = fs.readFileSync(path.join(adminDir, 'index.html'), 'utf8');
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=ut-8' });
-      return res.end(html);
-    }
-
-    if (pathname.startsWith('/assets/')) {
-      const filePath = path.join(adminDir, pathname);
-      if (fs.existsSync(filePath)) {
-        const ext = path.extname(filePath);
-        const contentType = ext === '.js' ? 'application/javascript' : ext === '.css' ? 'text/css' : 'application/octet-stream';
-        res.writeHead(200, { 'Content-Type': contentType });
-        return res.end(fs.readFileSync(filePath));
-      }
-    }
-
-    if (pathname === '/sw.js') {
-      res.writeHead(200, { 'Content-Type': 'application/javascript' });
-      return res.end('// mock sw');
-    }
-
-    if (pathname === '/api/auth/me') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ user: 'qa-admin' }));
-    }
-
-    if (pathname === '/api/conversations' && req.method === 'GET') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({
-        items: [
-          {
-            id: 'conv-mob-1',
-            phone : '5491101234567',
-            name: 'Cliente Mobile Fixture',
-            publicName: 'Cliente Mobile Fixture',
-            lastMessage: 'Hola, consulta de prueba mobile',
-            lastDirection: 'incoming',
-            lastMessageAt: new Date().toISOString(),
-            unreadCount: 1,
-            pipelineStatus: 'new',
-            ticketStatus: null,
-            botPaused: false,
-            labels: ['VIP'],
-          },
-        ],
-        cursor: null,
-      }));
-    }
-
-    if (pathname === '/api/conversations/conv-mob-1/read') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ id: 'conv-mob-1', unreadCount: 0 }));
-    }
-
-    if (pathname === '/api/conversations/conv-mob-1' && req.method === 'GET') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({
-        contact: {
-          id: 'conv-mob-1',
-          phone: '5491101234567',
-          name: 'Cliente Mobile Fixture',
-          publicName: 'Cliente Mobile Fixture',
-          lastIncomingAt: new Date().toISOString(),
-          pipelineStatus: 'new',
-          consentStatus: 'opted_in',
-          botPaused: false,
-          labels: ['VIP'],
-          notes: 'Cliente de prueba para viewport mobile',
-        },
-        openTicket: null,
-        tickets: [],
-        messageCount: 1,
-        lastOrder: null,
-      }));
-    }
-
-    if (pathname === '/api/conversations/conv-mob-1/messages' && req.method === 'GET') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({
-        items: [
-          {
-            id: 'msg-mob-1',
-            contactId: 'conv-mob-1',
-            direction: 'incoming',
-            body: 'Hola, consulta de prueba mobile',
-            messageType: 'text',
-            deliveryStatus: 'delivered',
-            createdAt: new Date().toISOString(),
-          },
-          {
-            id: 'msg-mob-sticker',
-            contactId: 'conv-mob-1',
-            direction: 'incoming',
-            body: '[Mensaje sticker recibido]',
-            messageType: 'sticker',
-            deliveryStatus: 'delivered',
-            mediaAssetId: 'asset-sticker-1',
-            mediaStatus: 'ready',
-            mediaMimeType: 'image/webp',
-            mediaFilename: 'saludo.webp',
-            mediaCaption: 'Sticker de saludo',
-            createdAt: new Date().toISOString(),
-          },
-          {
-            id: 'msg-mob-video',
-            contactId: 'conv-mob-1',
-            direction: 'incoming',
-            body: '[Mensaje video recibido]',
-            messageType: 'video',
-            deliveryStatus: 'delivered',
-            mediaAssetId: 'asset-video-1',
-            mediaStatus: 'ready',
-            mediaMimeType: 'video/mp4',
-            mediaFilename: 'consulta.mp4',
-            mediaCaption: 'Video de referencia',
-            createdAt: new Date().toISOString(),
-          },
-        ],
-        nextBefore: null,
-      }));
-    }
-
-    if (pathname === '/api/messages/msg-mob-sticker/media/thumbnail') {
-      res.writeHead(200, { 'Content-Type': 'image/svg+xml' });
-      return res.end('<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160"><rect width="160" height="160" rx="24" fill="#73d7bd"/><text x="80" y="92" text-anchor="middle" font-size="22">sticker</text></svg>');
-    }
-
-    if (pathname === '/api/messages/msg-mob-sticker/media' || pathname === '/api/messages/msg-mob-sticker/media/download') {
-      res.writeHead(200, { 'Content-Type': 'image/webp' });
-      return res.end();
-    }
-
-    if (pathname === '/api/messages/msg-mob-video/media' || pathname === '/api/messages/msg-mob-video/media/download') {
-      res.writeHead(200, { 'Content-Type': 'video/mp4' });
-      return res.end();
-    }
-
-    if (pathname === '/api/conversations/conv-mob-1/messages' && req.method === 'POST') {
-      let body = '';
-      req.on('data', chunk => { body += chunk; });
-      req.on('end', () => {
-        const parsed = JSON.parse(body || '{}');
-        sentMessageBody = parsed.body || '';
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          id: 'msg-mob-out-1',
-          contactId: 'conv-mob-1',
-          direction: 'outgoing',
-          body: sentMessageBody,
-          messageType: 'text',
-          deliveryStatus: 'sent',
-          createdAt: new Date().toISOString(),
-        }));
-      });
-      return;
-    }
-
-    if (pathname === '/api/conversations/events') {
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-      });
-      res.write(': keepalive\n\n');
-      return;
-    }
-
-    res.writeHead(404, { 'Content-Type': 'text/plain' });
-    res.end('Not found');
-  });
-
-  const port = await new Promise((resolve) => {
-    server.listen(0, '127.0.0.1', () => {
-      const addr = server.address();
-      resolve(typeof addr === 'object' && addr ? addr.port : 4002);
-    });
-  });
-
-  const baseUrl = `http://127.0.0.1:${port}`;
   const browser = await chromium.launch({ headless: true });
 
   try {
-    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
-    page.on('console', msg => console.log('BROWSER LOG:', msg.text()));
-    page.on('pageerror', err => console.error('BROWSER ERR:', err));
+    const viewports = [
+      { width: 320, height: 568 },
+      { width: 360, height: 800 },
+      { width: 390, height: 844 },
+      { width: 1280, height: 720 },
+    ];
 
-    await page.goto(baseUrl);
+    for (const viewport of viewports) {
+      console.log(`\nProbando viewport: ${viewport.width}x${viewport.height}`);
+      const isMobile = viewport.width < 768;
 
-    // 1. Verificar carga inicial de la lista
-    await page.waitForSelector('.conversation-pane', { state: 'visible' });
-    const chatInitialCount = await page.locator('.chat').count();
-    assert.equal(chatInitialCount, 0, 'en mobile inicial el panel de chat debe estar cerrado');
+      for (const scheme of ['dark', 'light']) {
+        const context = await browser.newContext({
+          viewport, colorScheme: scheme as "dark" | "light",
+          userAgent: isMobile ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1' : undefined,
+          isMobile, hasTouch: isMobile
+        });
+        const page = await context.newPage();
+        page.on('console', msg => { if (msg.type() === 'error') throw new Error(`[${scheme.toUpperCase()} ERROR] ${msg.text()}`); });
+        page.on('pageerror', err => { throw new Error(`[${scheme.toUpperCase()} PAGE ERROR] ${err}`); });
+        page.on('response', resp => { if (resp.status() >= 400) throw new Error(`HTTP ERR (${scheme}): ${resp.status()} ${resp.url()}`); });
 
-    // 2. Verificar que existe la conversación y seleccionarla
-    const convRow = page.locator('.conv-row').first();
-    await convRow.waitFor({ state: 'visible' });
-    const rowText = (await convRow.textContent()) || '';
-    assert.match(rowText, /Cliente Mobile Fixture/);
+        await page.goto(`http://127.0.0.1:${port}/`);
+        await page.waitForSelector('.sidebar-nav .sidebar-link');
 
-    await convRow.click();
+        if (scheme === 'dark') {
+          await context.close();
+          continue; // Minimal load test for dark mode
+        }
 
-    // 3. En mobile: al abrir chat, la lista se oculta y el chat se muestra
-    await page.waitForFunction(() => document.body.classList.contains('mobile-chat-open'));
-    const isPaneHidden = await page.locator('.conversation-pane').evaluate((el) => {
-      const style = window.getComputedStyle(el);
-      return style.display === 'none';
-    });
-    assert.equal(isPaneHidden, true, 'la lista de conversaciones debe ocultarse al abrir chat en mobile');
+        // Tests continue for light mode
+        await page.waitForFunction(() => document.querySelectorAll('.conv-row').length === 2);
+        assert.equal(await page.locator('.conv-row').count(), 2, 'debe cargar automáticamente todas las páginas de conversaciones');
+        assert.equal(await page.locator('.load-more').count(), 0, 'no debe depender de Cargar más conversaciones');
+        assert.ok(await page.getByText('Mensajes totales', { exact: true }).count() > 0, 'debe mostrar mensajes totales');
+        assert.ok(await page.getByText('Tickets abiertos', { exact: true }).count() > 0, 'debe mostrar tickets abiertos');
+        const markAllRead = page.getByRole('button', { name: 'Marcar todo como leído' });
+        await markAllRead.click();
+        await page.waitForFunction(() => document.querySelectorAll('.unread-badge').length === 0);
+        assert.ok(await markAllRead.isDisabled(), 'marcar todo debe quedar deshabilitado cuando no quedan mensajes sin leer');
 
-    const isChatVisible = await page.locator('.chat').evaluate((el) => {
-      const htmlEl = el as HTMLElement;
-      const style = window.getComputedStyle(el);
-      return style.display === 'flex' && htmlEl.offsetWidth > 0 && htmlEl.offsetHeight > 0;
-    });
-    assert.equal(isChatVisible, true, 'el panel de chat debe ser visible en mobile');
+        const ticketsNavBtn = page.locator('.sidebar-nav .sidebar-link').filter({ hasText: 'Tickets' });
+        await ticketsNavBtn.click();
+        await page.waitForSelector('.interactive-row');
+        const ticketRow = page.locator('.interactive-row').first();
 
-    // 4. Verificar cabecera e historial de mensajes
-    await page.waitForSelector('.chat-head');
-    await page.waitForSelector('.messages');
-    await page.waitForSelector('.message-bubble');
-    const msgText = (await page.locator('.message-text').allTextContents()).join('\n');
-    assert.match(msgText, /Hola, consulta de prueba mobile/);
-    assert.match(msgText, /Sticker de saludo/);
-    assert.match(msgText, /Video de referencia/);
-    assert.equal(await page.locator('.image-label').filter({ hasText: 'Ver sticker' }).count(), 1, 'el sticker debe renderizarse como imagen');
-    assert.equal(await page.locator('video[controls]').count(), 1, 'el video debe renderizarse con controles');
+        const atenderBtn = ticketRow.locator('button').filter({ hasText: 'Atender' }).first();
+        await atenderBtn.waitFor({ state: 'visible' });
+        await atenderBtn.click();
 
-    // 5. Verificar compositor y envio manual
-    const textarea = page.locator('.composer-input textarea');
-    await textarea.waitFor({ state: 'visible' });
-    assert.equal(await textarea.isEnabled(), true, 'el textarea del compositor debe estar habilitado');
+        const textarea = page.locator('.composer-input textarea');
+        await textarea.waitFor({ state: 'visible' });
+        await page.getByText('Mensaje anterior cargado automáticamente', { exact: true }).waitFor({ state: 'attached' });
 
-    const sendBtn = page.locator('.send-btn');
-    await sendBtn.waitFor({ state: 'visible' });
-    assert.equal(await sendBtn.isDisabled(), true, 'el boton de envio debe estar deshabilitado cuando el textarea esta vacio');
+        const composerBox = await page.locator('.composer').boundingBox();
+        const textareaBox = await textarea.boundingBox();
+        assert.ok(composerBox && composerBox.y + composerBox.height <= viewport.height + 1, 'composer overflow');
+        assert.ok(textareaBox && textareaBox.y + textareaBox.height <= viewport.height + 1, 'textarea overflow');
 
-    await textarea.fill('Respuesta manual verificada Playwright');
-    assert.equal(await sendBtn.isEnabled(), true, 'el boton de envio debe habilitarse al escribir');
+        await textarea.fill('Mock reply');
+        await page.locator('.send-btn').first().click();
+        await page.waitForFunction(() => {
+          const el = document.querySelector('.composer-input textarea') as HTMLTextAreaElement;
+          return el && el.value === '';
+        });
+        assert.equal(await textarea.inputValue(), '');
 
-    await sendBtn.click();
-    await page.waitForFunction(
-      () => {
-        const el = document.querySelector('.composer-input textarea') as HTMLTextAreaElement | null;
-        return el !== null && el.value === '';
-      },
-      { timeout: 10000 }
-    );
-    assert.equal(sentMessageBody, 'Respuesta manual verificada Playwright', 'el mensaje debe enviarse correctamente');
-    assert.equal(await textarea.inputValue(), '', 'el textarea debe limpiarse tras el envio');
+        // Assert sticker/video rendering
+        const stickerImg = page.locator('.message-bubble img').first();
+        await stickerImg.waitFor({ state: 'visible' });
+        const videoElem = page.locator('.message-bubble video').first();
+        await videoElem.waitFor({ state: 'visible' });
+        assert.ok(await videoElem.getAttribute('controls') !== null, 'video needs controls');
+        assert.ok(await page.getByText('Reacción recibida', { exact: true }).count() > 0, 'Las reacciones históricas no deben quedar como burbujas vacías');
+        assert.ok(await page.getByText('Preparando audio…', { exact: true }).count() > 0, 'El audio pendiente debe mostrar su estado');
+        assert.ok(await page.getByText('No se pudo preparar este archivo.', { exact: true }).count() > 0, 'El archivo fallido debe mostrar su estado');
 
-    // 6. Verificar boton volver y ausencia de overflow horizontal
-    const backBtn = page.locator('.mobile-back');
-    await backBtn.waitFor({ state: 'visible' });
-    const backBtnDisplay = await backBtn.evaluate((el) => window.getComputedStyle(el).display);
-    assert.match(backBtnDisplay, /inline-flex|flex/, 'el boton volver debe ser visible en mobile');
+        const msgBubble = page.locator('.message-bubble').first();
+        if (isMobile) {
+          console.log('mobile click 1');
+          const trigger = page.locator('.message-actions-trigger').first();
+          await trigger.waitFor({ state: 'attached' });
+          await trigger.click({ force: true });
+        } else {
+          console.log('desktop hover 1');
+          await msgBubble.hover();
+        }
 
-    const overflowWithChat = await page.evaluate(() => ({
-      documentWidth: document.documentElement.scrollWidth,
-      viewportWidth: document.documentElement.clientWidth,
-    }));
-    assert.ok(
-      overflowWithChat.documentWidth <= overflowWithChat.viewportWidth + 1,
-      `overflow horizontal detectado con chat abierto: doc ${overflowWithChat.documentWidth} > view ${overflowWithChat.viewportWidth}`
-    );
+        console.log('replyAction wait');
+        const replyAction = msgBubble.locator('.message-actions button').filter({ hasText: 'Responder' }).first();
+        await replyAction.evaluate(node => (node as HTMLButtonElement).click());
+        console.log('replyBar wait');
+        const replyBar = page.locator('.reply-bar');
+        await replyBar.waitFor({ state: 'visible' });
+        await page.locator('.reply-bar__dismiss').click();
 
-    // 7. Volver a la lista
-    await backBtn.click();
-    const hasClassAfterBack = await page.locator('body').evaluate((el) => el.classList.contains('mobile-chat-open'));
-    assert.equal(hasClassAfterBack, false, 'body no debe tener mobile-chat-open tras presionar volver');
+        console.log('mediaMsg wait');
+        const mediaMsg = page.locator('.message-bubble[data-message-id="msg-sticker"]');
+        if (isMobile) {
+          console.log('mobile click 2');
+          const trigger2 = mediaMsg.locator('.message-actions-trigger');
+          await trigger2.waitFor({ state: 'attached' });
+          await trigger2.click({ force: true });
+        } else {
+          await mediaMsg.hover();
+        }
+        console.log('downloadAction wait');
+        const downloadAction = mediaMsg.locator('.message-actions a').filter({ hasText: 'Descargar' }).first();
+        await downloadAction.waitFor({ state: 'visible' });
 
-    const isPaneVisibleAgain = await page.locator('.conversation-pane').evaluate((el) => {
-      const htmlEl = el as HTMLElement;
-      const style = window.getComputedStyle(el);
-      return style.display === 'flex' && htmlEl.offsetWidth > 0;
-    });
-    assert.equal(isPaneVisibleAgain, true, 'la lista debe volver a ser visible tras presionar volver');
+        console.log('finalizeBtn wait');
+        console.log('finalizeBtn click');
+        const finalizeBtn = page.locator('button').filter({ hasText: 'Finalizar consulta' }).first();
+        await finalizeBtn.click();
 
-    const isChatHiddenAgain = await page.locator('.chat').evaluate((el) => {
-      const style = window.getComputedStyle(el);
-      return style.display === 'none';
-    });
-    assert.equal(isChatHiddenAgain, true, 'el chat debe ocultarse al volver a la lista');
+        console.log('modalSheet wait');
+        const modalSheet = page.locator('.close-modal-sheet');
+        await modalSheet.waitFor({ state: 'visible' });
 
-    const overflowWithList = await page.evaluate(() => ({
-      documentWidth: document.documentElement.scrollWidth,
-      viewportWidth: document.documentElement.clientWidth,
-    }));
-    assert.ok(
-      overflowWithList.documentWidth <= overflowWithList.viewportWidth + 1,
-      `overflow horizontal detectado con lista: doc ${overflowWithList.documentWidth} > view ${overflowWithList.viewportWidth}`
-    );
+        assert.equal(await modalSheet.getAttribute('role'), 'dialog');
+        assert.equal(await modalSheet.getAttribute('aria-modal'), 'true');
+        const modalBox = await modalSheet.boundingBox();
+        assert.ok(modalBox && modalBox.width <= viewport.width + 1, 'modal overflow');
 
-    // 8. Verificar Desktop
-    await page.setViewportSize({ width: 1280, height: 720 });
-    const desktopPane = await page.locator('.conversation-pane').evaluate((el) => window.getComputedStyle(el).display);
-    assert.match(desktopPane, /flex|block/, 'en desktop la lista debe estar visible');
+        const backdrop = page.locator('.modal-backdrop');
+        assert.ok(await backdrop.getAttribute('aria-hidden') !== 'true', 'backdrop must not have aria-hidden true');
 
-    await convRow.click();
-    const desktopChat = await page.locator('.chat').evaluate((el) => {
-      const htmlEl = el as HTMLElement;
-      const style = window.getComputedStyle(el);
-      return style.display !== 'none' && htmlEl.offsetWidth > 0;
-    });
-    assert.equal(desktopChat, true, 'en desktop el chat debe estar visible');
+        console.log('cancelBtn click');
+        await page.locator('.modal-actions button').filter({ hasText: 'Cancelar' }).click();
+        await modalSheet.waitFor({ state: 'hidden' });
 
-    const desktopBack = await page.locator('.mobile-back').evaluate((el) => window.getComputedStyle(el).display);
-    assert.equal(desktopBack, 'none', 'en desktop el boton volver debe estar oculto');
+        console.log('backBtn click');
+        if (isMobile) {
+          const backBtn = page.locator('.mobile-back').first();
+          await backBtn.click();
+          await page.waitForFunction(() => !document.body.classList.contains('mobile-chat-open'));
+        }
+        console.log('routes loop');
 
-    console.log('mobile conversation Playwright E2E tests: OK');
+        const routes = [{ name: 'Resumen', expected: '.dashboard-hero' }, { name: 'Conversaciones', expected: '.inbox-shell' }, { name: 'Contactos', expected: '.data-page' }, { name: 'Pedidos', expected: '.data-page' }, { name: 'Plantillas', expected: '.data-page' }, { name: 'Analíticas', expected: '.analytics-section-card' }];
+        for (const route of routes) {
+          console.log('visiting route: ' + route.name);
+          const link = page.locator('.sidebar-nav .sidebar-link').filter({ hasText: route.name });
+          await link.click({ force: true });
+          try {
+            await page.waitForSelector(route.expected, { state: 'visible', timeout: 5000 });
+          } catch (e) {
+            console.log('Timeout waiting for', route.expected);
+            console.log(await page.evaluate(() => document.body.innerHTML));
+            throw e;
+          }
+          const scrollW = await page.evaluate(() => document.documentElement.scrollWidth);
+          assert.ok(scrollW <= viewport.width + 1, `Horizontal overflow in ${route.name}`);
+        }
+
+        await context.close();
+      }
+    }
+    console.log('Mobile tests: OK');
   } finally {
     await browser.close();
     await new Promise<void>((resolve) => server.close(() => resolve()));

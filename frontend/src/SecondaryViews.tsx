@@ -486,7 +486,7 @@ function Analytics({
   onNavigate,
 }: {
   onOpenContact: (id: string) => void;
-  onNavigate: (view: SecondaryView | 'inbox') => void;
+  onNavigate: (view: SecondaryView | 'inbox', options?: { analyticsNoMenuFilter?: { from: string; to: string } | null }) => void;
 }) {
   return <AnalyticsView onOpenContact={onOpenContact} onNavigate={onNavigate} />;
 }
@@ -1307,7 +1307,7 @@ export default function SecondaryViews({
   onOpenContact,
 }: {
   view: SecondaryView;
-  onNavigate: (view: SecondaryView | 'inbox') => void;
+  onNavigate: (view: SecondaryView | 'inbox', options?: { analyticsNoMenuFilter?: { from: string; to: string } | null }) => void;
   onOpenContact: (id: string) => void;
 }) {
   if (view === 'dashboard') return <Dashboard onNavigate={onNavigate} />;

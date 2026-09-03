@@ -57,20 +57,21 @@ const ticketColumnsQualified = `st.id, st.contact_id AS "contactId", st.status, 
 
 function normalizePhone(value: string) { return value.replace(/\D/g, ''); }
 
-export async function upsertContact(client: PoolClient, phoneInput: string, profileName?: string, options: { markIncoming?: boolean } = {}) {
+export async function upsertContact(client: PoolClient, phoneInput: string, profileName?: string, options: { markIncoming?: boolean; incomingAt?: Date } = {}) {
   const phone = normalizePhone(phoneInput);
   const markIncoming = options.markIncoming ?? true;
+  const incomingAt = options.incomingAt?.toISOString() ?? null;
   const result = await client.query<Contact>(`
-    INSERT INTO contacts (phone, country_code, name, last_message_at, last_incoming_at, unread_count)
-    VALUES ($1, CASE WHEN $1 LIKE '54%' THEN '54' ELSE '' END, COALESCE(NULLIF($2, ''), ''), CASE WHEN $3 THEN now() ELSE NULL END, CASE WHEN $3 THEN now() ELSE NULL END, CASE WHEN $3 THEN 1 ELSE 0 END)
+    INSERT INTO contacts (phone, country_code, name, first_seen_at, last_message_at, last_incoming_at, unread_count)
+    VALUES ($1, CASE WHEN $1 LIKE '54%' THEN '54' ELSE '' END, COALESCE(NULLIF($2, ''), ''), CASE WHEN $3 THEN COALESCE($4::timestamptz, now()) ELSE now() END, CASE WHEN $3 THEN COALESCE($4::timestamptz, now()) ELSE NULL END, CASE WHEN $3 THEN COALESCE($4::timestamptz, now()) ELSE NULL END, CASE WHEN $3 THEN 1 ELSE 0 END)
     ON CONFLICT (phone) DO UPDATE SET
       name = CASE WHEN contacts.name = '' AND EXCLUDED.name <> '' THEN EXCLUDED.name ELSE contacts.name END,
-      last_message_at = CASE WHEN $3 THEN now() ELSE contacts.last_message_at END,
-      last_incoming_at = CASE WHEN $3 THEN now() ELSE contacts.last_incoming_at END,
+      last_message_at = CASE WHEN $3 THEN COALESCE($4::timestamptz, now()) ELSE contacts.last_message_at END,
+      last_incoming_at = CASE WHEN $3 THEN COALESCE($4::timestamptz, now()) ELSE contacts.last_incoming_at END,
       unread_count = CASE WHEN $3 THEN contacts.unread_count + 1 ELSE contacts.unread_count END,
       updated_at = now()
     RETURNING ${contactColumns}`,
-    [phone, profileName?.trim() ?? '', markIncoming]);
+    [phone, profileName?.trim() ?? '', markIncoming, incomingAt]);
   return result.rows[0];
 }
 export async function createContact(phoneInput: string, name = '') {
@@ -118,7 +119,8 @@ export async function storeIncomingEvent(input: {
       INSERT INTO webhook_events (provider_message_id, source_timestamp, payload) VALUES ($1, $2, $3::jsonb)
       ON CONFLICT (provider_message_id) DO NOTHING RETURNING id`, [input.providerMessageId, input.sourceTimestamp ? new Date(input.sourceTimestamp).toISOString() : null, JSON.stringify(input.payload)]);
     if (!event.rows[0]) return { duplicate: true as const };
-    const contact = await upsertContact(client, input.phone, input.profileName);
+    const incomingAt = input.sourceTimestamp ? new Date(input.sourceTimestamp) : undefined;
+    const contact = await upsertContact(client, input.phone, input.profileName, { incomingAt });
     // Any new incoming message means the customer interacted again. Pending
     // advisor reminders for older messages must not be sent afterward.
     await client.query(`UPDATE advisor_followups
@@ -130,9 +132,9 @@ export async function storeIncomingEvent(input: {
     const quoted = input.quotedProviderMessageId
       ? await client.query<{ id: string }>('SELECT id FROM messages WHERE contact_id=$1 AND provider_message_id=$2 LIMIT 1', [contact.id, input.quotedProviderMessageId])
       : null;
-    const insertedMessage = await client.query<{ id: string }>(`INSERT INTO messages (contact_id, direction, body, message_type, provider_message_id, media_id, media_mime_type, media_filename, media_size, media_caption, media_status, quote_message_id, quoted_provider_message_id)
-      VALUES ($1, 'incoming', $2, $3, $4, $5, $6, $7, $8, $9, CASE WHEN $5::text IS NULL THEN NULL ELSE 'pending' END, $10, $11) RETURNING id`, [contact.id, input.body, input.messageType, input.providerMessageId,
-      input.media?.id ?? null, input.media?.mimeType ?? null, input.media?.filename ?? null, input.media?.size ?? null, input.media?.caption ?? null, quoted?.rows[0]?.id ?? null, input.quotedProviderMessageId ?? null]);
+    const insertedMessage = await client.query<{ id: string }>(`INSERT INTO messages (contact_id, direction, body, message_type, provider_message_id, media_id, media_mime_type, media_filename, media_size, media_caption, media_status, quote_message_id, quoted_provider_message_id, created_at)
+      VALUES ($1, 'incoming', $2, $3, $4, $5, $6, $7, $8, $9, CASE WHEN $5::text IS NULL THEN NULL ELSE 'pending' END, $10, $11, COALESCE($12::timestamptz, now())) RETURNING id`, [contact.id, input.body, input.messageType, input.providerMessageId,
+      input.media?.id ?? null, input.media?.mimeType ?? null, input.media?.filename ?? null, input.media?.size ?? null, input.media?.caption ?? null, quoted?.rows[0]?.id ?? null, input.quotedProviderMessageId ?? null, incomingAt?.toISOString() ?? null]);
     await client.query(`INSERT INTO jobs (type, contact_id, webhook_event_id) VALUES ('process_incoming', $1, $2)`, [contact.id, event.rows[0].id]);
     if (input.media?.id && ['image', 'document', 'audio', 'video', 'sticker'].includes(input.messageType)) {
       await client.query(`INSERT INTO jobs (type, contact_id, message_id, provider_media_id, media_filename, media_mime_type)
@@ -619,7 +621,7 @@ export function decodeConversationCursor(cursor: string): { at: string; id: stri
   }
 }
 
-export async function listConversations(input: { q?: string; consent?: string; pipeline?: string; unread?: boolean; botPaused?: boolean; followUp?: 'overdue' | 'scheduled'; ticket?: 'open'; cursor?: string; limit: number }) {
+export async function listConversations(input: { q?: string; consent?: string; pipeline?: string; unread?: boolean; botPaused?: boolean; followUp?: 'overdue' | 'scheduled'; ticket?: 'open'; analyticsNoMenu?: { from: string; to: string }; cursor?: string; limit: number }) {
   const values: unknown[] = []; const where: string[] = ['c.last_message_at IS NOT NULL', 'EXISTS (SELECT 1 FROM messages conversation_m WHERE conversation_m.contact_id=c.id)'];
   if (input.q) { values.push(`%${input.q}%`); where.push(`(c.name ILIKE $${values.length} OR c.public_name ILIKE $${values.length} OR c.phone ILIKE $${values.length} OR EXISTS (SELECT 1 FROM messages search_m WHERE search_m.contact_id=c.id AND search_m.body ILIKE $${values.length}))`); }
   if (input.consent && ['unknown','opted_in','opted_out'].includes(input.consent)) { values.push(input.consent); where.push(`c.consent_status = $${values.length}`); }
@@ -629,6 +631,15 @@ export async function listConversations(input: { q?: string; consent?: string; p
   if (input.followUp === 'overdue') where.push('c.follow_up_at IS NOT NULL AND c.follow_up_at <= now()');
   if (input.followUp === 'scheduled') where.push('c.follow_up_at IS NOT NULL AND c.follow_up_at > now()');
   if (input.ticket === 'open') where.push('ticket.id IS NOT NULL');
+  if (input.analyticsNoMenu) {
+    // Contacts who had at least one incoming message in the period but zero menu_option events in the same period.
+    // Both from/to are already validated ISO strings before this function is called.
+    values.push(input.analyticsNoMenu.from, input.analyticsNoMenu.to);
+    const fromIdx = values.length - 1;
+    const toIdx = values.length;
+    where.push(`EXISTS (SELECT 1 FROM messages nm WHERE nm.contact_id=c.id AND nm.direction='incoming' AND nm.created_at >= $${fromIdx}::timestamptz AND nm.created_at <= $${toIdx}::timestamptz)`);
+    where.push(`NOT EXISTS (SELECT 1 FROM bot_analytics_events bae WHERE bae.contact_id=c.id AND bae.event_type='menu_option' AND bae.created_at >= $${fromIdx}::timestamptz AND bae.created_at <= $${toIdx}::timestamptz)`);
+  }
   if (input.cursor) {
     const decoded = decodeConversationCursor(input.cursor);
     if (decoded) {
@@ -649,6 +660,68 @@ export async function listConversations(input: { q?: string; consent?: string; p
   const last = items[items.length - 1]; const nextCursor = hasMore && last ? encodeConversationCursor(last.lastMessageAt, last.id) : null;
   return { items, nextCursor };
 }
+
+export type ConversationStats = {
+  totalConversations: number;
+  unreadConversations: number;
+  unreadMessages: number;
+  totalMessages: number;
+  openTickets: number;
+};
+
+export async function getConversationStats(): Promise<ConversationStats> {
+  const result = await query<{
+    totalConversations: string;
+    unreadConversations: string;
+    unreadMessages: string;
+    totalMessages: string;
+    openTickets: string;
+  }>(`WITH conversation_contacts AS (
+      SELECT c.unread_count
+      FROM contacts c
+      WHERE c.last_message_at IS NOT NULL
+        AND EXISTS (SELECT 1 FROM messages m WHERE m.contact_id=c.id)
+    )
+    SELECT
+      count(*)::text AS "totalConversations",
+      count(*) FILTER (WHERE unread_count > 0)::text AS "unreadConversations",
+      COALESCE(sum(unread_count), 0)::text AS "unreadMessages",
+      (SELECT count(*)::text FROM messages) AS "totalMessages",
+      (SELECT count(*)::text FROM support_tickets WHERE status='open') AS "openTickets"
+    FROM conversation_contacts`);
+  const row = result.rows[0];
+  return {
+    totalConversations: Number(row?.totalConversations ?? 0),
+    unreadConversations: Number(row?.unreadConversations ?? 0),
+    unreadMessages: Number(row?.unreadMessages ?? 0),
+    totalMessages: Number(row?.totalMessages ?? 0),
+    openTickets: Number(row?.openTickets ?? 0),
+  };
+}
+
+export async function markAllConversationsRead() {
+  const result = await query<{ contactsUpdated: string; messagesMarkedRead: string }>(`WITH unread AS (
+      SELECT c.id, c.unread_count
+      FROM contacts c
+      WHERE c.unread_count > 0
+        AND c.last_message_at IS NOT NULL
+        AND EXISTS (SELECT 1 FROM messages m WHERE m.contact_id=c.id)
+    ), updated AS (
+      UPDATE contacts c
+      SET unread_count=0, last_read_at=now(), updated_at=now()
+      FROM unread u
+      WHERE c.id=u.id
+      RETURNING u.unread_count
+    )
+    SELECT count(*)::text AS "contactsUpdated",
+      COALESCE(sum(unread_count), 0)::text AS "messagesMarkedRead"
+    FROM updated`);
+  return {
+    contactsUpdated: Number(result.rows[0]?.contactsUpdated ?? 0),
+    messagesMarkedRead: Number(result.rows[0]?.messagesMarkedRead ?? 0),
+  };
+}
+
 
 export async function getConversation(contactId: string) {
   const contact = await getContactById(contactId);
@@ -1028,8 +1101,80 @@ export async function recordBotInteractionEvent(input: {
 
 export type AnalyticsPeriodKey = '7d' | '30d' | '90d' | 'custom';
 
+const ANALYTICS_TIME_ZONE = 'America/Argentina/Cordoba';
+const ANALYTICS_UTC_OFFSET = '-03:00';
+
+export function isValidAnalyticsDateOnly(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return parsed.getUTCFullYear() === year
+    && parsed.getUTCMonth() === month - 1
+    && parsed.getUTCDate() === day;
+}
+
+function analyticsDateOnly(value: Date): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: ANALYTICS_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(value);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find(item => item.type === type)?.value || '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
+function shiftDateOnly(value: string, days: number): string {
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}
+
+function analyticsDayBoundary(value: string, endOfDay = false): Date {
+  if (!isValidAnalyticsDateOnly(value)) throw new Error(`Fecha de analíticas inválida: ${value}`);
+  return new Date(`${value}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}${ANALYTICS_UTC_OFFSET}`);
+}
+
+export function resolveAnalyticsPeriod(options: {
+  period?: AnalyticsPeriodKey;
+  from?: string;
+  to?: string;
+} = {}, now = new Date()): {
+  periodKey: AnalyticsPeriodKey;
+  fromDate: Date;
+  toDate: Date;
+  periodLabel: string;
+} {
+  const periodKey: AnalyticsPeriodKey = options.period || '30d';
+  if (periodKey === 'custom') {
+    if (!options.from || !options.to || !isValidAnalyticsDateOnly(options.from) || !isValidAnalyticsDateOnly(options.to)) {
+      throw new Error('El rango personalizado requiere fechas válidas en formato YYYY-MM-DD.');
+    }
+    return {
+      periodKey,
+      fromDate: analyticsDayBoundary(options.from),
+      toDate: analyticsDayBoundary(options.to, true),
+      periodLabel: 'Rango personalizado',
+    };
+  }
+
+  const days = periodKey === '7d' ? 7 : periodKey === '90d' ? 90 : 30;
+  const today = analyticsDateOnly(now);
+  return {
+    periodKey,
+    fromDate: analyticsDayBoundary(shiftDateOnly(today, -(days - 1))),
+    toDate: new Date(now),
+    periodLabel: `Últimos ${days} días`,
+  };
+}
+
 export type BotAnalyticsSummary = {
   totalUniqueContacts: number;
+  totalNewContacts: number;
+  /** Unique contacts that sent a message in the period after having contacted us before. */
+  totalReturningContacts: number;
   totalIncomingMessages: number;
   totalMenuInteractions: number;
   totalMenuOptionsRecognized: number;
@@ -1060,6 +1205,18 @@ export type TrendPoint = {
   optionsRecognized: number;
   unrecognized: number;
   uniqueContacts: number;
+};
+
+export type NewContactsByDayPoint = {
+  date: string;
+  /** Contacts whose very first incoming message ever falls on this calendar day (Argentina TZ) */
+  newContacts: number;
+};
+
+export type ReturningContactsByDayPoint = {
+  date: string;
+  /** Contacts whose first message happened before this calendar day and who wrote on it. */
+  returningContacts: number;
 };
 
 export type UnrecognizedPattern = {
@@ -1105,6 +1262,10 @@ export type BotAnalyticsData = {
   summary: BotAnalyticsSummary;
   menuOptions: MenuOptionStat[];
   trend: TrendPoint[];
+  /** New contacts per day: contacts whose first-ever incoming message falls in the queried period */
+  newContactsByDay: NewContactsByDayPoint[];
+  /** Returning contacts per day: contacts who wrote that day and had written before that day. */
+  returningContactsByDay: ReturningContactsByDayPoint[];
   unrecognizedMessages: {
     total: number;
     uniqueContacts: number;
@@ -1139,36 +1300,7 @@ export async function getBotAnalytics(options: {
   to?: string;
   limit?: number;
 } = {}): Promise<BotAnalyticsData> {
-  const periodKey: AnalyticsPeriodKey = options.period || '30d';
-  const now = new Date();
-  let fromDate: Date;
-  let toDate: Date = now;
-  let periodLabel = 'Últimos 30 días';
-
-  if (periodKey === '7d') {
-    fromDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    periodLabel = 'Últimos 7 días';
-  } else if (periodKey === '90d') {
-    fromDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
-    periodLabel = 'Últimos 90 días';
-  } else if (periodKey === 'custom' && options.from && options.to) {
-    fromDate = new Date(options.from);
-    toDate = new Date(options.to);
-    // If toDate is YYYY-MM-DD without time, end of day
-    if (options.to.length === 10) {
-      toDate = new Date(`${options.to}T23:59:59.999Z`);
-    }
-    if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) {
-      fromDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-      toDate = now;
-      periodLabel = 'Últimos 30 días';
-    } else {
-      periodLabel = 'Rango personalizado';
-    }
-  } else {
-    fromDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-    periodLabel = 'Últimos 30 días';
-  }
+  const { periodKey, fromDate, toDate, periodLabel } = resolveAnalyticsPeriod(options);
 
   const listLimit = Math.max(1, Math.min(Number(options.limit) || 50, 100));
   const fromIso = fromDate.toISOString();
@@ -1562,6 +1694,70 @@ export async function getBotAnalytics(options: {
     }));
   }
 
+  // 9. New and returning contacts by local calendar day.
+  // The source of truth is the first incoming message, rather than contacts.first_seen_at:
+  // this keeps the metric correct for imported contacts and contacts created by an admin.
+  const contactActivityByDayQuery = await query<{
+    day: string;
+    new_contacts: string;
+    returning_contacts: string;
+  }>(`
+    WITH incoming_in_period AS (
+      SELECT
+        m.contact_id,
+        date_trunc('day', m.created_at AT TIME ZONE 'America/Argentina/Cordoba') AS day_local
+      FROM messages m
+      WHERE m.direction = 'incoming' AND m.created_at >= $1 AND m.created_at <= $2
+    ), first_incoming AS (
+      SELECT contact_id, min(created_at) AS first_message_at
+      FROM messages
+      WHERE direction = 'incoming'
+      GROUP BY contact_id
+    )
+    SELECT
+      to_char(i.day_local, 'YYYY-MM-DD') AS day,
+      count(DISTINCT i.contact_id) FILTER (
+        WHERE date_trunc('day', f.first_message_at AT TIME ZONE 'America/Argentina/Cordoba') = i.day_local
+      )::text AS new_contacts,
+      count(DISTINCT i.contact_id) FILTER (
+        WHERE f.first_message_at < (i.day_local AT TIME ZONE 'America/Argentina/Cordoba')
+      )::text AS returning_contacts
+    FROM incoming_in_period i
+    JOIN first_incoming f ON f.contact_id = i.contact_id
+    GROUP BY i.day_local
+    ORDER BY i.day_local ASC
+  `, [fromIso, toIso]);
+
+  const newContactsByDay: NewContactsByDayPoint[] = contactActivityByDayQuery.rows.map(r => ({
+    date: r.day,
+    newContacts: Number(r.new_contacts),
+  }));
+  const returningContactsByDay: ReturningContactsByDayPoint[] = contactActivityByDayQuery.rows.map(r => ({
+    date: r.day,
+    returningContacts: Number(r.returning_contacts),
+  }));
+
+  const totalNewContacts = newContactsByDay.reduce((sum, pt) => sum + pt.newContacts, 0);
+  const totalReturningContactsQuery = await query<{ count: string }>(`
+    WITH incoming_in_period AS (
+      SELECT DISTINCT
+        m.contact_id,
+        date_trunc('day', m.created_at AT TIME ZONE 'America/Argentina/Cordoba') AS day_local
+      FROM messages m
+      WHERE m.direction = 'incoming' AND m.created_at >= $1 AND m.created_at <= $2
+    ), first_incoming AS (
+      SELECT contact_id, min(created_at) AS first_message_at
+      FROM messages
+      WHERE direction = 'incoming'
+      GROUP BY contact_id
+    )
+    SELECT count(DISTINCT i.contact_id)::text AS count
+    FROM incoming_in_period i
+    JOIN first_incoming f ON f.contact_id = i.contact_id
+    WHERE f.first_message_at < (i.day_local AT TIME ZONE 'America/Argentina/Cordoba')
+  `, [fromIso, toIso]);
+  const totalReturningContacts = Number(totalReturningContactsQuery.rows[0]?.count || 0);
+
   const menuOptionRate = totalIncomingMessages > 0
     ? Math.round((totalMenuOptionsRecognized / totalIncomingMessages) * 1000) / 10
     : 0;
@@ -1578,6 +1774,8 @@ export async function getBotAnalytics(options: {
     },
     summary: {
       totalUniqueContacts,
+      totalNewContacts,
+      totalReturningContacts,
       totalIncomingMessages,
       totalMenuInteractions,
       totalMenuOptionsRecognized,
@@ -1592,6 +1790,8 @@ export async function getBotAnalytics(options: {
     },
     menuOptions,
     trend,
+    newContactsByDay,
+    returningContactsByDay,
     unrecognizedMessages: {
       total: totalUnrecognizedMessages,
       uniqueContacts: unrecognizedUniqueContacts,
@@ -1610,4 +1810,5 @@ export async function getBotAnalytics(options: {
       note: coverageNote,
     },
   };
+
 }
