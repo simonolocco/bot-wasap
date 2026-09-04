@@ -32,6 +32,7 @@
     "test:tickets": "ts-node scripts/testTickets.ts",
     "test:bot": "ts-node scripts/testBotFlows.ts",
     "test:frontend": "npm run typecheck:frontend",
+    "test:responsive": "ts-node scripts/testResponsivePlaywright.ts && ts-node scripts/testResponsiveStates.ts",
     "ngrok": "ts-node scripts/runNgrok.ts",
     "embeddings": "ts-node scripts/generateEmbeddings.ts",
     "production:preflight": "ts-node scripts/preflightProduction.ts",

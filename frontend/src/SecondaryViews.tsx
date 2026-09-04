@@ -1089,10 +1089,10 @@ function OrderModal({
                       <td>
                         <strong>{item.name || item.product || `Producto ${index + 1}`}</strong>
                       </td>
-                      <td style={{ textAlign: 'center' }}>
+                      <td data-label="Cantidad" style={{ textAlign: 'center' }}>
                         <span className="qty-badge">{item.quantity ?? 1}</span>
                       </td>
-                      <td style={{ textAlign: 'right' }}>
+                      <td data-label="Precio" style={{ textAlign: 'right' }}>
                         <span className="price-tag">{item.price ? `${item.price}` : '—'}</span>
                       </td>
                     </tr>

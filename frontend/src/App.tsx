@@ -1,4 +1,5 @@
-import { FormEvent, Fragment, KeyboardEvent, Suspense, lazy, useEffect, useRef, useState } from 'react';
+import { FormEvent, Fragment, KeyboardEvent, Suspense, lazy, useEffect, useLayoutEffect, useId, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { api, formatDate, initials, mediaUrl, shortText, thumbnailUrl } from './api';
 import type {
   Contact,
@@ -249,6 +250,9 @@ function Topbar({
   onMenu: () => void;
 }) {
   const [title, subtitle] = viewTitles[view];
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsId = useId();
+  useEffect(() => setSettingsOpen(false), [view]);
   return (
     <header className="topbar">
       <button className="menu-button" onClick={onMenu}>
@@ -260,7 +264,8 @@ function Topbar({
         <h1>{title}</h1>
         <p>{subtitle}</p>
       </div>
-      <div className="topbar-actions">
+      <button type="button" className="topbar-settings-toggle text-action" aria-label="Configuración" aria-expanded={settingsOpen} aria-controls={settingsId} onClick={() => setSettingsOpen(!settingsOpen)}><SvgIcon name="moreHorizontal" /></button>
+      <div id={settingsId} className={`topbar-actions ${settingsOpen ? 'expanded' : ''}`} onKeyDown={e => { if (e.key === 'Escape') { setSettingsOpen(false); (document.getElementById(settingsId)?.previousElementSibling as HTMLButtonElement | null)?.focus(); } }}>
         <span className="live-state"><i /> En vivo</span>
         <button className="text-action" aria-pressed={notifications} onClick={() => { if (!notifications && 'Notification' in window && Notification.permission === 'default') void Notification.requestPermission(); setNotifications(!notifications); }}>
           <SvgIcon name={notifications ? 'bell' : 'bellOff'} />
@@ -275,6 +280,7 @@ function Topbar({
           <SvgIcon name="refresh" />
           <span>Actualizar</span>
         </button>
+        <button className="text-action mobile-logout" onClick={async () => { await api('/api/auth/logout', { method: 'POST' }); location.reload(); }}><SvgIcon name="logout" /><span>Cerrar sesión</span></button>
       </div>
     </header>
   );
@@ -684,6 +690,52 @@ function MessageBubble({
 }) {
   const [copied, setCopied] = useState(false);
   const [actionsVisible, setActionsVisible] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const menuId = useId();
+  const [menuPosition, setMenuPosition] = useState({ left: 8, top: 8 });
+  useLayoutEffect(() => {
+    if (!actionsVisible) return;
+    const trigger = triggerRef.current;
+    const menu = menuRef.current;
+    if (!trigger || !menu) return;
+    function positionMenu() {
+      if (!trigger || !menu) return;
+      const anchor = trigger.getBoundingClientRect();
+      const viewport = window.visualViewport;
+      const left = viewport?.offsetLeft || 0;
+      const top = viewport?.offsetTop || 0;
+      const width = viewport?.width || window.innerWidth;
+      const height = viewport?.height || window.innerHeight;
+      const bounds = menu.getBoundingClientRect();
+      setMenuPosition({
+        left: Math.max(left + 8, Math.min(anchor.left, left + width - bounds.width - 8)),
+        top: Math.max(top + 8, Math.min(anchor.bottom + bounds.height + 8 <= top + height ? anchor.bottom + 4 : anchor.top - bounds.height - 4, top + height - bounds.height - 8)),
+      });
+    }
+    const dismiss = (event: PointerEvent) => {
+      if (!menu.contains(event.target as Node) && !trigger.contains(event.target as Node)) setActionsVisible(false);
+    };
+    const escape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') { setActionsVisible(false); trigger.focus(); }
+    };
+    positionMenu();
+    menu.querySelector<HTMLElement>('button')?.focus({ preventScroll: true });
+    document.addEventListener('pointerdown', dismiss);
+    document.addEventListener('keydown', escape);
+    window.addEventListener('resize', positionMenu);
+    window.addEventListener('scroll', positionMenu, true);
+    window.visualViewport?.addEventListener('resize', positionMenu);
+    window.visualViewport?.addEventListener('scroll', positionMenu);
+    return () => {
+      document.removeEventListener('pointerdown', dismiss);
+      document.removeEventListener('keydown', escape);
+      window.removeEventListener('resize', positionMenu);
+      window.removeEventListener('scroll', positionMenu, true);
+      window.visualViewport?.removeEventListener('resize', positionMenu);
+      window.visualViewport?.removeEventListener('scroll', positionMenu);
+    };
+  }, [actionsVisible]);
   const media = Boolean(
     message.mediaAssetId ||
       message.mediaId ||
@@ -754,14 +806,16 @@ function MessageBubble({
       <button
         type="button"
         className="message-actions-trigger"
+        ref={triggerRef}
+        aria-controls={actionsVisible ? menuId : undefined}
         aria-expanded={actionsVisible}
         aria-label="Opciones de mensaje"
         onClick={() => setActionsVisible(!actionsVisible)}
       >
         <SvgIcon name="moreHorizontal" size={16} />
       </button>
-      <div className="message-actions" onClick={e => e.stopPropagation()}>
-        <button type="button" onClick={() => onReply(message)} title="Responder"><SvgIcon name="reply" size={14} /><span>Responder</span></button>
+      {actionsVisible && createPortal(<div id={menuId} ref={menuRef} className="message-actions message-actions-floating" role="group" aria-label="Acciones del mensaje" style={menuPosition} onClick={e => e.stopPropagation()}>
+        <button type="button" onClick={() => { onReply(message); setActionsVisible(false); }} title="Responder"><SvgIcon name="reply" size={14} /><span>Responder</span></button>
         <button
           type="button"
           onClick={handleCopy}
@@ -774,7 +828,7 @@ function MessageBubble({
           <span>{copied ? 'Copiado' : 'Copiar'}</span>
         </button>
         {media && <a href={mediaUrl(message.id, true)} title="Descargar archivo"><SvgIcon name="download" size={14} /><span>Descargar</span></a>}
-      </div>
+      </div>, document.body)}
 
       {quoted && (
         <div className="quoted-message">
@@ -914,11 +968,11 @@ function TicketBanner({
       </span>
       <span className="banner-actions">
         {order && (
-          <button className="btn-sm btn-primary" onClick={() => onOrderLink(ticket)}>
+          <button className="action-button primary" onClick={() => onOrderLink(ticket)}>
             Enviar link y activar bot
           </button>
         )}
-        <button className="btn-sm btn-ghost" onClick={() => onClose(ticket)}>
+        <button className="action-button secondary" onClick={() => onClose(ticket)}>
           {order ? 'Finalizar pedido' : 'Finalizar consulta'}
         </button>
       </span>
@@ -977,7 +1031,11 @@ function Chat({
   const [file, setFile] = useState<File | null>(null);
   const [sending, setSending] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
+  const [controlsOpen, setControlsOpen] = useState(false);
+  const controlsId = useId();
+  useEffect(() => setControlsOpen(false), [detail?.contact.id]);
   const textarea = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => { if (quote) textarea.current?.focus(); }, [quote]);
 
   if (!detail) {
     if (loading) {
@@ -1083,28 +1141,34 @@ function Chat({
         </div>
       </header>
 
+      <div className="chat-control-disclosure" onKeyDown={e => { if (e.key === 'Escape') { setControlsOpen(false); e.currentTarget.querySelector<HTMLButtonElement>('.chat-controls-toggle')?.focus(); } }}>
+      <button type="button" className="chat-controls-toggle action-button secondary" aria-controls={controlsId} aria-expanded={controlsOpen} onClick={() => setControlsOpen(!controlsOpen)}><SvgIcon name="moreHorizontal" /><span>Acciones y estado{!withinWindow ? ' · Ventana vencida' : detail.openTicket ? ' · Ticket abierto' : ''}</span></button>
+      <div id={controlsId} className={`chat-control-panel ${controlsOpen ? 'expanded' : ''}`}>
       <ConversationControlBar
         contact={contact}
         ticket={detail.openTicket}
         onTake={onTake}
         onRelease={onRelease}
-        onClose={onClose}
-        onToggleInfo={onToggleInfo}
+        onClose={ticket => { setControlsOpen(false); onClose(ticket); }}
+        onToggleInfo={() => { setControlsOpen(false); onToggleInfo(); }}
         busy={busy}
       />
 
       {/* ── Ticket banner ── */}
       {detail.openTicket && (
-        <TicketBanner ticket={detail.openTicket} onClose={onClose} onOrderLink={onOrderLink} />
+        <TicketBanner ticket={detail.openTicket} onClose={ticket => { setControlsOpen(false); onClose(ticket); }} onOrderLink={ticket => { setControlsOpen(false); onOrderLink(ticket); }} />
       )}
 
       <WindowStatus
         withinWindow={withinWindow}
         newMessages={newMessages}
         messagesRef={messagesRef}
-        onTemplates={onOpenTemplates}
-        onRespond={() => textarea.current?.focus()}
+        onTemplates={() => { setControlsOpen(false); onOpenTemplates(); }}
+        onRespond={() => { setControlsOpen(false); textarea.current?.focus(); }}
       />
+
+      </div>
+      </div>
 
       {error && (
         <div className="chat-error">
@@ -1240,6 +1304,7 @@ function Chat({
 
             <button
               className="send-btn"
+              aria-label={sending ? 'Enviando mensaje' : 'Enviar mensaje'}
               type="submit"
               disabled={!withinWindow || sending || (!body.trim() && !file)}
             >

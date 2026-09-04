@@ -1,0 +1,146 @@
+/* Keep secondary views flexible inside the available main panel. */
+.data-page,
+.analytics-layout,
+.data-page .view-toolbar,
+.data-page .data-card,
+.analytics-layout > *,
+.analytics-layout .modern-funnel-card,
+.analytics-layout .funnel-title-group,
+.analytics-layout .funnel-title-group > div {
+  min-width: 0;
+}
+
+.data-page .status-tab-bar {
+  min-width: 0;
+  max-width: 100%;
+  overscroll-behavior-x: contain;
+}
+
+.data-page .status-tab { flex: 0 0 auto; }
+
+.templates-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr));
+}
+
+.template-card-modern,
+.template-name-bar,
+.template-preview-bubble,
+.templates-banner .banner-left > div { min-width: 0; overflow-wrap: anywhere; }
+.template-top,
+.template-badges { flex-wrap: wrap; }
+.templates-banner .wa-official-icon { flex-shrink: 0; }
+
+.data-page .table-footer,
+.analytics-layout .table-footer { flex-wrap: wrap; }
+
+.analytics-layout .funnel-top { flex-wrap: wrap; }
+.analytics-layout .funnel-title-group { flex: 1 1 200px; }
+.analytics-layout .funnel-title-group h5,
+.analytics-layout .funnel-desc { overflow-wrap: anywhere; }
+
+.order-modal-sheet .sheet-section,
+.order-modal-sheet .summary-item { min-width: 0; }
+.order-modal-sheet .sheet-header,
+.order-modal-sheet .order-detail-box { overflow-wrap: anywhere; }
+.order-items-table-wrap { overflow-x: auto; }
+
+@media (max-width: 768px), (pointer: coarse) {
+  :is(.data-page, .analytics-layout, .modal-sheet) :is(button, .button),
+  .analytics-layout .chart-series-filters .series-toggle-chip {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  .data-page :is(input, select, textarea),
+  .analytics-layout :is(input, select, textarea),
+  .analytics-layout .date-input-label input[type="date"],
+  .modal-sheet :is(input, select, textarea) {
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  .data-page .clear-btn { right: 0; }
+  .modal-sheet .sheet-close-btn { flex-shrink: 0; }
+}
+
+@media (max-width: 768px) {
+  .data-page .table-footer,
+  .analytics-layout .table-footer {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .data-page .table-footer-controls,
+  .analytics-layout .table-footer-controls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    width: 100%;
+    gap: 8px;
+  }
+
+  .data-page .table-footer-controls .page-indicator,
+  .analytics-layout .table-footer-controls .page-indicator {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    text-align: center;
+    white-space: normal;
+  }
+
+  .data-page .table-footer-controls .button,
+  .analytics-layout .table-footer-controls .button {
+    min-width: 0;
+    padding-inline: 8px;
+    justify-content: center;
+  }
+
+  .analytics-layout .period-segmented-control {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .analytics-layout .period-seg-btn:last-child { grid-column: 1 / -1; }
+  .analytics-layout .period-seg-btn { font-size: 12px; }
+  .analytics-layout .modern-funnel-card { padding: 16px 14px; }
+  .analytics-layout .chart-date-filter {
+    display: flex;
+    flex-wrap: wrap;
+    min-width: 0;
+    max-width: 100%;
+    gap: 8px;
+  }
+  .analytics-layout .chart-date-input-wrap { min-width: 0; flex: 1 1 150px; }
+  .analytics-layout .chart-date-input { min-width: 0; width: 100%; }
+  .analytics-layout .chart-date-sep { display: none; }
+  .analytics-layout .chart-header-actions,
+  .analytics-layout .section-header-controls { min-width: 0; max-width: 100%; }
+
+  .modal-sheet .sheet-footer { flex-wrap: wrap; }
+  .modal-sheet .sheet-footer .button { flex: 1 1 150px; justify-content: center; }
+}
+
+@media (max-width: 480px) {
+  /* Each product keeps its full name, quantity and price together. */
+  .order-items-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .order-items-table tbody { display: block; }
+  .order-items-table tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .order-items-table td { min-width: 0; padding: 10px; overflow-wrap: anywhere; }
+  .order-items-table td:first-child { grid-column: 1 / -1; padding-bottom: 0; border-bottom: 0; }
+  .order-items-table td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 4px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .order-items-table td:nth-child(2) { text-align: left !important; }
+  .order-items-table .price-tag { white-space: normal; }
+}

@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as assert from 'assert';
 
-async function startServer(): Promise<http.Server> {
+export async function startServer(): Promise<http.Server> {
   return new Promise((resolve) => {
     let allRead = false;
     const server = http.createServer((req, res) => {
@@ -147,6 +147,7 @@ async function run() {
           userAgent: isMobile ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1' : undefined,
           isMobile, hasTouch: isMobile
         });
+        await context.addInitScript(theme => localStorage.setItem('abasto-theme', theme), scheme);
         const page = await context.newPage();
         page.on('console', msg => { if (msg.type() === 'error') throw new Error(`[${scheme.toUpperCase()} ERROR] ${msg.text()}`); });
         page.on('pageerror', err => { throw new Error(`[${scheme.toUpperCase()} PAGE ERROR] ${err}`); });
@@ -155,12 +156,7 @@ async function run() {
         await page.goto(`http://127.0.0.1:${port}/`);
         await page.waitForSelector('.sidebar-nav .sidebar-link');
 
-        if (scheme === 'dark') {
-          await context.close();
-          continue; // Minimal load test for dark mode
-        }
-
-        // Tests continue for light mode
+        assert.equal(await page.locator('html').getAttribute('data-theme'), scheme);
         await page.waitForFunction(() => document.querySelectorAll('.conv-row').length === 2);
         assert.equal(await page.locator('.conv-row').count(), 2, 'debe cargar automáticamente todas las páginas de conversaciones');
         assert.equal(await page.locator('.load-more').count(), 0, 'no debe depender de Cargar más conversaciones');
@@ -208,19 +204,10 @@ async function run() {
         assert.ok(await page.getByText('No se pudo preparar este archivo.', { exact: true }).count() > 0, 'El archivo fallido debe mostrar su estado');
 
         const msgBubble = page.locator('.message-bubble').first();
-        if (isMobile) {
-          console.log('mobile click 1');
-          const trigger = page.locator('.message-actions-trigger').first();
-          await trigger.waitFor({ state: 'attached' });
-          await trigger.click({ force: true });
-        } else {
-          console.log('desktop hover 1');
-          await msgBubble.hover();
-        }
-
-        console.log('replyAction wait');
-        const replyAction = msgBubble.locator('.message-actions button').filter({ hasText: 'Responder' }).first();
-        await replyAction.evaluate(node => (node as HTMLButtonElement).click());
+        await msgBubble.scrollIntoViewIfNeeded();
+        await msgBubble.locator('.message-actions-trigger').click();
+        const replyAction = page.locator('.message-actions-floating').getByRole('button', { name: 'Responder', exact: true });
+        await replyAction.click();
         console.log('replyBar wait');
         const replyBar = page.locator('.reply-bar');
         await replyBar.waitFor({ state: 'visible' });
@@ -228,18 +215,13 @@ async function run() {
 
         console.log('mediaMsg wait');
         const mediaMsg = page.locator('.message-bubble[data-message-id="msg-sticker"]');
-        if (isMobile) {
-          console.log('mobile click 2');
-          const trigger2 = mediaMsg.locator('.message-actions-trigger');
-          await trigger2.waitFor({ state: 'attached' });
-          await trigger2.click({ force: true });
-        } else {
-          await mediaMsg.hover();
-        }
-        console.log('downloadAction wait');
-        const downloadAction = mediaMsg.locator('.message-actions a').filter({ hasText: 'Descargar' }).first();
+        await mediaMsg.scrollIntoViewIfNeeded();
+        await mediaMsg.locator('.message-actions-trigger').click();
+        const downloadAction = page.locator('.message-actions a').filter({ hasText: 'Descargar' }).first();
         await downloadAction.waitFor({ state: 'visible' });
-
+        await page.keyboard.press('Escape');
+        const controlsToggle = page.locator('.chat-controls-toggle');
+        if (await controlsToggle.isVisible() && await controlsToggle.getAttribute('aria-expanded') !== 'true') await controlsToggle.click();
         console.log('finalizeBtn wait');
         console.log('finalizeBtn click');
         const finalizeBtn = page.locator('button').filter({ hasText: 'Finalizar consulta' }).first();
@@ -273,7 +255,8 @@ async function run() {
         for (const route of routes) {
           console.log('visiting route: ' + route.name);
           const link = page.locator('.sidebar-nav .sidebar-link').filter({ hasText: route.name });
-          await link.click({ force: true });
+          if (await page.locator('.menu-button').isVisible()) await page.locator('.menu-button').click();
+          await link.click();
           try {
             await page.waitForSelector(route.expected, { state: 'visible', timeout: 5000 });
           } catch (e) {
@@ -291,11 +274,12 @@ async function run() {
     console.log('Mobile tests: OK');
   } finally {
     await browser.close();
+    server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 }
 
-run().catch((err) => {
+if (require.main === module) run().catch((err) => {
   console.error(err);
   process.exit(1);
 });
