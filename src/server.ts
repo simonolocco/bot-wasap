@@ -1,3 +1,4 @@
+import { CONTACT_INQUIRY_LABELS } from './db/repository';
 import 'dotenv/config';
 import 'express-async-errors';
 import crypto from 'node:crypto';
@@ -421,15 +422,15 @@ app.post('/api/contacts', async (req, res) => {
   return res.status(201).json(contact);
 });
 app.get('/api/contacts/export', async (req, res) => {
-  const rows = await exportContacts({ q: qs(req.query.q), consent: qs(req.query.consent) });
-  const header = ['Nombre', 'Teléfono', 'Consentimiento', 'Etiquetas', 'Estado', 'Última actividad'];
-  const body = rows.map(row => [row.name, row.phone, row.consentStatus, Array.isArray(row.labels) ? row.labels.join(', ') : '', row.pipelineStatus, row.lastMessageAt].map(csvCell).join(','));
+  const rows = await exportContacts({ q: qs(req.query.q), consent: qs(req.query.consent), inquiry: qs(req.query.inquiry) });
+  const header = ['Nombre', 'Teléfono', 'Consentimiento', 'Etiquetas', 'Estado', 'Última actividad', 'Tipos de consulta'];
+  const body = rows.map(row => [row.name, row.phone, row.consentStatus, Array.isArray(row.labels) ? row.labels.join(', ') : '', row.pipelineStatus, row.lastMessageAt, row.inquiryTypes.map(type => CONTACT_INQUIRY_LABELS[type] || type).join(', ')].map(csvCell).join(','));
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="contactos.csv"');
   return res.send(`\uFEFF${[header.map(csvCell).join(','), ...body].join('\r\n')}\r\n`);
 });
 app.get('/api/contacts/:id', async (req, res) => { const contact = await getContactById(req.params.id); return contact ? res.json(contact) : res.status(404).json({ error: 'Contacto inexistente.' }); });
-app.get('/api/contacts', async (req, res) => res.json(await listContacts({ q: qs(req.query.q), consent: qs(req.query.consent), page: page(req.query.page), limit: positive(req.query.limit, 50, 100) })));
+app.get('/api/contacts', async (req, res) => res.json(await listContacts({ q: qs(req.query.q), consent: qs(req.query.consent), inquiry: qs(req.query.inquiry), page: page(req.query.page), limit: positive(req.query.limit, 50, 100) })));
 app.delete('/api/contacts/:id', async (req, res) => {
   const parsedId = z.string().uuid().safeParse(req.params.id);
   if (!parsedId.success) return res.status(400).json({ error: 'Identificador de contacto inválido.' });

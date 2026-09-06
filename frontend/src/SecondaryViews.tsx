@@ -642,6 +642,13 @@ function Tickets({ onOpen }: { onOpen: (id: string) => void }) {
    CONTACTS (CRM VIEW)
    ═══════════════════════════════════════════════════════ */
 function Contacts({ onOpen }: { onOpen: (id: string) => void }) {
+  const inquiryOptions = [
+    ['horarios', 'Horarios', 'chip-emerald'], ['direccion', 'Dirección', 'tone-blue'],
+    ['lista_precio', 'Precios', 'tone-purple'], ['hacer_pedido', 'Nuevo Pedido', 'chip-amber'],
+    ['asesor', 'Asesor Humano', 'tone-pink'], ['preguntas_frecuentes', 'Preguntas frecuentes', 'tone-purple'],
+    ['no_reconocidas', 'No reconocidas', 'chip-amber'],
+  ];
+  const [inquiry, setInquiry] = useState('');
   const limit = 25;
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState('');
@@ -657,15 +664,17 @@ function Contacts({ onOpen }: { onOpen: (id: string) => void }) {
     const p = new URLSearchParams({ page: String(page), limit: String(limit) });
     if (debounced) p.set('q', debounced);
     if (consent) p.set('consent', consent);
+    if (inquiry) p.set('inquiry', inquiry);
     return `/api/contacts?${p}`;
-  }, [page, debounced, consent]);
+  }, [page, debounced, consent, inquiry]);
 
   const exportUrl = useMemo(() => {
     const p = new URLSearchParams();
     if (debounced) p.set('q', debounced);
     if (consent) p.set('consent', consent);
+    if (inquiry) p.set('inquiry', inquiry);
     return `/api/contacts/export?${p}`;
-  }, [debounced, consent]);
+  }, [debounced, consent, inquiry]);
 
   const load = () => {
     setLoading(true);
@@ -694,7 +703,7 @@ function Contacts({ onOpen }: { onOpen: (id: string) => void }) {
   }
 
   useEffect(load, [url]);
-  useEffect(() => setPage(0), [debounced, consent]);
+  useEffect(() => setPage(0), [debounced, consent, inquiry]);
 
   return (
     <div className="data-page">
@@ -716,6 +725,12 @@ function Contacts({ onOpen }: { onOpen: (id: string) => void }) {
 
         <div className="toolbar-filters">
           <div className="select-wrap">
+            <select value={inquiry} onChange={e => setInquiry(e.target.value)} aria-label="Tipo de consulta">
+              <option value="">Todos los tipos de consulta</option>
+              {inquiryOptions.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+            </select>
+          </div>
+          <div className="select-wrap">
             <select value={consent} onChange={e => setConsent(e.target.value)} aria-label="Consentimiento">
               <option value="">Todo consentimiento</option>
               <option value="opted_in">Consentidos (Opt-in)</option>
@@ -736,6 +751,7 @@ function Contacts({ onOpen }: { onOpen: (id: string) => void }) {
         </div>
       </div>
 
+      <p className="muted">Consultas del historial registrado. Un contacto puede tener varios tipos de consulta.</p>
       {/* Main Table Card */}
       <div className="data-card">
         <ViewState loading={loading} error={error} empty={!loading && !error && !result?.items.length} onRetry={load} />
@@ -747,6 +763,7 @@ function Contacts({ onOpen }: { onOpen: (id: string) => void }) {
                 <thead>
                   <tr>
                     <th>Cliente / Contacto</th>
+                    <th>Tipos de consulta</th>
                     <th style={{ width: '170px' }}>Pipeline</th>
                     <th style={{ width: '160px' }}>Modo Bot</th>
                     <th style={{ width: '200px' }}>Etiquetas</th>
@@ -768,6 +785,13 @@ function Contacts({ onOpen }: { onOpen: (id: string) => void }) {
                               <strong className="cell-title">{cName}</strong>
                               <small className="cell-subtitle mono-phone">{contact.phone}</small>
                             </div>
+                          </div>
+                        </td>
+                        <td>
+                          <div className="tags-container">
+                            {contact.inquiryTypes?.length ? inquiryOptions.filter(([id]) => contact.inquiryTypes?.includes(id)).map(([id, label, tone]) => (
+                              <span key={id} className={`chip-badge ${tone}`}>{inquiryOptions.findIndex(option => option[0] === id) + 1} · {label}</span>
+                            )) : <span className="tag-empty">Sin consultas registradas</span>}
                           </div>
                         </td>
                         <td>

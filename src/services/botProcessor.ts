@@ -36,8 +36,13 @@ function advisorLink() {
   return `https://wa.me/${number}?text=${encodeURIComponent('Hola, tengo una consulta')}`;
 }
 
-export function buildAdvisorFollowupMessage(link: string) {
-  return `Si tu consulta todavía no fue resuelta, podés hablar con nuestro asesor humano desde este enlace:\n${link}\n\nTambién podés escribir “menú” para ver las opciones disponibles.`;
+export function buildAdvisorFollowupMessage(link: string, name = '', now = new Date()) {
+  const hour = Number(new Intl.DateTimeFormat('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', hour: 'numeric', hourCycle: 'h23' }).format(now));
+  const greeting = hour < 12 ? 'Buenos días' : hour < 20 ? 'Buenas tardes' : 'Buenas noches';
+  const firstName = name.trim().split(/\s+/)[0]?.replace(/[*_~`]/g, '').slice(0, 60);
+  const number = new URL(link).pathname.replace(/\D/g, '');
+  const phone = number.startsWith('549') ? number.slice(3) : number;
+  return `${greeting}${firstName ? `, ${firstName}` : ''}. Si su consulta aún no fue resuelta, puede comunicarse con Mauricio, nuestro encargado comercial, al ${phone}.\n\nTambién puede contactar a nuestro asesor humano por WhatsApp a través del siguiente enlace:\n${link}\n\nQuedamos a su disposición.`;
 }
 
 async function outgoing(contactId: string, to: string, key: string, body: string, payload?: Record<string, unknown>) {
@@ -102,7 +107,7 @@ export async function processDueAdvisorFollowup(followup: { id: string; contact_
       followup.contact_id,
       contact.phone,
       `advisor-followup:${followup.id}`,
-      buildAdvisorFollowupMessage(advisorLink()),
+      buildAdvisorFollowupMessage(advisorLink(), contact.name || contact.publicName),
     );
     await completeAdvisorFollowup(followup.id);
   } catch (error) {

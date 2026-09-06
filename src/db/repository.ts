@@ -960,25 +960,43 @@ export async function listAudit(contactId?: string, limit = 100) {
     FROM admin_audit_log a ${where} ORDER BY a.created_at DESC LIMIT $1`, values)).rows;
 }
 
-export async function listContacts(input: { q?: string; consent?: string; page: number; limit: number }) {
-  const values: unknown[] = []; const where: string[] = ['true'];
+export const CONTACT_INQUIRY_LABELS: Record<string, string> = {
+  horarios: 'Horarios', direccion: 'Dirección', lista_precio: 'Precios',
+  hacer_pedido: 'Nuevo Pedido', asesor: 'Asesor Humano',
+  preguntas_frecuentes: 'Preguntas frecuentes', no_reconocidas: 'No reconocidas',
+};
+const inquiryCategorySql = `CASE WHEN e.event_type='unrecognized_message' THEN 'no_reconocidas' ELSE e.selected_option END`;
+const inquiryEventsSql = `(e.event_type='unrecognized_message' OR (e.event_type='menu_option' AND e.selected_option IS NOT NULL))`;
+const contactInquiriesSql = `ARRAY(SELECT DISTINCT ${inquiryCategorySql} FROM bot_analytics_events e
+  WHERE e.contact_id=contacts.id AND ${inquiryEventsSql} ORDER BY 1) AS "inquiryTypes"`;
+
+function contactFilters(input: { q?: string; consent?: string; inquiry?: string }) {
+  const values: unknown[] = []; const where = ['true'];
   if (input.q) { values.push(`%${input.q}%`); where.push(`(name ILIKE $${values.length} OR public_name ILIKE $${values.length} OR phone ILIKE $${values.length})`); }
   if (input.consent && ['unknown','opted_in','opted_out'].includes(input.consent)) { values.push(input.consent); where.push(`consent_status = $${values.length}`); }
+  if (input.inquiry) {
+    if (Object.prototype.hasOwnProperty.call(CONTACT_INQUIRY_LABELS, input.inquiry)) {
+      values.push(input.inquiry);
+      where.push(`EXISTS (SELECT 1 FROM bot_analytics_events e WHERE e.contact_id=contacts.id AND ${inquiryEventsSql} AND ${inquiryCategorySql}=$${values.length})`);
+    } else where.push('false');
+  }
+  return { values, where };
+}
+
+export async function listContacts(input: { q?: string; consent?: string; inquiry?: string; page: number; limit: number }) {
+  const { values, where } = contactFilters(input);
   values.push(input.limit, input.page * input.limit);
   const [data, count] = await Promise.all([
-    query<Contact>(`SELECT ${contactColumns} FROM contacts WHERE ${where.join(' AND ')} ORDER BY last_message_at DESC NULLS LAST, id DESC LIMIT $${values.length - 1} OFFSET $${values.length}`, values),
+    query<Contact & { inquiryTypes: string[] }>(`SELECT ${contactColumns}, ${contactInquiriesSql} FROM contacts WHERE ${where.join(' AND ')} ORDER BY last_message_at DESC NULLS LAST, id DESC LIMIT $${values.length - 1} OFFSET $${values.length}`, values),
     query<{ count: string }>(`SELECT count(*)::text AS count FROM contacts WHERE ${where.join(' AND ')}`, values.slice(0, -2)),
   ]);
   return { items: data.rows, total: Number(count.rows[0].count), page: input.page, limit: input.limit };
 }
 
-export async function exportContacts(input: { q?: string; consent?: string }) {
-  const values: unknown[] = []; const where: string[] = ['true'];
-  if (input.q) { values.push(`%${input.q}%`); where.push(`(name ILIKE $${values.length} OR public_name ILIKE $${values.length} OR phone ILIKE $${values.length})`); }
-  if (input.consent && ['unknown','opted_in','opted_out'].includes(input.consent)) { values.push(input.consent); where.push(`consent_status = $${values.length}`); }
-  return (await query<{ phone: string; name: string; publicName: string; consentStatus: ConsentStatus; labels: string[]; pipelineStatus: string; lastMessageAt: string | null }>(`
-    SELECT phone, name, public_name AS "publicName", consent_status AS "consentStatus", labels,
-      pipeline_status AS "pipelineStatus", last_message_at AS "lastMessageAt"
+export async function exportContacts(input: { q?: string; consent?: string; inquiry?: string }) {
+  const { values, where } = contactFilters(input);
+  return (await query<Contact & { inquiryTypes: string[] }>(`
+    SELECT ${contactColumns}, ${contactInquiriesSql}
     FROM contacts WHERE ${where.join(' AND ')} ORDER BY last_message_at DESC NULLS LAST, id DESC`, values)).rows;
 }
 

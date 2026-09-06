@@ -268,3 +268,9 @@ assert.deepEqual(partialTrackingResult.items, ['c-active-no-menu']);
 assert.match(partialTrackingResult.note, /restringido/);
 
 console.log('bot flow tests: OK');
+
+const formalFollowup = buildAdvisorFollowupMessage('https://wa.me/5493517565641', 'Sergio Pérez', new Date('2026-09-06T18:00:00Z'));
+assert.match(formalFollowup, /^Buenas tardes, Sergio\./);
+assert.match(formalFollowup, /Mauricio, nuestro encargado comercial, al 3517565641/);
+assert.match(buildAdvisorFollowupMessage('https://wa.me/5493517565641', '', new Date('2026-09-06T12:00:00Z')), /^Buenos días\./);
+assert.match(buildAdvisorFollowupMessage('https://wa.me/5493517565641', 'Nidia', new Date('2026-09-07T02:00:00Z')), /^Buenas noches, Nidia\./);

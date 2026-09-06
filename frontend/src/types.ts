@@ -13,6 +13,7 @@ export type Contact = {
   consentAt: string | null;
   notes: string;
   labels: string[];
+  inquiryTypes?: string[];
   pipelineStatus: string;
   assignedTo: string | null;
   followUpAt: string | null;
