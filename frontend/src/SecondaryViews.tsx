@@ -644,9 +644,9 @@ function Tickets({ onOpen }: { onOpen: (id: string) => void }) {
 function Contacts({ onOpen }: { onOpen: (id: string) => void }) {
   const inquiryOptions = [
     ['horarios', 'Horarios', 'chip-emerald'], ['direccion', 'Dirección', 'tone-blue'],
-    ['lista_precio', 'Precios', 'tone-purple'], ['hacer_pedido', 'Nuevo Pedido', 'chip-amber'],
-    ['asesor', 'Asesor Humano', 'tone-pink'], ['preguntas_frecuentes', 'Preguntas frecuentes', 'tone-purple'],
-    ['no_reconocidas', 'No reconocidas', 'chip-amber'],
+    ['lista_precio', 'Precios', 'chip-purple'], ['hacer_pedido', 'Nuevo Pedido', 'chip-amber'],
+    ['asesor', 'Asesor Humano', 'chip-rose'], ['preguntas_frecuentes', 'Preguntas frecuentes', 'chip-purple'],
+    ['no_reconocidas', 'No reconocidas', 'chip-neutral'],
   ];
   const [inquiry, setInquiry] = useState('');
   const limit = 25;
