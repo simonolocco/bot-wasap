@@ -11,6 +11,10 @@ import {
   SUPPORT_TICKET_PROMPT, buildGreetingIntro, buildMenuListSections, formatPriceListMessage, normalizeText, resolveOptionIdFromText, type MenuOptionId,
 } from '../messageCatalog';
 import { buildOrderForwardLink } from './orderTicket';
+import { assistantEnabled, shouldUseAssistant, answerQuestion, type Turn } from '../ai/assistant';
+import { readCatalog } from '../ai/catalog';
+import { createOpenRouterClient } from '../ai/openRouter';
+import { listMessages } from '../db/repository';
 
 type Incoming = { from: string; profileName?: string; text?: string; selectedOptionId?: MenuOptionId; buttonReplyId?: string; type: string; sourceTimestamp?: number };
 const DUPLICATE_AUTO_RESPONSE_WINDOW_SECONDS = Math.max(0, Number.parseInt(process.env.DUPLICATE_AUTO_RESPONSE_WINDOW_SECONDS ?? '90', 10) || 90);
@@ -222,6 +226,29 @@ export async function processIncomingJob(job: { id: string; contact_id: string; 
     }
     const session = await getSession(job.contact_id);
     const key = `event:${event.provider_message_id}`;
+
+    if (assistantEnabled() && shouldUseAssistant(incoming, session.awaiting_order_detail)) {
+      const previous = await listMessages(job.contact_id, undefined, 10);
+      const history: Turn[] = previous.items.filter(m => m.providerMessageId !== event.provider_message_id && m.messageType === 'text')
+        .map(m => ({ role: m.direction === 'incoming' ? 'user' as const : 'assistant' as const, content: m.body }));
+      const complete = createOpenRouterClient({ key: process.env.OPENROUTER_API_KEY ?? '', model: process.env.OPENROUTER_MODEL ?? 'openai/gpt-oss-120b' });
+      const answer = await answerQuestion({ message: rawText, history }, await readCatalog(), complete);
+      // An operator may take the conversation while the provider is responding.
+      if ((await getContactById(job.contact_id))?.botPaused || shouldSkipAutomaticResponse(sourceTimestamp, event.received_at)) { await completeJob(job.id); return; }
+      await outgoing(job.contact_id, incoming.from, `${key}:ai`, answer.text);
+      if (!session.greeted) await claimInitialGreeting(job.contact_id, incoming.profileName?.trim() || 'Cliente');
+      await recordBotInteractionEvent({
+        contactId: job.contact_id, providerMessageId: event.provider_message_id,
+        eventType: answer.outcome === 'unavailable' || answer.outcome === 'handoff' ? 'unrecognized_message' : 'flow_command',
+        rawText, normalizedText: normText, messageType: incoming.type, createdAt: eventTime,
+        metadata: { source: 'ai_preview', outcome: answer.outcome, model: answer.model, tokens: answer.tokens, elapsedMs: answer.elapsedMs, sources: answer.sources },
+      });
+      if (answer.outcome === 'unavailable' || answer.outcome === 'handoff') {
+        await scheduleAdvisorFollowup(job.contact_id, event.provider_message_id, new Date(Date.now() + ADVISOR_FOLLOWUP_DELAY_MS));
+      }
+      await completeJob(job.id);
+      return;
+    }
 
     if (incoming.buttonReplyId === FAQ_OTHER_YES_ID) {
       const result = await createSupportTicket(job.contact_id, 'bot');

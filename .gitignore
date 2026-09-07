@@ -23,6 +23,7 @@ backups/
 
 # Dependencies
 node_modules/
+node_modules.shared/
 
 # Logs
 logs
