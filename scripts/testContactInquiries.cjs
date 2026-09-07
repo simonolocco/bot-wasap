@@ -16,6 +16,7 @@ const { listContacts, exportContacts, CONTACT_INQUIRY_LABELS } = require('../dis
     const all = await listContacts({page:0,limit:25});
     assert.equal(all.total, 2);
     assert.equal(all.items.find(c => c.id === rows[0].id).inquiryTypes.length, 7);
+    assert.equal(all.items.find(c => c.id === rows[0].id).inquiryCounts?.lista_precio, 2);
     assert.deepEqual(all.items.find(c => c.id === rows[1].id).inquiryTypes, []);
     for (const inquiry of Object.keys(CONTACT_INQUIRY_LABELS)) {
       const result = await listContacts({inquiry,page:0,limit:1});

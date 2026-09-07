@@ -969,6 +969,15 @@ const inquiryCategorySql = `CASE WHEN e.event_type='unrecognized_message' THEN '
 const inquiryEventsSql = `(e.event_type='unrecognized_message' OR (e.event_type='menu_option' AND e.selected_option IS NOT NULL))`;
 const contactInquiriesSql = `ARRAY(SELECT DISTINCT ${inquiryCategorySql} FROM bot_analytics_events e
   WHERE e.contact_id=contacts.id AND ${inquiryEventsSql} ORDER BY 1) AS "inquiryTypes"`;
+const contactInquiryCountsSql = `(
+  SELECT COALESCE(jsonb_object_agg(sub.cat, sub.cnt), '{}'::jsonb)
+  FROM (
+    SELECT ${inquiryCategorySql} AS cat, count(*)::int AS cnt
+    FROM bot_analytics_events e
+    WHERE e.contact_id=contacts.id AND ${inquiryEventsSql} AND (${inquiryCategorySql}) IS NOT NULL
+    GROUP BY ${inquiryCategorySql}
+  ) sub
+) AS "inquiryCounts"`;
 
 function contactFilters(input: { q?: string; consent?: string; inquiry?: string }) {
   const values: unknown[] = []; const where = ['true'];
@@ -987,7 +996,7 @@ export async function listContacts(input: { q?: string; consent?: string; inquir
   const { values, where } = contactFilters(input);
   values.push(input.limit, input.page * input.limit);
   const [data, count] = await Promise.all([
-    query<Contact & { inquiryTypes: string[] }>(`SELECT ${contactColumns}, ${contactInquiriesSql} FROM contacts WHERE ${where.join(' AND ')} ORDER BY last_message_at DESC NULLS LAST, id DESC LIMIT $${values.length - 1} OFFSET $${values.length}`, values),
+    query<Contact & { inquiryTypes: string[]; inquiryCounts?: Record<string, number> }>(`SELECT ${contactColumns}, ${contactInquiriesSql}, ${contactInquiryCountsSql} FROM contacts WHERE ${where.join(' AND ')} ORDER BY last_message_at DESC NULLS LAST, id DESC LIMIT $${values.length - 1} OFFSET $${values.length}`, values),
     query<{ count: string }>(`SELECT count(*)::text AS count FROM contacts WHERE ${where.join(' AND ')}`, values.slice(0, -2)),
   ]);
   return { items: data.rows, total: Number(count.rows[0].count), page: input.page, limit: input.limit };
@@ -995,8 +1004,8 @@ export async function listContacts(input: { q?: string; consent?: string; inquir
 
 export async function exportContacts(input: { q?: string; consent?: string; inquiry?: string }) {
   const { values, where } = contactFilters(input);
-  return (await query<Contact & { inquiryTypes: string[] }>(`
-    SELECT ${contactColumns}, ${contactInquiriesSql}
+  return (await query<Contact & { inquiryTypes: string[]; inquiryCounts?: Record<string, number> }>(`
+    SELECT ${contactColumns}, ${contactInquiriesSql}, ${contactInquiryCountsSql}
     FROM contacts WHERE ${where.join(' AND ')} ORDER BY last_message_at DESC NULLS LAST, id DESC`, values)).rows;
 }
 

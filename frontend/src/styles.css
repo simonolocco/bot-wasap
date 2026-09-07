@@ -744,6 +744,15 @@ html[data-theme="dark"] .filter-select {
   border: 1px solid transparent; white-space: nowrap;
 }
 .chip-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.chip-count {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 17px; height: 16px; padding: 0 4px; border-radius: 99px;
+  font-size: 10px; font-weight: 800; line-height: 1;
+  background: rgba(0, 0, 0, 0.10); color: currentColor;
+  margin-left: 2px; white-space: nowrap; flex-shrink: 0;
+  letter-spacing: -0.02em;
+}
+html[data-theme="dark"] .chip-count { background: rgba(255, 255, 255, 0.16); }
 
 .chip-orange { background: #ffedd5; color: #c2410c; border-color: #fed7aa; }
 .chip-purple { background: #ede9fe; color: #6d28d9; border-color: #ddd6fe; }

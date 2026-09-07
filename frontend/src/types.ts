@@ -14,6 +14,7 @@ export type Contact = {
   notes: string;
   labels: string[];
   inquiryTypes?: string[];
+  inquiryCounts?: Record<string, number>;
   pipelineStatus: string;
   assignedTo: string | null;
   followUpAt: string | null;

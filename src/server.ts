@@ -424,7 +424,19 @@ app.post('/api/contacts', async (req, res) => {
 app.get('/api/contacts/export', async (req, res) => {
   const rows = await exportContacts({ q: qs(req.query.q), consent: qs(req.query.consent), inquiry: qs(req.query.inquiry) });
   const header = ['Nombre', 'Teléfono', 'Consentimiento', 'Etiquetas', 'Estado', 'Última actividad', 'Tipos de consulta'];
-  const body = rows.map(row => [row.name, row.phone, row.consentStatus, Array.isArray(row.labels) ? row.labels.join(', ') : '', row.pipelineStatus, row.lastMessageAt, row.inquiryTypes.map(type => CONTACT_INQUIRY_LABELS[type] || type).join(', ')].map(csvCell).join(','));
+  const body = rows.map(row => [
+    row.name,
+    row.phone,
+    row.consentStatus,
+    Array.isArray(row.labels) ? row.labels.join(', ') : '',
+    row.pipelineStatus,
+    row.lastMessageAt,
+    row.inquiryTypes.map(type => {
+      const label = CONTACT_INQUIRY_LABELS[type] || type;
+      const count = row.inquiryCounts?.[type] ?? 1;
+      return count > 1 ? `${label} (x${count})` : label;
+    }).join(', '),
+  ].map(csvCell).join(','));
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="contactos.csv"');
   return res.send(`\uFEFF${[header.map(csvCell).join(','), ...body].join('\r\n')}\r\n`);

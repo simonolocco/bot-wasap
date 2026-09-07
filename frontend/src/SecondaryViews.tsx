@@ -790,9 +790,24 @@ function Contacts({ onOpen }: { onOpen: (id: string) => void }) {
                         </td>
                         <td data-label="Tipos de consulta">
                           <div className="tags-container">
-                            {contact.inquiryTypes?.length ? inquiryOptions.filter(([id]) => contact.inquiryTypes?.includes(id)).map(([id, label, tone]) => (
-                              <span key={id} className={`chip-badge ${tone}`}>{inquiryOptions.findIndex(option => option[0] === id) + 1} · {label}</span>
-                            )) : <span className="tag-empty">Sin consultas registradas</span>}
+                            {contact.inquiryTypes?.length ? inquiryOptions.filter(([id]) => contact.inquiryTypes?.includes(id)).map(([id, label, tone]) => {
+                              const rawCount = contact.inquiryCounts?.[id];
+                              const count = typeof rawCount === 'number' && Number.isFinite(rawCount) && rawCount > 0 ? rawCount : 1;
+                              return (
+                                <span
+                                  key={id}
+                                  className={`chip-badge ${tone}`}
+                                  title={count > 1 ? `${label}: consultado ${count} veces` : label}
+                                >
+                                  <span>{label}</span>
+                                  {count > 1 && (
+                                    <span className="chip-count" aria-label={`Consultado ${count} veces`}>
+                                      ×{count}
+                                    </span>
+                                  )}
+                                </span>
+                              );
+                            }) : <span className="tag-empty">Sin consultas registradas</span>}
                           </div>
                         </td>
                         <td data-label="Etapa comercial">
