@@ -1,3 +1,4 @@
+import { useSheetFocus } from './useSheetFocus';
 import { FormEvent, Fragment, KeyboardEvent, Suspense, lazy, useEffect, useLayoutEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { api, formatDate, initials, mediaUrl, shortText, thumbnailUrl } from './api';
@@ -191,12 +192,15 @@ function Sidebar({
   onNavigate,
   unread,
   sidebarOpen,
+  onToggle,
 }: {
   view: View;
   onNavigate: (view: View) => void;
   unread: number;
   sidebarOpen: boolean;
+  onToggle: () => void;
 }) {
+  const navigationRef = useSheetFocus(sidebarOpen, onToggle, true);
   const items: Array<[View, IconName, string]> = [
     ['dashboard', 'dashboard', 'Resumen'],
     ['analytics', 'analytics', 'Analíticas'],
@@ -207,19 +211,29 @@ function Sidebar({
     ['templates', 'template', 'Plantillas'],
   ];
   return (
-    <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
+    <aside ref={navigationRef} className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
       <div className="brand-block">
         <span>ABASTOBOT</span>
         <strong>Bandeja comercial</strong>
       </div>
-      <nav className="sidebar-nav" aria-label="Navegación principal">
+      <div className="mobile-nav-heading"><strong>Secciones</strong><button type="button" aria-label="Cerrar menú" onClick={onToggle}><SvgIcon name="close" /></button></div>
+      <nav id="all-sections" className="sidebar-nav" aria-label="Navegación principal">
         {items.map(([id, icon, label]) => (
-          <button key={id} aria-label={label} title={label} className={`sidebar-link ${view === id ? 'active' : ''}`} onClick={() => onNavigate(id)}>
+          <button key={id} aria-label={label} title={label} aria-current={view === id ? 'page' : undefined} className={`sidebar-link ${view === id ? 'active' : ''}`} onClick={() => onNavigate(id)}>
             <SvgIcon name={icon} />
             <span>{label}</span>
             {id === 'inbox' && unread > 0 && <b>{unread}</b>}
           </button>
         ))}
+      </nav>
+      <nav className="mobile-primary-nav" aria-label="Accesos principales">
+        {items.filter(([id]) => ['inbox', 'tickets', 'contacts', 'orders'].includes(id)).map(([id, icon, label]) => (
+          <button type="button" key={id} aria-label={label} aria-current={view === id ? 'page' : undefined} className={`mobile-nav-link ${view === id ? 'active' : ''}`} onClick={() => onNavigate(id)}>
+            <SvgIcon name={icon} size={20} /><span>{id === 'inbox' ? 'Chats' : label}</span>
+            {id === 'inbox' && unread > 0 && <b>{unread > 99 ? '99+' : unread}</b>}
+          </button>
+        ))}
+        <button type="button" className={`mobile-nav-link ${['dashboard', 'analytics', 'templates'].includes(view) ? 'active' : ''}`} aria-label="Más secciones" aria-expanded={sidebarOpen} aria-controls="all-sections" onClick={onToggle}><SvgIcon name="moreHorizontal" size={20} /><span>Más</span></button>
       </nav>
       <div className="sidebar-bottom">
         <span className="connection-badge"><i /> WhatsApp conectado</span>
@@ -484,10 +498,12 @@ function ConversationList({
             value={search}
             onChange={e => onSearch(e.target.value)}
             placeholder="Buscar nombre, teléfono o mensaje"
+            aria-label="Buscar conversaciones"
           />
         </div>
         <select
           className="filter-select"
+          aria-label="Filtrar conversaciones"
           value={filter}
           onChange={e => onFilter(e.target.value)}
         >
@@ -1333,6 +1349,7 @@ function ContactDrawer({
   onClose: () => void;
   onSave: (patch: Partial<Contact>) => Promise<void>;
 }) {
+  const drawerRef = useSheetFocus(open, onClose, true);
   const contact = detail.contact;
   const [name, setName] = useState(contact.name || contact.publicName || '');
   const [stage, setStage] = useState(contact.pipelineStatus);
@@ -1362,7 +1379,7 @@ function ContactDrawer({
   }
 
   return (
-    <aside className={`contact-drawer ${open ? 'open' : ''}`}>
+    <aside ref={drawerRef} aria-label="Ficha comercial" className={`contact-drawer ${open ? 'open' : ''}`}>
       <div className="drawer-head">
         <div>
           <p className="eyebrow">Ficha comercial</p>
@@ -1849,6 +1866,33 @@ export default function App() {
   const selectedRef = useRef<string | null>(null);
   selectedRef.current = selectedId;
 
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    const update = () => {
+      if (viewport && viewport.scale !== 1) return;
+      const height = viewport?.height ?? window.innerHeight;
+      document.documentElement.style.setProperty('--visual-height', `${height}px`);
+      document.documentElement.style.setProperty('--visual-top', `${viewport?.offsetTop ?? 0}px`);
+      document.body.classList.toggle('keyboard-open', window.innerHeight - height > 120 && /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName || ''));
+    };
+    update();
+    viewport?.addEventListener('resize', update);
+    viewport?.addEventListener('scroll', update);
+    window.addEventListener('resize', update);
+    document.addEventListener('focusin', update);
+    document.addEventListener('focusout', update);
+    return () => {
+      viewport?.removeEventListener('resize', update);
+      viewport?.removeEventListener('scroll', update);
+      window.removeEventListener('resize', update);
+      document.removeEventListener('focusin', update);
+      document.removeEventListener('focusout', update);
+      document.body.classList.remove('keyboard-open');
+      document.documentElement.style.removeProperty('--visual-height');
+      document.documentElement.style.removeProperty('--visual-top');
+    };
+  }, []);
+
   // ── Auth ──
   useEffect(() => {
     void api('/api/auth/me')
@@ -2239,8 +2283,9 @@ export default function App() {
         onNavigate={navigate}
         unread={conversationStats?.unreadMessages ?? conversations.reduce((s, r) => s + (r.unreadCount || 0), 0)}
         sidebarOpen={sidebarOpen}
+        onToggle={() => setSidebarOpen(value => !value)}
       />
-      {sidebarOpen && <button className="sidebar-backdrop" aria-label="Cerrar menú" onClick={() => setSidebarOpen(false)} />}
+      {sidebarOpen && <button className="sidebar-backdrop" aria-label="Cerrar navegación" onClick={() => setSidebarOpen(false)} />}
 
       <main className="main-area">
         <Topbar

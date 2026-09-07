@@ -254,8 +254,8 @@ async function run() {
         const routes = [{ name: 'Resumen', expected: '.dashboard-hero' }, { name: 'Conversaciones', expected: '.inbox-shell' }, { name: 'Contactos', expected: '.data-page' }, { name: 'Pedidos', expected: '.data-page' }, { name: 'Plantillas', expected: '.data-page' }, { name: 'Analíticas', expected: '.analytics-section-card' }];
         for (const route of routes) {
           console.log('visiting route: ' + route.name);
-          const link = page.locator('.sidebar-nav .sidebar-link').filter({ hasText: route.name });
-          if (await page.locator('.menu-button').isVisible()) await page.locator('.menu-button').click();
+          const link = page.getByRole('button', { name: route.name, exact: true });
+          if (!await link.isVisible()) await page.getByRole('button', { name: 'Más secciones', exact: true }).click();
           await link.click();
           try {
             await page.waitForSelector(route.expected, { state: 'visible', timeout: 5000 });

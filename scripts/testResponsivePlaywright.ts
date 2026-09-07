@@ -23,8 +23,9 @@ async function noOverflow(page: Page, selectors: string[]) {
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'Document horizontal overflow');
 }
 async function navigate(page: Page, name: string) {
-  if (await page.locator('.menu-button').isVisible()) await page.locator('.menu-button').click();
-  await page.getByRole('button', { name, exact: true }).click();
+  const target = page.getByRole('button', { name, exact: true });
+  if (!await target.isVisible()) await page.getByRole('button', { name: 'Más secciones', exact: true }).click();
+  await target.click();
 }
 
 async function run() {

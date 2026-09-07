@@ -456,7 +456,8 @@ async function run() {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(baseUrl);
 
-    // Mobile bottom navigation should have Analíticas button
+    // Secondary destinations are reachable from the mobile More menu.
+    await page.getByRole('button', { name: 'Más secciones', exact: true }).click();
     const mobileAnalyticsBtn = page.getByRole('button', { name: 'Analíticas', exact: true });
     await mobileAnalyticsBtn.waitFor({ state: 'visible' });
     await mobileAnalyticsBtn.click();

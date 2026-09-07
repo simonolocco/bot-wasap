@@ -1009,26 +1009,26 @@ export default function AnalyticsView({
               <tbody>
                 {displayTrend.map(t => (
                   <tr key={t.date} className="trend-row interactive-row">
-                    <td>
+                    <td data-label="Fecha">
                       <div className="cell-primary">
                         <strong className="trend-date cell-title">{formatDateOnly(t.date)}</strong>
                       </div>
                     </td>
-                    <td style={{ textAlign: 'right' }}>
+                    <td data-label="Entrantes" style={{ textAlign: 'right' }}>
                       <strong className="metric-val text-ink">{t.incomingMessages.toLocaleString('es-AR')}</strong>
                     </td>
-                    <td style={{ textAlign: 'right' }}>
+                    <td data-label="Menú solicitado" style={{ textAlign: 'right' }}>
                       <span className="chip-badge chip-blue">{t.menuRequested.toLocaleString('es-AR')}</span>
                     </td>
-                    <td style={{ textAlign: 'right' }}>
+                    <td data-label="Opciones elegidas" style={{ textAlign: 'right' }}>
                       <span className="chip-badge chip-emerald">{t.optionsRecognized.toLocaleString('es-AR')}</span>
                     </td>
-                    <td style={{ textAlign: 'right' }}>
+                    <td data-label="No entendidos" style={{ textAlign: 'right' }}>
                       <span className={`chip-badge ${t.unrecognized > 0 ? 'chip-orange' : 'chip-badge'}`}>
                         {t.unrecognized.toLocaleString('es-AR')}
                       </span>
                     </td>
-                    <td style={{ textAlign: 'right' }}>
+                    <td data-label="Contactos únicos" style={{ textAlign: 'right' }}>
                       <span className="metric-sub font-semibold">{t.uniqueContacts.toLocaleString('es-AR')} pers.</span>
                     </td>
                   </tr>
@@ -1324,7 +1324,7 @@ export default function AnalyticsView({
                       const media = getMediaTagInfo(pat.text);
                       return (
                         <tr key={`${pat.normalizedText}-${idx}`} className="interactive-row">
-                          <td>
+                          <td data-label="Texto recibido">
                             <div className="pattern-content-cell">
                               {media.isMedia ? (
                                 <span className={`chip-badge ${media.tone} media-tag-pill`}>
@@ -1340,18 +1340,18 @@ export default function AnalyticsView({
                               )}
                             </div>
                           </td>
-                          <td style={{ textAlign: 'center' }}>
+                          <td data-label="Frecuencia" style={{ textAlign: 'center' }}>
                             <span className="chip-badge chip-orange font-bold">
                               {pat.count.toLocaleString('es-AR')} {pat.count === 1 ? 'vez' : 'veces'}
                             </span>
                           </td>
-                          <td style={{ textAlign: 'center' }}>
+                          <td data-label="Personas" style={{ textAlign: 'center' }}>
                             <span className="chip-badge chip-blue">
                               <Users size={11} />
                               <span>{pat.uniqueContacts.toLocaleString('es-AR')} pers.</span>
                             </span>
                           </td>
-                          <td style={{ textAlign: 'right' }}>
+                          <td data-label="Última vez" style={{ textAlign: 'right' }}>
                             <span className="cell-time">{formatDate(pat.lastSeenAt, true)}</span>
                           </td>
                         </tr>
@@ -1390,10 +1390,10 @@ export default function AnalyticsView({
                       const media = getMediaTagInfo(item.rawText || '');
                       return (
                         <tr key={item.id} className="interactive-row">
-                          <td>
+                          <td data-label="Fecha">
                             <span className="cell-time">{formatDate(item.createdAt, true)}</span>
                           </td>
-                          <td>
+                          <td data-label="Contacto">
                             <div className="contact-meta-cell">
                               <div className="contact-avatar-pill">
                                 {getInitials(cleanName(item.contactName, item.phone))}
@@ -1404,7 +1404,7 @@ export default function AnalyticsView({
                               </div>
                             </div>
                           </td>
-                          <td>
+                          <td data-label="Texto original">
                             <div className="pattern-content-cell">
                               {media.isMedia ? (
                                 <span className={`chip-badge ${media.tone} media-tag-pill`}>
@@ -1420,7 +1420,7 @@ export default function AnalyticsView({
                               )}
                             </div>
                           </td>
-                          <td style={{ textAlign: 'right' }}>
+                          <td data-label="Acciones" style={{ textAlign: 'right' }}>
                             <button
                               type="button"
                               className="action-open-chat-btn"

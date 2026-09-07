@@ -424,7 +424,7 @@ html[data-theme="dark"] .filter-select {
 .message-bubble.incoming .message-actions-trigger { right: -34px; }
 .message-bubble.outgoing .message-actions-trigger { left: -34px; }
 .message-bubble:hover .message-actions-trigger, .message-actions-trigger:focus-visible { opacity: 1; pointer-events: auto; }
-@media (max-width: 768px) {
+@media (max-width: 768px), (max-width: 950px) and (max-height: 500px) {
   .message-actions-trigger { display: flex; opacity: 1; pointer-events: auto; position: static; margin-left: auto; margin-top: 4px; border: none; background: transparent; height: 24px; width: 24px; }
   .message-bubble.outgoing .message-actions-trigger { margin-left: 0; margin-right: auto; }
 }
@@ -2441,7 +2441,7 @@ html[data-theme="dark"] .filter-select {
   .main-view { padding: 20px 18px 30px; }
 }
 
-@media (max-width: 768px) {
+@media (max-width: 768px), (max-width: 950px) and (max-height: 500px) {
   .app-shell {
     display: block;
     padding-bottom: calc(62px + env(safe-area-inset-bottom, 0px));

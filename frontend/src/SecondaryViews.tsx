@@ -1,3 +1,4 @@
+import { useSheetFocus } from './useSheetFocus';
 import { useEffect, useMemo, useState } from 'react';
 import { api, cachedApi, formatDate, formatDateOnly, initials, invalidateApi } from './api';
 import AnalyticsView from './AnalyticsView';
@@ -589,29 +590,29 @@ function Tickets({ onOpen }: { onOpen: (id: string) => void }) {
 
                     return (
                       <tr key={ticket.id} className="interactive-row" onClick={() => onOpen(ticket.contactId)}>
-                        <td>
+                        <td data-label="Tipo">
                           <span className={`chip-badge ${isOrder ? 'chip-orange' : 'chip-purple'}`}>
                             <Icon name={isOrder ? 'package' : 'help'} size={12} />
                             <span>{isOrder ? 'Pedido' : 'Pregunta'}</span>
                           </span>
                         </td>
-                        <td>
+                        <td data-label="Contacto y consulta">
                           <div className="cell-primary">
                             <strong className="cell-title">{cName}</strong>
                             <p className="cell-subtitle">{ticket.question || ticket.lastMessage || 'Sin mensaje de consulta'}</p>
                             {ticket.phone && <small className="cell-extra">{ticket.phone}</small>}
                           </div>
                         </td>
-                        <td>
+                        <td data-label="Estado">
                           <span className={`chip-badge chip-${statusTone}`}>
                             <span className="dot" />
                             <span>{displayStatusText}</span>
                           </span>
                         </td>
-                        <td>
+                        <td data-label="Actualizado">
                           <time className="cell-time">{formatDate(ticket.updatedAt || ticket.createdAt, true)}</time>
                         </td>
-                        <td style={{ textAlign: 'right' }}>
+                        <td data-label="Acciones" style={{ textAlign: 'right' }}>
                           <button
                             className="button secondary sm action-cell-btn"
                             type="button"
@@ -778,7 +779,7 @@ function Contacts({ onOpen }: { onOpen: (id: string) => void }) {
 
                     return (
                       <tr key={contact.id} className="interactive-row" onClick={() => onOpen(contact.id)}>
-                        <td>
+                        <td data-label="Cliente">
                           <div className="contact-meta-cell">
                             <span className="avatar mini-avatar">{initials(contact)}</span>
                             <div className="cell-primary">
@@ -787,25 +788,25 @@ function Contacts({ onOpen }: { onOpen: (id: string) => void }) {
                             </div>
                           </div>
                         </td>
-                        <td>
+                        <td data-label="Tipos de consulta">
                           <div className="tags-container">
                             {contact.inquiryTypes?.length ? inquiryOptions.filter(([id]) => contact.inquiryTypes?.includes(id)).map(([id, label, tone]) => (
                               <span key={id} className={`chip-badge ${tone}`}>{inquiryOptions.findIndex(option => option[0] === id) + 1} · {label}</span>
                             )) : <span className="tag-empty">Sin consultas registradas</span>}
                           </div>
                         </td>
-                        <td>
+                        <td data-label="Etapa comercial">
                           <span className={`chip-badge ${stageConfig.tone}`}>
                             <span className="dot" />
                             <span>{stageConfig.label}</span>
                           </span>
                         </td>
-                        <td>
+                        <td data-label="Atención">
                           <span className={`chip-badge ${contact.botPaused ? 'chip-amber' : 'chip-emerald'}`}>
                             <span>{contact.botPaused ? '👤 Atención humana' : '🤖 Bot activo'}</span>
                           </span>
                         </td>
-                        <td>
+                        <td data-label="Etiquetas">
                           <div className="tags-container">
                             {contact.labels?.length ? (
                               contact.labels.slice(0, 3).map(label => (
@@ -816,10 +817,10 @@ function Contacts({ onOpen }: { onOpen: (id: string) => void }) {
                             )}
                           </div>
                         </td>
-                        <td>
+                        <td data-label="Última actividad">
                           <time className="cell-time">{formatDate(contact.lastMessageAt, true)}</time>
                         </td>
-                        <td style={{ textAlign: 'right' }}>
+                        <td data-label="Acciones" style={{ textAlign: 'right' }}>
                           <div className="row-actions-group" onClick={e => e.stopPropagation()}>
                             <button
                               className="button secondary sm icon-only"
@@ -958,35 +959,35 @@ function Orders({ onOpenContact }: { onOpenContact?: (id: string) => void }) {
 
                     return (
                       <tr key={order.id} className="interactive-row" onClick={() => setSelected(order)}>
-                        <td>
+                        <td data-label="Pedido">
                           <span className="order-tag-id">#{order.id}</span>
                         </td>
-                        <td>
+                        <td data-label="Cliente">
                           <div className="cell-primary">
                             <strong className="cell-title">{cName}</strong>
                             <small className="cell-subtitle mono-phone">{order.phone}</small>
                           </div>
                         </td>
-                        <td>
+                        <td data-label="Productos">
                           <div className="order-detail-snippet">
                             {order.detail || 'Sin detalle de productos especificado.'}
                           </div>
                         </td>
-                        <td>
+                        <td data-label="Monto total">
                           <strong className="order-total-highlight">
                             {totalNum > 0 ? totalNum.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' }) : '—'}
                           </strong>
                         </td>
-                        <td>
+                        <td data-label="Estado">
                           <span className={`chip-badge ${stateConfig.tone}`}>
                             <span className="dot" />
                             <span>{stateConfig.label}</span>
                           </span>
                         </td>
-                        <td>
+                        <td data-label="Fecha">
                           <time className="cell-time">{formatDate(order.createdAt, true)}</time>
                         </td>
-                        <td style={{ textAlign: 'right' }}>
+                        <td data-label="Acciones" style={{ textAlign: 'right' }}>
                           <button
                             className="button secondary sm action-cell-btn"
                             type="button"
@@ -1037,18 +1038,14 @@ function OrderModal({
   onClose: () => void;
   onOpenChat?: (order: OrderRow) => void;
 }) {
-  useEffect(() => {
-    const key = (event: KeyboardEvent) => event.key === 'Escape' && onClose();
-    window.addEventListener('keydown', key);
-    return () => window.removeEventListener('keydown', key);
-  }, [onClose]);
+  const modalRef = useSheetFocus(true, onClose);
 
   const total = Number(order.grandTotal || 0);
   const stateConfig = orderStates[order.status] || { label: order.status, tone: 'tone-blue' };
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
-      <section className="modal-sheet order-modal-sheet" role="dialog" aria-modal="true" aria-labelledby="order-modal-title">
+      <section ref={modalRef} className="modal-sheet order-modal-sheet" role="dialog" aria-modal="true" aria-labelledby="order-modal-title">
         {/* Sheet Header */}
         <header className="sheet-header">
           <div className="sheet-header-left">
@@ -1247,6 +1244,7 @@ function Templates() {
    CONTACT CREATE MODAL
    ═══════════════════════════════════════════════════════ */
 function ContactCreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (contact: Contact) => void }) {
+  const modalRef = useSheetFocus(true, onClose);
   const [phone, setPhone] = useState('');
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
@@ -1271,7 +1269,7 @@ function ContactCreateModal({ onClose, onCreated }: { onClose: () => void; onCre
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
-      <section className="modal-sheet contact-modal-sheet" role="dialog" aria-modal="true" aria-labelledby="contact-modal-title">
+      <section ref={modalRef} className="modal-sheet contact-modal-sheet" role="dialog" aria-modal="true" aria-labelledby="contact-modal-title">
         <header className="sheet-header">
           <div className="sheet-header-left">
             <span className="section-kicker">Base Comercial CRM</span>
@@ -1286,7 +1284,9 @@ function ContactCreateModal({ onClose, onCreated }: { onClose: () => void; onCre
             <label htmlFor="contact-phone">Número de WhatsApp (con código de país)</label>
             <input
               id="contact-phone"
-              autoFocus
+              type="tel"
+              inputMode="tel"
+              autoComplete="tel"
               required
               value={phone}
               onChange={event => setPhone(event.target.value)}
