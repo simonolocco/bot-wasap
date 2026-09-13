@@ -27,6 +27,14 @@ async function main() {
   assert.equal(meaningful.answer?.outcome, 'clarify');
   assert.equal(providerCalls, 1);
 
+  const location = await resolveCustomerAiResponse({
+    question: '¿Eres de Río Cuarto?', catalog,
+    complete: async () => { throw new Error('La pregunta de ubicación debe resolverse aun sin proveedor.'); },
+    allowGeneration: true, labels: [],
+  });
+  assert.match(location.answer?.text ?? '', /Av\. Juan B\. Justo 5048|Córdoba Capital/,
+    'La consulta de la captura debe mostrar la respuesta concreta de ubicación.');
+
   const fallbackRule = await resolveCustomerAiResponse({
     question: '¿Emiten factura A?', catalog, complete: unknownComplete, allowGeneration: true, labels: [],
     savedRule: { id: 'bad-rule', answer: 'No entendí', label: 'pregunta-no-entendible', labelId: 'fallback' },

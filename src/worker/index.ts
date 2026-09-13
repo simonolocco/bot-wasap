@@ -1,13 +1,15 @@
 import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
 import { closePool } from '../db/pool';
-import { claimDueAdvisorFollowup, claimJob, recoverStaleAdvisorFollowups, recoverStaleJobs, recoverStaleOutgoingMessages, workerHeartbeat } from '../db/repository';
+import { claimAiPreviewJob, claimDueAdvisorFollowup, claimJob, recoverStaleAdvisorFollowups, recoverStaleJobs, recoverStaleOutgoingMessages, workerHeartbeat } from '../db/repository';
 import { processDueAdvisorFollowup, processIncomingJob } from '../services/botProcessor';
+import { processAiPreviewJob } from '../services/aiPreviewProcessor';
 import { processMediaJob } from '../services/mediaStorage';
 
 const workerId = process.env.WORKER_ID ?? `worker-${randomUUID()}`;
 const pollMs = Number(process.env.WORKER_POLL_MS ?? '250');
 const concurrency = Math.max(1, Number(process.env.WORKER_CONCURRENCY ?? '16'));
+const previewConcurrency = Math.min(4, Math.max(1, Number(process.env.AI_PREVIEW_CONCURRENCY ?? '1')));
 let stopped = false;
 
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -45,6 +47,22 @@ async function runAdvisorFollowupLane() {
   }
 }
 
+async function runAiPreviewLane() {
+  while (!stopped) {
+    try {
+      const job = await claimAiPreviewJob(workerId);
+      if (!job) {
+        await pause(1_000);
+        continue;
+      }
+      await processAiPreviewJob(job);
+    } catch (error) {
+      console.error('[worker] Error del carril de vistas previas:', error);
+      await pause(1_000);
+    }
+  }
+}
+
 async function maintenanceLoop() {
   let lastOutboundRecoveryAt = 0;
   while (!stopped) {
@@ -62,10 +80,12 @@ async function maintenanceLoop() {
 }
 process.on('SIGTERM', () => { stopped = true; });
 process.on('SIGINT', () => { stopped = true; });
-console.log(`[worker] Iniciado ${workerId} (concurrencia ${concurrency})`);
+console.log(`[worker] Iniciado ${workerId} (mensajes ${concurrency}, vistas previas ${previewConcurrency})`);
 void (async () => {
   await Promise.all([recoverStaleJobs(), recoverStaleAdvisorFollowups(), recoverStaleOutgoingMessages()]);
-  await Promise.all([maintenanceLoop(), runAdvisorFollowupLane(), ...Array.from({ length: concurrency }, () => runLane())]);
+  await Promise.all([maintenanceLoop(), runAdvisorFollowupLane(),
+    ...Array.from({ length: previewConcurrency }, () => runAiPreviewLane()),
+    ...Array.from({ length: concurrency }, () => runLane())]);
   await closePool();
 })().catch(error => {
   console.error('[worker] Finalización inesperada:', error);

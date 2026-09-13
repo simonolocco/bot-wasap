@@ -276,6 +276,8 @@ export type AiQueryLog = {
   outcome: string; source: string; aiEnabled: boolean; matchedAnswerRuleId: string | null; matchedAnswerLabelId?: string | null; label: string | null; model: string | null;
   suggestedLabelId?: string | null; suggestedLabelName?: string | null; classificationMethod?: string | null; classificationConfidence?: number | null;
   reviewStatus?: 'pending' | 'resolved' | 'ignored'; reviewedAt?: string | null; reviewedBy?: string | null;
+  previewAnswer?: string | null; previewOutcome?: string | null; previewSource?: string | null; previewModel?: string | null;
+  previewTokens?: number | null; previewElapsedMs?: number | null; previewErrorCode?: string | null; previewGeneratedAt?: string | null;
   tokens: number; elapsedMs: number; errorCode: string | null; createdAt: string; updatedAt: string;
 };
 export type AiData = {

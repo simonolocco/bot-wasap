@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "ai:preview": "ts-node scripts/aiPreview.ts",
+    "ai:backfill-previews": "node dist/backfillAiPreviews.js",
     "test:ai": "ts-node scripts/testAiAssistant.ts",
     "test:ai:template": "ts-node scripts/testAiAnswerTemplate.ts",
     "test:ai:intent": "ts-node scripts/testAiIntentMatcher.ts",
@@ -12,7 +13,7 @@
     "test:ai:label-frequency": "ts-node scripts/testAiLabelFrequencyPolicy.ts",
     "test:ai:routing": "ts-node scripts/testAiRuntimeRouting.ts",
     "test:ai:admin-ui": "ts-node scripts/testAiAdminPlaywright.ts",
-    "test:ai:db": "ts-node scripts/testAiLearningRepository.ts",
+    "test:ai:db": "ts-node scripts/testAiLearningRepository.ts && ts-node scripts/testAiPreviewPipeline.ts",
     "test:ai:migration": "ts-node scripts/testAiResponseFirstMigration.ts",
     "test:ai:policy": "ts-node scripts/testAiPolicy.ts",
     "replay:corpus": "ts-node scripts/replayCorpus.ts",

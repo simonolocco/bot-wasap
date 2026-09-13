@@ -2885,6 +2885,15 @@ html[data-theme="dark"] .chip-count { background: rgba(255, 255, 255, 0.16); }
 .ai-query-meta { color: var(--muted); font-size: 12px; }
 .ai-query-header time { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .ai-topic-row small { color: var(--muted); }
+.ai-preview-result { display: grid; gap: 9px; padding: 14px 15px; border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--line)); border-radius: 10px; background: color-mix(in srgb, var(--accent-soft) 42%, var(--surface)); }
+.ai-preview-result.is-unavailable { border-color: color-mix(in srgb, var(--warning) 30%, var(--line)); background: color-mix(in srgb, var(--warning-soft) 46%, var(--surface)); }
+.ai-preview-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.ai-preview-heading > div { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
+.ai-preview-heading span { color: var(--primary-strong); font-size: 11px; font-weight: 850; letter-spacing: .02em; text-transform: uppercase; }
+.ai-preview-heading small { color: var(--muted); font-size: 11px; }
+.ai-preview-result p { margin: 0; max-width: 75ch; white-space: pre-wrap; color: var(--ink); font-size: 14px; line-height: 1.58; }
+.ai-preview-note { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.ai-preview-refresh.button { min-height: 32px; padding: 5px 10px; flex: 0 0 auto; }
 .ai-customer-result { display: grid; gap: 5px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
 .ai-customer-result > span { color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; }
 .ai-customer-result p { margin: 0; max-width: 75ch; white-space: pre-wrap; color: var(--ink-soft); font-size: 13px; line-height: 1.52; }
@@ -2920,6 +2929,8 @@ html[data-theme="dark"] .chip-count { background: rgba(255, 255, 255, 0.16); }
   .ai-filters label, .ai-filters input { width: 100%; min-width: 0; }
   .ai-query-header { align-items: flex-start; }
   .ai-query-header time { width: 100%; }
+  .ai-preview-heading { align-items: stretch; flex-direction: column; }
+  .ai-preview-refresh.button { width: 100%; }
   .ai-query-actions, .ai-query-footer { align-items: stretch; flex-direction: column; }
   .ai-query-actions > div { width: 100%; }
   .ai-query-actions .button, .ai-query-footer .button { flex: 1; }

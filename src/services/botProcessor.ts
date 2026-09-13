@@ -5,7 +5,7 @@ import {
   markOutgoingFailed, markOutgoingSent, prepareOutgoingMessage, recordAiQuery, recordBotInteractionEvent, recordSupportTicketQuestion,
   retryAdvisorFollowup, retryJob, scheduleAdvisorFollowup, updateSession,
   ensureAiAnswerLabelDraft, findAiAnswerRule, getAiSettings, loadActiveAiLabelExamples, promoteAiLabelCandidateQueries,
-  recordAiLabelCandidateObservation, saveAiAnswerRule,
+  enqueueAiQueryPreview, recordAiLabelCandidateObservation, saveAiAnswerRule,
 } from '../db/repository';
 import {
   advisorReply, BUSINESS_ADDRESS, BUSINESS_SCHEDULE, EMPTY_ORDER_MESSAGE, FAQ_GENERAL, FAQ_OTHER_NO_ID, FAQ_OTHER_PROMPT,
@@ -245,7 +245,8 @@ export async function processIncomingJob(job: { id: string; contact_id: string; 
         createdAt: eventTime,
       });
       if (incoming.type === 'text' && rawText) {
-        await recordAiQuery({ contactId: job.contact_id, providerMessageId: event.provider_message_id, question: rawText, outcome: 'paused', source: 'production', aiEnabled: false });
+        const logged = await recordAiQuery({ contactId: job.contact_id, providerMessageId: event.provider_message_id, question: rawText, outcome: 'paused', source: 'production', aiEnabled: false });
+        if (logged?.id) await enqueueAiQueryPreview(logged.id);
       }
 
       await completeJob(job.id);
@@ -325,13 +326,14 @@ export async function processIncomingJob(job: { id: string; contact_id: string; 
       }
 
       if (!resolution.answer) {
-        await recordAiQuery({
+        const logged = await recordAiQuery({
           contactId: job.contact_id, providerMessageId: event.provider_message_id, question: rawText,
           answer: '', outcome: 'disabled', source: 'production', aiEnabled,
           reviewStatus: unintelligible ? 'ignored' : 'pending',
           suggestedLabelId, suggestedLabelName: suggestedName,
           classificationMethod, classificationConfidence: confidence,
         });
+        if (logged?.id) await enqueueAiQueryPreview(logged.id);
         if (unintelligible) {
           await recordBotInteractionEvent({ contactId: job.contact_id, providerMessageId: event.provider_message_id,
             eventType: 'unrecognized_message', rawText, normalizedText: normText, messageType: incoming.type, createdAt: eventTime,
@@ -356,7 +358,10 @@ export async function processIncomingJob(job: { id: string; contact_id: string; 
             reviewStatus: withheldOutcome === 'disabled' ? 'pending' : 'resolved',
             suggestedLabelId, suggestedLabelName: suggestedName, classificationMethod,
             classificationConfidence: confidence, model: answer.model, tokens: answer.tokens,
-            elapsedMs: answer.elapsedMs, errorCode: becameStale ? 'stale-before-send' : null });
+            elapsedMs: answer.elapsedMs, errorCode: becameStale ? 'stale-before-send' : null,
+            previewAnswer: answer.text, previewOutcome: answer.outcome, previewSource: resolution.source,
+            previewModel: answer.model, previewTokens: answer.tokens, previewElapsedMs: answer.elapsedMs,
+            previewErrorCode: answer.errorCode ?? null });
           await completeJob(job.id);
           return;
         }
@@ -401,7 +406,10 @@ export async function processIncomingJob(job: { id: string; contact_id: string; 
           matchedAnswerRuleId: matchedRuleId, matchedAnswerLabelId: matchedLabelId,
           suggestedLabelId, suggestedLabelName: suggestedName,
           classificationMethod, classificationConfidence: confidence,
-          model: answer.model, tokens: answer.tokens, elapsedMs: answer.elapsedMs, errorCode: answer.errorCode ?? null });
+          model: answer.model, tokens: answer.tokens, elapsedMs: answer.elapsedMs, errorCode: answer.errorCode ?? null,
+          previewAnswer: answer.text, previewOutcome: answer.outcome, previewSource: resolution.source,
+          previewModel: answer.model, previewTokens: answer.tokens, previewElapsedMs: answer.elapsedMs,
+          previewErrorCode: answer.errorCode ?? null });
         await recordBotInteractionEvent({ contactId: job.contact_id, providerMessageId: event.provider_message_id,
           eventType: unintelligible ? 'unrecognized_message' : 'flow_command', rawText, normalizedText: normText,
           messageType: incoming.type, createdAt: eventTime,

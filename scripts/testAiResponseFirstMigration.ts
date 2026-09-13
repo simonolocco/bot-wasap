@@ -39,6 +39,8 @@ async function main() {
       CHECK (review_status <> 'pending' OR suggested_label_id IS NOT NULL)`);
     const sql = fs.readFileSync(path.resolve('db/migrations/026_ai_response_first.sql'), 'utf8');
     await query(sql);
+    const previewSql = fs.readFileSync(path.resolve('db/migrations/027_ai_response_previews.sql'), 'utf8');
+    await query(previewSql);
 
     const rows = await query<{ id: string; suggestedLabelId: string | null; suggestedLabelName: string | null; classificationMethod: string | null; reviewStatus: string }>(`
       SELECT id, suggested_label_id AS "suggestedLabelId", suggested_label_name AS "suggestedLabelName",
@@ -53,6 +55,10 @@ async function main() {
     assert.equal(byId.get(meaningful.id)?.classificationMethod, 'needs-review');
     assert.equal((await query<{ active: boolean }>('SELECT active FROM ai_answer_rules WHERE id=$1', [fallbackRule.rows[0].id])).rows[0].active, false);
     assert.equal(Number((await query<{ count: string }>(`SELECT count(*)::text AS count FROM pg_constraint WHERE conname='ai_query_logs_pending_label_required'`)).rows[0].count), 0);
+    assert.equal(Number((await query<{ count: string }>(`SELECT count(*)::text AS count FROM information_schema.columns
+      WHERE table_name='ai_query_logs' AND column_name IN ('preview_answer','preview_outcome','preview_source','preview_generated_at','preview_generation_id')`)).rows[0].count), 5);
+    assert.equal(Number((await query<{ count: string }>(`SELECT count(*)::text AS count FROM information_schema.columns
+      WHERE table_name='jobs' AND column_name='ai_query_log_id'`)).rows[0].count), 1);
     assert.equal((await listAiAnswerLabels()).some(label => label.normalizedName === 'pregunta-no-entendible'), false,
       'La categoría interna no debe aparecer en el catálogo reutilizable.');
     console.log('AI response-first migration tests: OK');

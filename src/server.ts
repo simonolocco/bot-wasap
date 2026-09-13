@@ -18,6 +18,7 @@ import { createOpenRouterClient } from './ai/openRouter';
 import { readCatalog } from './ai/catalog';
 import { resolveCustomerAiResponse } from './ai/queryResolver';
 import { deriveSuggestedAiTopic, learningConfidence } from './ai/runtimePolicy';
+import { generateAndStoreAiQueryPreview } from './services/aiPreviewProcessor';
 import { checkMediaStorage, ensureMediaCached, ensureMediaThumbnail, isSafeUpload, markMediaUploadFailed, storeMedia } from './services/mediaStorage';
 import { parseIncoming } from './whatsappIncoming';
 
@@ -274,7 +275,10 @@ app.post('/api/ai/test', async (req, res) => {
     suggestedLabelName: suggestedName ?? resolution.matchedLabel?.name ?? savedRule?.label ?? null,
     classificationMethod: resolution.classification.method,
     classificationConfidence: learningConfidence(resolution.classification, answer),
-    model: answer.model, tokens: answer.tokens, elapsedMs: answer.elapsedMs, errorCode: answer.errorCode ?? null });
+    model: answer.model, tokens: answer.tokens, elapsedMs: answer.elapsedMs, errorCode: answer.errorCode ?? null,
+    previewAnswer: answer.text, previewOutcome: answer.outcome, previewSource: resolution.source,
+    previewModel: answer.model, previewTokens: answer.tokens, previewElapsedMs: answer.elapsedMs,
+    previewErrorCode: answer.errorCode ?? null });
   await audit(actor, 'ai_manual_test', undefined, undefined, { queryId: log?.id ?? null });
   return res.json({ answer: { ...answer, sendMenuAfter: resolution.sendMenuAfter,
     label: resolution.matchedLabel?.name ?? savedRule?.label ?? null, responseSource: resolution.source }, query: log });
@@ -324,6 +328,16 @@ app.patch('/api/ai/queries/:id/resolve', async (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: 'Elegí una etiqueta y completá su respuesta si todavía está vacía.' });
   const item = await resolveAiQuery(req.params.id, parsed.data, req.session.user ?? 'admin');
   return item ? res.json(item) : res.status(404).json({ error: 'Consulta no encontrada.' });
+});
+app.post('/api/ai/queries/:id/preview', async (req, res) => {
+  const result = await generateAndStoreAiQueryPreview(req.params.id, { force: true });
+  if (result.status === 'missing') return res.status(404).json({ error: 'Consulta no encontrada.' });
+  if (result.status === 'superseded' || !result.item) {
+    return res.status(409).json({ error: 'Otra simulación más reciente reemplazó este resultado. Volvé a cargar para verla.' });
+  }
+  await audit(req.session.user ?? 'admin', 'ai_query_preview_regenerated', result.item.contactId ?? undefined, undefined,
+    { queryId: req.params.id, previewOutcome: result.item.previewOutcome });
+  return res.json(result.item);
 });
 app.patch('/api/ai/queries/:id/noise', async (req, res) => {
   const item = await markAiQueryAsNoise(req.params.id, req.session.user ?? 'admin');

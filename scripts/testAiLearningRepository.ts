@@ -2,10 +2,15 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { closePool, query } from '../src/db/pool';
 import {
+  claimAiQueryPreviewGeneration,
+  claimAiPreviewJob,
+  completeJob,
   createAiAnswerLabel,
+  enqueueAiQueryPreview,
   ensureAiAnswerLabelDraft,
   findAiAnswerRule,
   listAiAnswerLabels,
+  listAiQueryPreviewCandidates,
   listAiQueryLogs,
   markAiQueryAsNoise,
   recordAiQuery,
@@ -13,6 +18,7 @@ import {
   resolveAiQuery,
   saveAiAnswerRule,
   updateAiAnswerLabel,
+  updateAiQueryPreview,
 } from '../src/db/repository';
 
 async function main() {
@@ -119,6 +125,49 @@ async function main() {
     const unlabeled = await recordAiQuery({ question: `${marker} consulta entendible sin tema`, providerMessageId: unlabeledProvider,
       outcome: 'disabled', source: 'production', reviewStatus: 'pending' });
     assert.equal(unlabeled.suggestedLabelId, null, 'Una consulta entendible pendiente puede no tener etiqueta todavía.');
+
+    const previewText = 'Esta es la respuesta privada que habría usado la IA.';
+    const staleClaim = await claimAiQueryPreviewGeneration(unlabeled.id, true);
+    const currentClaim = await claimAiQueryPreviewGeneration(unlabeled.id, true);
+    assert.equal(staleClaim.status, 'claimed');
+    assert.equal(currentClaim.status, 'claimed');
+    const staleUpdate = await updateAiQueryPreview(unlabeled.id, { generationId: staleClaim.context!.generationId,
+      answer: 'Una respuesta anterior que no debe ganar.', outcome: 'answered', source: 'generated' });
+    assert.equal(staleUpdate, null, 'Una generación vieja nunca debe sobrescribir una vista previa más nueva.');
+    await updateAiQueryPreview(unlabeled.id, { generationId: currentClaim.context!.generationId,
+      answer: previewText, outcome: 'answered', source: 'generated',
+      model: 'qa-preview', tokens: 12, elapsedMs: 34, suggestedLabelName: `${marker}-tema`,
+      classificationMethod: 'semantic', classificationConfidence: .91 });
+    const previewed = (await listAiQueryLogs({ reviewStatus: 'pending', q: marker })).items.find(item => item.id === unlabeled.id);
+    assert.equal(previewed?.answer, '', 'La vista previa no debe fingir que el texto fue enviado al cliente.');
+    assert.equal(previewed?.previewAnswer, previewText);
+    assert.equal(previewed?.previewOutcome, 'answered');
+    assert.equal(previewed?.previewSource, 'generated');
+    assert.ok(previewed?.previewGeneratedAt);
+
+    const failedClaim = await claimAiQueryPreviewGeneration(unlabeled.id, true);
+    assert.equal(failedClaim.status, 'claimed');
+    await updateAiQueryPreview(unlabeled.id, { generationId: failedClaim.context!.generationId,
+      answer: 'Respuesta temporal de contingencia.', outcome: 'unavailable', source: 'generated',
+      classificationMethod: 'none', classificationConfidence: 0, updateSuggestion: false });
+    const afterFailure = (await listAiQueryLogs({ reviewStatus: 'pending', q: marker })).items.find(item => item.id === unlabeled.id);
+    assert.equal(afterFailure?.suggestedLabelName, `${marker}-tema`,
+      'Un fallo temporal no debe borrar una clasificación válida que ya existía.');
+
+    const firstPreviewPage = await listAiQueryPreviewCandidates({ force: true, limit: 2 });
+    assert.equal(firstPreviewPage.length, 2);
+    const secondPreviewPage = await listAiQueryPreviewCandidates({ force: true, limit: 2,
+      after: firstPreviewPage[firstPreviewPage.length - 1] });
+    assert.equal(firstPreviewPage.some(first => secondPreviewPage.some(second => second.id === first.id)), false,
+      'El cursor del reprocesamiento no debe volver a elegir el lote anterior.');
+
+    await Promise.all([enqueueAiQueryPreview(unlabeled.id), enqueueAiQueryPreview(unlabeled.id)]);
+    const activeJobs = await query<{ count: string }>(`SELECT count(*)::text AS count FROM jobs
+      WHERE type='ai_preview' AND ai_query_log_id=$1 AND status IN ('queued','retrying','processing')`, [unlabeled.id]);
+    assert.equal(Number(activeJobs.rows[0].count), 1, 'Una consulta no debe tener dos vistas previas activas.');
+    const previewJob = await claimAiPreviewJob('qa-preview-worker');
+    assert.equal(previewJob?.ai_query_log_id, unlabeled.id);
+    await completeJob(previewJob!.id);
 
     console.log('AI learning repository tests: OK');
   } finally {

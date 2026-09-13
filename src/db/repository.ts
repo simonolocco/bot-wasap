@@ -53,6 +53,8 @@ export type AiQueryLog = {
   outcome: string; source: string; aiEnabled: boolean; matchedAnswerRuleId: string | null; matchedAnswerLabelId: string | null; label: string | null; model: string | null;
   suggestedLabelId: string | null; suggestedLabelName: string | null; classificationMethod: string | null; classificationConfidence: number | null;
   reviewStatus: 'pending' | 'resolved' | 'ignored'; reviewedAt: string | null; reviewedBy: string | null;
+  previewAnswer: string | null; previewOutcome: string | null; previewSource: string | null; previewModel: string | null;
+  previewTokens: number | null; previewElapsedMs: number | null; previewErrorCode: string | null; previewGeneratedAt: string | null;
   tokens: number; elapsedMs: number; errorCode: string | null; createdAt: string; updatedAt: string;
 };
 
@@ -111,6 +113,9 @@ const aiQueryColumns = `q.id, q.contact_id AS "contactId", COALESCE(NULLIF(c.pub
   q.matched_answer_rule_id AS "matchedAnswerRuleId", q.matched_label_id AS "matchedAnswerLabelId", COALESCE(al.name, r.intent_label, sl.name, q.suggested_label_name) AS label, q.model, q.tokens, q.elapsed_ms AS "elapsedMs", q.error_code AS "errorCode",
   q.suggested_label_id AS "suggestedLabelId", q.suggested_label_name AS "suggestedLabelName", q.classification_method AS "classificationMethod",
   q.classification_confidence AS "classificationConfidence", q.review_status AS "reviewStatus", q.reviewed_at AS "reviewedAt", q.reviewed_by AS "reviewedBy",
+  q.preview_answer AS "previewAnswer", q.preview_outcome AS "previewOutcome", q.preview_source AS "previewSource",
+  q.preview_model AS "previewModel", q.preview_tokens AS "previewTokens", q.preview_elapsed_ms AS "previewElapsedMs",
+  q.preview_error_code AS "previewErrorCode", q.preview_generated_at AS "previewGeneratedAt",
   q.created_at AS "createdAt", q.updated_at AS "updatedAt"`;
 
 function normalizedAiLabelName(name: string) {
@@ -191,7 +196,7 @@ export async function claimJob(workerId: string) {
     const job = await client.query<{ id: string; type: 'process_incoming' | 'download_media'; contact_id: string; webhook_event_id: string | null; message_id: string | null; provider_media_id: string | null; media_filename: string | null; media_mime_type: string | null; attempts: number }>(`
       WITH candidate AS (
         SELECT j.id FROM jobs j
-        WHERE j.status IN ('queued', 'retrying') AND j.run_after <= now()
+        WHERE j.status IN ('queued', 'retrying') AND j.run_after <= now() AND j.type <> 'ai_preview'
           AND NOT EXISTS (SELECT 1 FROM jobs older WHERE older.contact_id = j.contact_id AND older.status IN ('queued', 'retrying', 'processing')
             AND (older.created_at < j.created_at OR (older.created_at = j.created_at AND older.id < j.id)))
         ORDER BY j.created_at FOR UPDATE SKIP LOCKED LIMIT 1
@@ -2054,6 +2059,29 @@ export async function recordAiLabelCandidateObservation(input: {
   });
 }
 
+export type AiPreviewJob = { id: string; attempts: number; ai_query_log_id: string | null };
+
+/** Preview jobs have a dedicated lane and no contact lock: they cannot delay WhatsApp replies. */
+export async function claimAiPreviewJob(workerId: string) {
+  return transaction(async client => {
+    const result = await client.query<AiPreviewJob>(`
+      WITH candidate AS (
+        SELECT j.id
+        FROM jobs j
+        WHERE j.type='ai_preview' AND j.status IN ('queued', 'retrying') AND j.run_after <= now()
+        ORDER BY j.created_at ASC, j.id ASC
+        FOR UPDATE SKIP LOCKED
+        LIMIT 1
+      )
+      UPDATE jobs j
+      SET status='processing', attempts=j.attempts+1, locked_at=now(), locked_by=$1, last_error=NULL
+      FROM candidate
+      WHERE j.id=candidate.id
+      RETURNING j.id, j.attempts, j.ai_query_log_id`, [workerId]);
+    return result.rows[0] ?? null;
+  });
+}
+
 export async function promoteAiLabelCandidateQueries(candidateName: string, labelId: string, labelName: string) {
   const normalizedName = normalizeAiLabelName(candidateName);
   const result = await query(`UPDATE ai_query_logs q SET suggested_label_id=$2, suggested_label_name=$3,
@@ -2223,6 +2251,8 @@ export async function recordAiQuery(input: {
   outcome: string; source?: string; aiEnabled?: boolean; matchedAnswerRuleId?: string | null; matchedAnswerLabelId?: string | null; model?: string | null;
   suggestedLabelId?: string | null; suggestedLabelName?: string | null; classificationMethod?: string | null; classificationConfidence?: number | null;
   reviewStatus?: 'pending' | 'resolved' | 'ignored'; reviewedBy?: string | null;
+  previewAnswer?: string | null; previewOutcome?: string | null; previewSource?: string | null; previewModel?: string | null;
+  previewTokens?: number | null; previewElapsedMs?: number | null; previewErrorCode?: string | null; previewGeneratedAt?: Date | string | null;
   tokens?: number; elapsedMs?: number; errorCode?: string | null;
 }) {
   const source = input.source ?? 'production';
@@ -2232,27 +2262,149 @@ export async function recordAiQuery(input: {
   let suggestedLabelName = input.suggestedLabelName?.trim() || null;
   let classificationMethod = input.classificationMethod ?? null;
   let classificationConfidence = input.classificationConfidence ?? null;
+  const hasPreview = input.previewAnswer !== undefined || input.previewOutcome !== undefined || input.previewSource !== undefined;
+  const previewGeneratedAt = input.previewGeneratedAt ?? (hasPreview ? new Date() : null);
   const values = [input.contactId ?? null, input.incomingMessageId ?? null, input.providerMessageId ?? null, input.question.trim(), input.answer ?? '',
     input.outcome, source, input.aiEnabled ?? false, input.matchedAnswerRuleId ?? null, input.matchedAnswerLabelId ?? null,
     suggestedLabelId, suggestedLabelName, classificationMethod, classificationConfidence,
     reviewStatus, reviewStatus === 'pending' ? null : new Date(), input.reviewedBy ?? null, input.model ?? null,
-    input.tokens ?? 0, input.elapsedMs ?? 0, input.errorCode ?? null];
+    input.tokens ?? 0, input.elapsedMs ?? 0, input.errorCode ?? null,
+    input.previewAnswer ?? null, input.previewOutcome ?? null, input.previewSource ?? null, input.previewModel ?? null,
+    input.previewTokens ?? null, input.previewElapsedMs ?? null, input.previewErrorCode ?? null, previewGeneratedAt];
   const result = await query<AiQueryLog>(`INSERT INTO ai_query_logs
     (contact_id, incoming_message_id, provider_message_id, question, answer, outcome, source, ai_enabled, matched_answer_rule_id, matched_label_id,
-     suggested_label_id, suggested_label_name, classification_method, classification_confidence, review_status, reviewed_at, reviewed_by, model, tokens, elapsed_ms, error_code)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+     suggested_label_id, suggested_label_name, classification_method, classification_confidence, review_status, reviewed_at, reviewed_by, model, tokens, elapsed_ms, error_code,
+     preview_answer, preview_outcome, preview_source, preview_model, preview_tokens, preview_elapsed_ms, preview_error_code, preview_generated_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21,
+      $22, $23, $24, $25, $26, $27, $28, $29)
     ON CONFLICT (provider_message_id) WHERE provider_message_id IS NOT NULL DO UPDATE SET
       answer = EXCLUDED.answer, outcome = EXCLUDED.outcome, source = EXCLUDED.source, ai_enabled = EXCLUDED.ai_enabled,
       matched_answer_rule_id = EXCLUDED.matched_answer_rule_id, matched_label_id = EXCLUDED.matched_label_id,
       suggested_label_id = EXCLUDED.suggested_label_id, suggested_label_name = EXCLUDED.suggested_label_name,
       classification_method = EXCLUDED.classification_method, classification_confidence = EXCLUDED.classification_confidence,
       review_status = EXCLUDED.review_status, reviewed_at = EXCLUDED.reviewed_at, reviewed_by = EXCLUDED.reviewed_by,
-      model = EXCLUDED.model, tokens = EXCLUDED.tokens, elapsed_ms = EXCLUDED.elapsed_ms, error_code = EXCLUDED.error_code, updated_at = now()
+      model = EXCLUDED.model, tokens = EXCLUDED.tokens, elapsed_ms = EXCLUDED.elapsed_ms, error_code = EXCLUDED.error_code,
+      preview_answer = CASE WHEN EXCLUDED.preview_generated_at IS NOT NULL THEN EXCLUDED.preview_answer ELSE ai_query_logs.preview_answer END,
+      preview_outcome = CASE WHEN EXCLUDED.preview_generated_at IS NOT NULL THEN EXCLUDED.preview_outcome ELSE ai_query_logs.preview_outcome END,
+      preview_source = CASE WHEN EXCLUDED.preview_generated_at IS NOT NULL THEN EXCLUDED.preview_source ELSE ai_query_logs.preview_source END,
+      preview_model = CASE WHEN EXCLUDED.preview_generated_at IS NOT NULL THEN EXCLUDED.preview_model ELSE ai_query_logs.preview_model END,
+      preview_tokens = CASE WHEN EXCLUDED.preview_generated_at IS NOT NULL THEN EXCLUDED.preview_tokens ELSE ai_query_logs.preview_tokens END,
+      preview_elapsed_ms = CASE WHEN EXCLUDED.preview_generated_at IS NOT NULL THEN EXCLUDED.preview_elapsed_ms ELSE ai_query_logs.preview_elapsed_ms END,
+      preview_error_code = CASE WHEN EXCLUDED.preview_generated_at IS NOT NULL THEN EXCLUDED.preview_error_code ELSE ai_query_logs.preview_error_code END,
+      preview_generated_at = COALESCE(EXCLUDED.preview_generated_at, ai_query_logs.preview_generated_at), updated_at = now()
     RETURNING id, contact_id AS "contactId", question, answer, outcome, source, ai_enabled AS "aiEnabled", matched_answer_rule_id AS "matchedAnswerRuleId", matched_label_id AS "matchedAnswerLabelId",
       suggested_label_id AS "suggestedLabelId", suggested_label_name AS "suggestedLabelName", classification_method AS "classificationMethod", classification_confidence AS "classificationConfidence",
       review_status AS "reviewStatus", reviewed_at AS "reviewedAt", reviewed_by AS "reviewedBy", NULL::text AS label,
-      model, tokens, elapsed_ms AS "elapsedMs", error_code AS "errorCode", created_at AS "createdAt", updated_at AS "updatedAt"`, values);
+      model, tokens, elapsed_ms AS "elapsedMs", error_code AS "errorCode",
+      preview_answer AS "previewAnswer", preview_outcome AS "previewOutcome", preview_source AS "previewSource",
+      preview_model AS "previewModel", preview_tokens AS "previewTokens", preview_elapsed_ms AS "previewElapsedMs",
+      preview_error_code AS "previewErrorCode", preview_generated_at AS "previewGeneratedAt",
+      created_at AS "createdAt", updated_at AS "updatedAt"`, values);
   return result.rows[0];
+}
+
+export type AiQueryPreviewContext = {
+  id: string;
+  question: string;
+  contactId: string | null;
+  providerMessageId: string | null;
+  createdAt: string;
+  previewGeneratedAt: string | null;
+  generationId: string;
+  history: Array<{ role: 'user' | 'assistant'; content: string }>;
+};
+
+export type AiQueryPreviewClaim =
+  | { status: 'claimed'; context: AiQueryPreviewContext }
+  | { status: 'skipped' | 'missing'; context: null };
+
+export async function claimAiQueryPreviewGeneration(id: string, force = false): Promise<AiQueryPreviewClaim> {
+  const result = await query<Omit<AiQueryPreviewContext, 'history'>>(`UPDATE ai_query_logs SET
+      preview_generation_id=gen_random_uuid(), updated_at=now()
+    WHERE id=$1 AND ($2::boolean OR preview_generated_at IS NULL)
+    RETURNING id, question,
+      contact_id AS "contactId", provider_message_id AS "providerMessageId",
+      created_at AS "createdAt", preview_generated_at AS "previewGeneratedAt",
+      preview_generation_id AS "generationId"`, [id, force]);
+  const item = result.rows[0];
+  if (!item) {
+    const existing = await query<{ exists: boolean }>('SELECT EXISTS(SELECT 1 FROM ai_query_logs WHERE id=$1) AS exists', [id]);
+    return { status: existing.rows[0]?.exists ? 'skipped' : 'missing', context: null };
+  }
+  if (!item.contactId) return { status: 'claimed', context: { ...item, history: [] } };
+
+  const messages = await query<{ direction: 'incoming' | 'outgoing'; body: string }>(`
+    SELECT direction, body
+    FROM messages
+    WHERE contact_id=$1 AND message_type='text' AND btrim(body)<>'' AND created_at <= $2::timestamptz
+      AND ($3::text IS NULL OR provider_message_id IS DISTINCT FROM $3)
+      AND ($3::text IS NULL OR COALESCE(outbound_key, '') NOT LIKE ('event:' || $3 || ':%'))
+    ORDER BY created_at DESC, id DESC
+    LIMIT 10`, [item.contactId, item.createdAt, item.providerMessageId]);
+  const history = messages.rows.reverse().map(message => ({
+    role: message.direction === 'incoming' ? 'user' as const : 'assistant' as const,
+    content: message.body,
+  }));
+  return { status: 'claimed', context: { ...item, history } };
+}
+
+export async function updateAiQueryPreview(id: string, input: {
+  generationId: string;
+  answer: string;
+  outcome: string;
+  source: string;
+  model?: string | null;
+  tokens?: number | null;
+  elapsedMs?: number | null;
+  errorCode?: string | null;
+  suggestedLabelId?: string | null;
+  suggestedLabelName?: string | null;
+  classificationMethod?: string | null;
+  classificationConfidence?: number | null;
+  updateSuggestion?: boolean;
+}) {
+  const result = await query<{ id: string }>(`UPDATE ai_query_logs SET
+      preview_answer=$2, preview_outcome=$3, preview_source=$4, preview_model=$5,
+      preview_tokens=$6, preview_elapsed_ms=$7, preview_error_code=$8, preview_generated_at=now(),
+      suggested_label_id=CASE WHEN review_status='pending' AND $13::boolean THEN $9 ELSE suggested_label_id END,
+      suggested_label_name=CASE WHEN review_status='pending' AND $13::boolean THEN $10 ELSE suggested_label_name END,
+      classification_method=CASE WHEN review_status='pending' AND $13::boolean THEN $11 ELSE classification_method END,
+      classification_confidence=CASE WHEN review_status='pending' AND $13::boolean THEN $12 ELSE classification_confidence END,
+      preview_generation_id=NULL, updated_at=now()
+    WHERE id=$1 AND preview_generation_id=$14::uuid RETURNING id`, [id, input.answer, input.outcome, input.source, input.model ?? null,
+    input.tokens ?? null, input.elapsedMs ?? null, input.errorCode ?? null,
+    input.suggestedLabelId ?? null, input.suggestedLabelName?.trim() || null,
+    input.classificationMethod ?? null, input.classificationConfidence ?? null,
+    input.updateSuggestion ?? true, input.generationId]);
+  if (!result.rows[0]) return null;
+  const row = await query<AiQueryLog>(`SELECT ${aiQueryColumns} FROM ai_query_logs q
+    LEFT JOIN contacts c ON c.id=q.contact_id LEFT JOIN ai_answer_rules r ON r.id=q.matched_answer_rule_id
+    LEFT JOIN ai_answer_labels al ON al.id=q.matched_label_id LEFT JOIN ai_answer_labels sl ON sl.id=q.suggested_label_id
+    WHERE q.id=$1`, [id]);
+  return row.rows[0] ?? null;
+}
+
+export type AiQueryPreviewCursor = { createdAt: string; id: string };
+
+export async function listAiQueryPreviewCandidates(input: {
+  force?: boolean;
+  limit?: number;
+  after?: AiQueryPreviewCursor | null;
+} = {}) {
+  const limit = Math.min(5000, Math.max(1, input.limit ?? 1000));
+  const result = await query<AiQueryPreviewCursor>(`SELECT id, created_at::text AS "createdAt" FROM ai_query_logs
+    WHERE source='production' AND ($1::boolean OR preview_generated_at IS NULL)
+      AND ($2::timestamptz IS NULL OR (created_at, id) > ($2::timestamptz, $3::uuid))
+    ORDER BY created_at ASC, id ASC LIMIT $4`, [input.force ?? false, input.after?.createdAt ?? null,
+    input.after?.id ?? null, limit]);
+  return result.rows;
+}
+
+export async function enqueueAiQueryPreview(aiQueryLogId: string) {
+  const result = await query<{ id: string }>(`INSERT INTO jobs (type, ai_query_log_id)
+    SELECT 'ai_preview', q.id FROM ai_query_logs q WHERE q.id=$1
+    ON CONFLICT DO NOTHING RETURNING id`, [aiQueryLogId]);
+  return result.rows[0] ?? null;
 }
 
 export type AiQueryView = 'attention' | 'answered' | 'noise' | 'errors' | 'tests' | 'all';
@@ -2269,7 +2421,7 @@ export async function listAiQueryLogs(input: { page?: number; limit?: number; st
   if (input.status?.trim()) { values.push(input.status.trim()); where.push(`q.outcome = $${values.length}`); }
   if (input.source?.trim()) { values.push(input.source.trim()); where.push(`q.source = $${values.length}`); }
   if (input.reviewStatus?.trim()) { values.push(input.reviewStatus.trim()); where.push(`q.review_status = $${values.length}`); }
-  if (input.q?.trim()) { values.push(`%${input.q.trim()}%`); where.push(`(q.question ILIKE $${values.length} OR q.answer ILIKE $${values.length} OR c.phone ILIKE $${values.length} OR c.name ILIKE $${values.length} OR c.public_name ILIKE $${values.length})`); }
+  if (input.q?.trim()) { values.push(`%${input.q.trim()}%`); where.push(`(q.question ILIKE $${values.length} OR q.answer ILIKE $${values.length} OR q.preview_answer ILIKE $${values.length} OR q.suggested_label_name ILIKE $${values.length} OR c.phone ILIKE $${values.length} OR c.name ILIKE $${values.length} OR c.public_name ILIKE $${values.length})`); }
   const countResult = await query<{ count: string }>(`SELECT count(*)::text AS count FROM ai_query_logs q LEFT JOIN contacts c ON c.id = q.contact_id WHERE ${where.join(' AND ')}`, values);
   const offset = (page - 1) * limit;
   const rows = await query<AiQueryLog>(`SELECT ${aiQueryColumns} FROM ai_query_logs q LEFT JOIN contacts c ON c.id = q.contact_id LEFT JOIN ai_answer_rules r ON r.id = q.matched_answer_rule_id LEFT JOIN ai_answer_labels al ON al.id = q.matched_label_id LEFT JOIN ai_answer_labels sl ON sl.id = q.suggested_label_id WHERE ${where.join(' AND ')} ORDER BY q.created_at DESC LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,

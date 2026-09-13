@@ -1353,7 +1353,7 @@ const aiQueueViews: Array<{ id: AiQueueView; label: string }> = [
   { id: 'tests', label: 'Pruebas' },
 ];
 const aiQueueCopy: Record<AiQueueView, { title: string; description: string; empty: string }> = {
-  attention: { title: 'Revisión y aprendizaje', description: 'Consultas que llegaron cuando la IA estaba apagada o que necesitan una decisión del equipo. Estar acá no significa que la pregunta sea incomprensible.', empty: 'No hay consultas esperando revisión.' },
+  attention: { title: 'Revisión y aprendizaje', description: 'Cada consulta muestra la respuesta que habría dado la IA, aunque el envío automático estuviera apagado. Si está bien, aprobala tal como está; si no, editala.', empty: 'No hay consultas esperando revisión.' },
   answered: { title: 'Respuestas a clientes', description: 'Historial real de lo que contestó una regla aprobada, una etiqueta o la IA generativa.', empty: 'Todavía no hay respuestas registradas.' },
   errors: { title: 'Contingencias de IA', description: 'La consulta era entendible, pero el proveedor no estuvo disponible. El cliente recibió una respuesta de contingencia.', empty: 'No hay errores del proveedor.' },
   noise: { title: 'Ruido', description: 'Sólo mensajes sin una consulta recuperable, como signos sueltos, números aislados o texto aleatorio.', empty: 'No hay mensajes clasificados como ruido.' },
@@ -1362,6 +1362,10 @@ const aiQueueCopy: Record<AiQueueView, { title: string; description: string; emp
 
 function aiClassificationLabel(value: string | null | undefined) {
   return ({ exact: 'coincidencia exacta', fuzzy: 'variante conocida', semantic: 'tema detectado', frequency: 'tema recurrente', unintelligible: 'ruido confirmado', 'needs-review': 'requiere revisión', 'manual-review': 'revisión manual', none: 'sin tema sugerido', ambiguous: 'tema ambiguo' } as Record<string, string>)[value ?? ''] ?? 'clasificación histórica';
+}
+
+function aiPreviewSourceLabel(value: string | null | undefined) {
+  return ({ 'saved-rule': 'Respuesta aprobada', 'approved-label': 'Etiqueta aprobada', generated: 'IA generativa' } as Record<string, string>)[value ?? ''] ?? 'Vista previa';
 }
 
 const AI_MENU_MARKER = '[[MENU]]';
@@ -1388,6 +1392,7 @@ function AiView() {
   const [filter, setFilter] = useState<AiQueueView>('attention');
   const [search, setSearch] = useState('');
   const [busy, setBusy] = useState(false);
+  const [previewingId, setPreviewingId] = useState('');
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
 
@@ -1438,7 +1443,8 @@ function AiView() {
       const reusableLabels = loadedLabels.filter(label => (label.normalizedName ?? label.name.toLocaleLowerCase().replace(/\s+/g, '-')) !== 'pregunta-no-entendible');
       setDrafts(Object.fromEntries(result.queries.items.map(item => {
         const label = reusableLabels.find(candidate => candidate.id === (item.suggestedLabelId ?? item.matchedAnswerLabelId));
-        return [item.id, label?.answer || item.answer || ''];
+        const approvablePreview = item.previewOutcome === 'unavailable' ? '' : item.previewAnswer || '';
+        return [item.id, label?.answer || approvablePreview];
       })));
       setQueryLabelIds(Object.fromEntries(result.queries.items.map(item => {
         const id = item.suggestedLabelId ?? item.matchedAnswerLabelId ?? '';
@@ -1486,6 +1492,15 @@ function AiView() {
     try { await api(`/api/ai/queries/${id}/reopen`, { method: 'PATCH' }); setNotice('La consulta volvió a Revisión y aprendizaje.'); setFilter('attention'); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'No se pudo volver a abrir la consulta.'); }
     finally { setBusy(false); }
+  }
+  async function regeneratePreview(id: string) {
+    setPreviewingId(id); setNotice(''); setError('');
+    try {
+      await api(`/api/ai/queries/${id}/preview`, { method: 'POST' });
+      setNotice('Vista previa actualizada. No se envió ningún mensaje al cliente.');
+      await load();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'No se pudo generar la vista previa.'); }
+    finally { setPreviewingId(''); }
   }
   function assignQueryLabel(id: string, labelId: string) {
     setQueryLabelIds(current => ({ ...current, [id]: labelId }));
@@ -1554,7 +1569,7 @@ function AiView() {
   return (
     <div className="secondary-view ai-view">
       <section className={`ai-control-card ${data.settings.enabled ? 'is-enabled' : 'is-disabled'}`}>
-        <div className="ai-control-copy"><div className="ai-control-title"><span className="ai-live-dot" aria-hidden="true" /><h2>IA para preguntas nuevas</h2><span className={`ai-status ${data.settings.enabled ? 'answered' : 'disabled'}`}>{data.settings.enabled ? 'Activa' : 'Apagada'}</span></div><p>{data.settings.enabled ? 'Cada consulta entendible recibe una respuesta: primero se usa el conocimiento aprobado y, si no alcanza, la IA responde con los datos disponibles del negocio.' : 'Las respuestas aprobadas siguen funcionando. Las preguntas nuevas continúan por el flujo normal del bot hasta que actives la IA generativa.'}</p></div>
+        <div className="ai-control-copy"><div className="ai-control-title"><span className="ai-live-dot" aria-hidden="true" /><h2>Respuestas automáticas a clientes</h2><span className={`ai-status ${data.settings.enabled ? 'answered' : 'disabled'}`}>{data.settings.enabled ? 'Activas' : 'Apagadas'}</span></div><p>{data.settings.enabled ? 'Cada consulta entendible recibe una respuesta: primero se usa el conocimiento aprobado y, si no alcanza, la IA responde con los datos disponibles del negocio.' : 'La IA generativa no envía mensajes a clientes. Igual prepara una vista previa privada para cada consulta, para que puedas revisar exactamente qué habría respondido.'}</p></div>
         <button type="button" className={`button ${data.settings.enabled ? 'danger' : 'primary'}`} aria-pressed={data.settings.enabled} disabled={busy} onClick={() => void toggle()}>{data.settings.enabled ? 'Apagar IA generativa' : 'Activar IA generativa'}</button>
       </section>
       <section className="ai-response-contract" aria-label="Cómo responde la IA"><strong>Cómo se decide cada respuesta</strong><ol><li>Busca una respuesta aprobada.</li><li>Si no existe, responde o pide el dato que falta.</li><li>Separa como ruido sólo mensajes sin significado recuperable.</li></ol></section>
@@ -1576,20 +1591,26 @@ function AiView() {
           const confidence = typeof item.classificationConfidence === 'number' && item.classificationConfidence > 0 ? `${Math.round(item.classificationConfidence * 100)}%` : null;
           const suggestion = item.suggestedLabelName && item.suggestedLabelName !== 'pregunta-no-entendible' ? item.suggestedLabelName : null;
           const customerResult = item.answer.trim() || (item.outcome === 'disabled' ? 'La IA estaba apagada; la consulta siguió por el flujo normal del bot.' : item.outcome === 'paused' ? 'La conversación ya estaba siendo atendida por una persona.' : item.outcome === 'silence' ? 'El mensaje no requería una respuesta.' : 'No hay una respuesta registrada.');
+          const previewAnswer = (item.previewAnswer ?? '').trim();
+          const previewOutcome = item.previewOutcome;
+          const previewPending = item.source === 'production' && !item.previewGeneratedAt;
+          const previewText = previewAnswer || (previewOutcome === 'silence' ? 'La IA habría decidido no enviar texto porque el mensaje no requería respuesta.' : previewPending ? 'La respuesta simulada todavía no está lista. Podés generarla ahora.' : 'No hay una vista previa registrada para esta consulta.');
+          const actualDiffers = Boolean(item.answer.trim() && item.answer.trim() !== previewAnswer);
           return <article className={`ai-query-item ${filter === 'attention' ? 'is-editable' : 'is-readonly'}`} key={item.id}>
             <header className="ai-query-header"><div className="ai-query-meta"><span className={`ai-status ${item.outcome}`}>{aiOutcomeLabel(item.outcome)}</span>{item.reviewStatus === 'pending' && <span className="ai-review-badge">Revisión pendiente</span>}<span>{item.contactName || 'Cliente'}{item.phone ? ` · ${item.phone}` : item.source === 'manual' ? ' · Prueba manual' : ''}</span></div><time>{formatDate(item.createdAt)}</time></header>
             <h3>{item.question}</h3>
             {(suggestion || confidence) && <div className="ai-topic-row">{suggestion && <span className="ai-label-badge">Tema sugerido: {suggestion}</span>}{confidence && <small>Confianza {confidence}</small>}</div>}
-            <div className="ai-customer-result"><span>{item.outcome === 'disabled' || item.outcome === 'paused' || item.outcome === 'silence' ? 'Resultado del turno' : 'Respuesta enviada al cliente'}</span><p>{customerResult}</p></div>
+            <div className={`ai-preview-result ${previewOutcome === 'unavailable' ? 'is-unavailable' : ''}`}><div className="ai-preview-heading"><div><span>Respuesta que habría dado la IA</span><small>{aiPreviewSourceLabel(item.previewSource)}</small></div>{item.source === 'production' && <button type="button" className="button ghost ai-preview-refresh" disabled={Boolean(previewingId)} onClick={() => void regeneratePreview(item.id)}>{previewingId === item.id ? 'Generando…' : previewPending ? 'Generar ahora' : 'Volver a generar'}</button>}</div><p>{previewText}</p><small className="ai-preview-note">Vista previa privada: generarla o editarla acá nunca envía un mensaje al cliente.</small></div>
+            {(item.outcome === 'disabled' || item.outcome === 'paused' || item.outcome === 'silence' || actualDiffers) && <div className="ai-customer-result"><span>Qué pasó realmente</span><p>{customerResult}</p></div>}
             {filter === 'attention' && <div className="ai-learning-editor">
-              <div className="ai-editor-heading"><strong>Convertir en conocimiento reutilizable</strong><small>Agrupá sólo preguntas que deban recibir exactamente la misma respuesta.</small></div>
+              <div className="ai-editor-heading"><strong>Aprobar o corregir esta respuesta</strong><small>Si la vista previa está bien, dejala como está. Agrupá sólo preguntas que deban recibir exactamente la misma respuesta.</small></div>
               <label className="ai-field-label">Etiqueta reutilizable<select className="ai-label-input" value={selectedLabelId} onChange={event => assignQueryLabel(item.id, event.target.value)}><option value="">Crear una etiqueta nueva</option>{labels.map(label => <option key={label.id} value={label.id}>{label.name}</option>)}</select></label>
               {!selectedLabelId && <label className="ai-field-label">Nombre de la nueva etiqueta<input className="ai-label-input" value={newLabelName} onChange={event => setQueryNewLabels(current => ({ ...current, [item.id]: event.target.value }))} placeholder="Ej.: facturacion" /></label>}
-              <label className="ai-field-label">Respuesta compartida<textarea value={canonicalAnswer || drafts[item.id] || ''} readOnly={Boolean(canonicalAnswer)} onChange={event => setDrafts(current => ({ ...current, [item.id]: event.target.value }))} placeholder="Escribí la respuesta aprobada que usará el bot" rows={3} /></label>
+              <label className="ai-field-label">Respuesta para aprobar<textarea value={canonicalAnswer || drafts[item.id] || ''} readOnly={Boolean(canonicalAnswer)} onChange={event => setDrafts(current => ({ ...current, [item.id]: event.target.value }))} placeholder="Generá la vista previa para completar esta respuesta" rows={4} /></label>
               {canonicalAnswer && <small className="ai-editor-hint">Esta etiqueta ya tiene una respuesta aprobada; al asignarla no se sobrescribirá.</small>}
-              <div className="ai-query-actions"><button type="button" className="button ghost" disabled={busy} onClick={() => void markNoise(item.id)}>Marcar como ruido</button><div>{!canonicalAnswer && <button type="button" className="button ghost" disabled={busy} onClick={() => setDrafts(current => ({ ...current, [item.id]: appendAiMenuMarker(current[item.id] ?? '') }))}>Agregar menú después</button>}<button type="button" className="button secondary" disabled={busy || !labelReady || !answerReady} onClick={() => void saveQuery(item.id)}>{selectedLabel ? `Asignar a ${selectedLabel.name}` : 'Crear etiqueta y resolver'}</button></div></div>
+              <div className="ai-query-actions"><button type="button" className="button ghost" disabled={busy} onClick={() => void markNoise(item.id)}>Marcar como ruido</button><div>{!canonicalAnswer && <button type="button" className="button ghost" disabled={busy} onClick={() => setDrafts(current => ({ ...current, [item.id]: appendAiMenuMarker(current[item.id] ?? '') }))}>Agregar menú después</button>}<button type="button" className="button secondary" disabled={busy || !labelReady || !answerReady} onClick={() => void saveQuery(item.id)}>{selectedLabel ? `Aprobar con ${selectedLabel.name}` : 'Crear etiqueta y aprobar'}</button></div></div>
             </div>}
-            <footer className="ai-query-footer"><small>{aiClassificationLabel(item.classificationMethod)}{item.model ? ` · ${item.model}` : ''}{item.errorCode ? ` · Código: ${item.errorCode}` : ''}</small>{filter === 'noise' && <button type="button" className="button ghost" disabled={busy} onClick={() => void reopenQuery(item.id)}>Volver a revisión</button>}</footer>
+            <footer className="ai-query-footer"><small>{aiClassificationLabel(item.classificationMethod)}{(item.previewModel || item.model) ? ` · ${item.previewModel || item.model}` : ''}{(item.previewErrorCode || item.errorCode) ? ` · Código: ${item.previewErrorCode || item.errorCode}` : ''}</small>{filter === 'noise' && <button type="button" className="button ghost" disabled={busy} onClick={() => void reopenQuery(item.id)}>Volver a revisión</button>}</footer>
           </article>;
         })}</div>}
       </section>
