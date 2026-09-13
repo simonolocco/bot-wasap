@@ -1,5 +1,8 @@
 import type { PoolClient } from 'pg';
 import { query, transaction } from './pool';
+import { normalizeText } from '../botMenu';
+import { matchIntent } from '../ai/intentMatcher';
+import { AI_UNCLEAR_LABEL_ANSWER, AI_UNCLEAR_LABEL_NAME } from '../ai/labelPolicy';
 
 export type ConsentStatus = 'unknown' | 'opted_in' | 'opted_out';
 export type Contact = {
@@ -34,6 +37,29 @@ export type SupportTicket = {
   closureReason: 'answered' | 'no_customer_question' | 'no_operator_response' | 'fallback_sent' | 'order_completed' | 'question_answered' | 'customer_no_reply' | 'operator_cancelled' | null;
   closedBy: string | null;
   fallbackClaimedAt: string | null; fallbackSentAt: string | null; fallbackError: string | null;
+};
+
+export type AiSettings = { enabled: boolean; updatedAt: string | null; updatedBy: string | null };
+export type AiAnswerRule = {
+  id: string; question: string; normalizedQuestion: string; label: string | null; labelId: string | null; labelAnswer: string | null; aliases: string[]; answer: string; active: boolean; manual: boolean;
+  createdBy: string | null; updatedBy: string | null; createdAt: string; updatedAt: string;
+};
+export type AiAnswerLabel = {
+  id: string; name: string; normalizedName: string; answer: string; active: boolean;
+  aliases: string[]; ruleIds: string[]; questionCount?: number; createdBy: string | null; updatedBy: string | null; createdAt: string; updatedAt: string;
+};
+export type AiQueryLog = {
+  id: string; contactId: string | null; contactName: string; phone: string; question: string; answer: string;
+  outcome: string; source: string; aiEnabled: boolean; matchedAnswerRuleId: string | null; matchedAnswerLabelId: string | null; label: string | null; model: string | null;
+  suggestedLabelId: string | null; suggestedLabelName: string | null; classificationMethod: string | null; classificationConfidence: number | null;
+  reviewStatus: 'pending' | 'resolved' | 'ignored'; reviewedAt: string | null; reviewedBy: string | null;
+  tokens: number; elapsedMs: number; errorCode: string | null; createdAt: string; updatedAt: string;
+};
+
+export type AiLabelCandidateStats = {
+  events30d: number;
+  contacts30d: number;
+  contacts7d: number;
 };
 
 const contactColumns = `id, phone, country_code AS "countryCode", name, public_name AS "publicName",
@@ -73,6 +99,22 @@ export async function upsertContact(client: PoolClient, phoneInput: string, prof
     RETURNING ${contactColumns}`,
     [phone, profileName?.trim() ?? '', markIncoming, incomingAt]);
   return result.rows[0];
+}
+
+const aiAnswerRuleColumns = `r.id, r.question, r.normalized_question AS "normalizedQuestion", r.intent_label AS label,
+  r.label_id AS "labelId", l.name AS "labelName", COALESCE(l.answer, r.answer) AS "labelAnswer",
+  COALESCE((SELECT json_agg(a.alias ORDER BY a.created_at ASC) FROM ai_answer_rule_aliases a WHERE a.answer_rule_id = r.id), '[]'::json) AS aliases,
+  r.answer, r.active, r.manual,
+  r.created_by AS "createdBy", r.updated_by AS "updatedBy", r.created_at AS "createdAt", r.updated_at AS "updatedAt"`;
+const aiQueryColumns = `q.id, q.contact_id AS "contactId", COALESCE(NULLIF(c.public_name, ''), NULLIF(c.name, ''), 'Sin nombre') AS "contactName",
+  COALESCE(c.phone, '') AS phone, q.question, q.answer, q.outcome, q.source, q.ai_enabled AS "aiEnabled",
+  q.matched_answer_rule_id AS "matchedAnswerRuleId", q.matched_label_id AS "matchedAnswerLabelId", COALESCE(al.name, r.intent_label, sl.name, q.suggested_label_name) AS label, q.model, q.tokens, q.elapsed_ms AS "elapsedMs", q.error_code AS "errorCode",
+  q.suggested_label_id AS "suggestedLabelId", q.suggested_label_name AS "suggestedLabelName", q.classification_method AS "classificationMethod",
+  q.classification_confidence AS "classificationConfidence", q.review_status AS "reviewStatus", q.reviewed_at AS "reviewedAt", q.reviewed_by AS "reviewedBy",
+  q.created_at AS "createdAt", q.updated_at AS "updatedAt"`;
+
+function normalizedAiLabelName(name: string) {
+  return normalizeText(name);
 }
 export async function createContact(phoneInput: string, name = '') {
   const phone = normalizePhone(phoneInput);
@@ -1838,4 +1880,523 @@ export async function getBotAnalytics(options: {
     },
   };
 
+}
+
+
+export async function getAiSettings(): Promise<AiSettings> {
+  const result = await query<AiSettings>('SELECT enabled, updated_at AS "updatedAt", updated_by AS "updatedBy" FROM ai_settings WHERE id = 1');
+  return result.rows[0] ?? { enabled: false, updatedAt: null, updatedBy: null };
+}
+
+export async function setAiEnabled(enabled: boolean, actor: string | null): Promise<AiSettings> {
+  const result = await query<AiSettings>(`
+    INSERT INTO ai_settings (id, enabled, updated_by, updated_at)
+    VALUES (1, $1, $2, now())
+    ON CONFLICT (id) DO UPDATE SET enabled = EXCLUDED.enabled, updated_by = EXCLUDED.updated_by, updated_at = now()
+    RETURNING enabled, updated_at AS "updatedAt", updated_by AS "updatedBy"`, [enabled, actor]);
+  return result.rows[0];
+}
+
+type AiRuleDbRow = AiAnswerRule;
+
+const aiRuleSelect = `SELECT ${aiAnswerRuleColumns}
+  FROM ai_answer_rules r LEFT JOIN ai_answer_labels l ON l.id = r.label_id
+  WHERE r.active = true AND (l.id IS NULL OR (l.active = true AND l.normalized_name <> '${AI_UNCLEAR_LABEL_NAME}'))
+    AND btrim(COALESCE(l.answer, r.answer)) <> ''`;
+
+async function loadActiveAiRules() {
+  const result = await query<AiRuleDbRow>(`${aiRuleSelect} ORDER BY r.updated_at DESC LIMIT 200`);
+  return result.rows;
+}
+
+export type AiLabelMatchRow = { id: string; name: string; answer: string; examples: string[] };
+export async function loadActiveAiLabelExamples(): Promise<AiLabelMatchRow[]> {
+  const result = await query<AiLabelMatchRow>(`SELECT l.id, l.name, l.answer,
+    COALESCE(array_agg(DISTINCT examples.example) FILTER (WHERE examples.example IS NOT NULL), ARRAY[]::text[]) AS examples
+    FROM ai_answer_labels l
+    LEFT JOIN (
+      SELECT r.label_id, r.question AS example FROM ai_answer_rules r WHERE r.active=true
+      UNION ALL
+      SELECT r.label_id, a.alias AS example FROM ai_answer_rules r JOIN ai_answer_rule_aliases a ON a.answer_rule_id=r.id WHERE r.active=true
+    ) examples ON examples.label_id=l.id
+    WHERE l.active=true AND l.normalized_name <> $1 AND btrim(l.answer)<>''
+    GROUP BY l.id ORDER BY l.updated_at DESC LIMIT 200`, [AI_UNCLEAR_LABEL_NAME]);
+  return result.rows;
+}
+
+/**
+ * Resolves exact aliases first and then applies a conservative typo/order
+ * tolerant matcher. The matched row is the intent, so every alias shares one
+ * editable answer and one optional menu behavior.
+ */
+export async function findAiAnswerRule(question: string, options: { persistSemantic?: boolean } = {}): Promise<AiAnswerRule | null> {
+  const normalizedQuestion = normalizeText(question);
+  if (!normalizedQuestion) return null;
+  const rules = await loadActiveAiRules();
+  const exact = rules.find(rule => rule.normalizedQuestion === normalizedQuestion || rule.aliases.some(alias => normalizeText(alias) === normalizedQuestion));
+  if (exact) return exact;
+  const matched = matchIntent(normalizedQuestion, rules.map(rule => ({ ...rule, examples: [rule.question, ...rule.aliases] })));
+  if (matched) return matched.intent;
+  if (options.persistSemantic === false) return null;
+  // If an operator already created a label but this exact wording is new,
+  // classify it from the label name and its saved examples, then persist the
+  // new wording as an alias. This makes the label assignment automatic while
+  // keeping the confidence threshold conservative.
+  const labels = await loadActiveAiLabelExamples();
+  const suggested = matchIntent(normalizedQuestion, labels
+    .filter(label => label.answer.trim())
+    .map(label => ({ id: label.id, label: label.name, examples: [label.name, `hacen ${label.name}`, `${label.name} hacen`, ...label.examples], answer: label.answer })));
+  if (!suggested || !suggested.intent.answer.trim()) return null;
+  return saveAiAnswerRule({ question, answer: suggested.intent.answer, label: suggested.intent.label, labelId: suggested.intent.id, actor: 'ai-auto' });
+}
+
+export async function listAiAnswerRules(search?: string): Promise<AiAnswerRule[]> {
+  const values: unknown[] = [];
+  const where = ['1=1'];
+  if (search?.trim()) { values.push(`%${search.trim()}%`); where.push(`(r.question ILIKE $${values.length} OR r.intent_label ILIKE $${values.length} OR r.answer ILIKE $${values.length} OR EXISTS (SELECT 1 FROM ai_answer_rule_aliases sa WHERE sa.answer_rule_id = r.id AND sa.alias ILIKE $${values.length}))`); }
+  const result = await query<AiAnswerRule>(`SELECT ${aiAnswerRuleColumns} FROM ai_answer_rules r LEFT JOIN ai_answer_labels l ON l.id = r.label_id WHERE ${where.join(' AND ')} ORDER BY r.updated_at DESC LIMIT 200`, values);
+  return result.rows;
+}
+
+function normalizeAiLabelName(name: string) {
+  return normalizeText(name).replace(/\s+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+}
+
+const aiAnswerLabelColumns = `l.id, l.name, l.normalized_name AS "normalizedName", l.answer, l.active,
+  ARRAY(SELECT DISTINCT example FROM (
+    SELECT r2.question AS example FROM ai_answer_rules r2 WHERE r2.label_id=l.id
+    UNION SELECT a2.alias AS example FROM ai_answer_rules r3 JOIN ai_answer_rule_aliases a2 ON a2.answer_rule_id=r3.id WHERE r3.label_id=l.id
+  ) label_examples ORDER BY example) AS aliases,
+  ARRAY(SELECT r4.id::text FROM ai_answer_rules r4 WHERE r4.label_id=l.id ORDER BY r4.id::text) AS "ruleIds",
+  l.created_by AS "createdBy", l.updated_by AS "updatedBy", l.created_at AS "createdAt", l.updated_at AS "updatedAt"`;
+
+export async function listAiAnswerLabels(search?: string): Promise<AiAnswerLabel[]> {
+  const values: unknown[] = [AI_UNCLEAR_LABEL_NAME];
+  const where = ['l.normalized_name <> $1'];
+  if (search?.trim()) {
+    values.push(`%${search.trim()}%`);
+    where.push(`(l.name ILIKE $${values.length} OR l.answer ILIKE $${values.length}
+      OR EXISTS (SELECT 1 FROM ai_answer_rules sr WHERE sr.label_id=l.id AND sr.question ILIKE $${values.length})
+      OR EXISTS (SELECT 1 FROM ai_query_logs sq WHERE sq.suggested_label_id=l.id AND sq.question ILIKE $${values.length}))`);
+  }
+  const result = await query<AiAnswerLabel>(`SELECT ${aiAnswerLabelColumns}
+    FROM ai_answer_labels l WHERE ${where.join(' AND ')} ORDER BY l.updated_at DESC LIMIT 200`, values);
+  return result.rows;
+}
+
+export async function createAiAnswerLabel(input: { name: string; answer: string; active?: boolean; actor?: string | null }) {
+  const name = input.name.trim();
+  const answer = input.answer.trim();
+  const normalizedName = normalizeAiLabelName(name);
+  if (!name || !normalizedName || !answer) throw new Error('El nombre y la respuesta de la etiqueta son obligatorios.');
+  if (normalizedName === AI_UNCLEAR_LABEL_NAME) throw new Error('Ese nombre está reservado para la categoría interna de ruido.');
+  const result = await query<{ id: string }>(`INSERT INTO ai_answer_labels (name, normalized_name, answer, active, created_by, updated_by)
+    VALUES ($1,$2,$3,$4,$5,$5)
+    ON CONFLICT (normalized_name) DO UPDATE SET name=EXCLUDED.name,
+      answer=CASE WHEN btrim(ai_answer_labels.answer)='' THEN EXCLUDED.answer ELSE ai_answer_labels.answer END,
+      active=CASE WHEN btrim(ai_answer_labels.answer)='' THEN EXCLUDED.active ELSE ai_answer_labels.active END,
+      updated_by=EXCLUDED.updated_by, updated_at=now()
+    RETURNING id`, [name, normalizedName, answer, input.active ?? true, input.actor ?? null]);
+  return readAiAnswerLabel(result.rows[0].id);
+}
+
+/** Creates a usable label without overwriting an existing operator answer. */
+export async function ensureAiAnswerLabelDraft(nameInput: string, actor: string | null = 'ai-auto', initialAnswer = '') {
+  const name = nameInput.trim();
+  const normalizedName = normalizeAiLabelName(name);
+  const answer = initialAnswer.trim();
+  if (!name || !normalizedName || !answer) return null;
+  const result = await query<{ id: string }>(`INSERT INTO ai_answer_labels (name, normalized_name, answer, active, created_by, updated_by)
+    VALUES ($1,$2,$4,true,$3,$3)
+    ON CONFLICT (normalized_name) DO UPDATE SET
+      answer=CASE WHEN btrim(ai_answer_labels.answer)='' AND btrim(EXCLUDED.answer)<>'' THEN EXCLUDED.answer ELSE ai_answer_labels.answer END,
+      updated_at=now()
+    RETURNING id`, [name, normalizedName, actor, answer]);
+  return readAiAnswerLabel(result.rows[0].id);
+}
+
+export async function recordAiLabelCandidateObservation(input: {
+  name: string;
+  question: string;
+  confidence: number;
+  contactId?: string | null;
+  providerMessageId?: string | null;
+  observedAt?: Date;
+}): Promise<AiLabelCandidateStats> {
+  const normalizedName = normalizeAiLabelName(input.name);
+  const displayName = input.name.trim();
+  if (!normalizedName || !displayName || !input.question.trim()) {
+    return { events30d: 0, contacts30d: 0, contacts7d: 0 };
+  }
+  return transaction(async client => {
+    await client.query(`INSERT INTO ai_label_candidates (normalized_name, display_name, created_at, last_seen_at)
+      VALUES ($1,$2,now(),$3)
+      ON CONFLICT (normalized_name) DO UPDATE SET display_name=EXCLUDED.display_name,
+        last_seen_at=GREATEST(ai_label_candidates.last_seen_at, EXCLUDED.last_seen_at)`,
+    [normalizedName, displayName, input.observedAt ?? new Date()]);
+    await client.query(`INSERT INTO ai_label_candidate_observations
+      (normalized_name, contact_id, provider_message_id, question, confidence, observed_at)
+      VALUES ($1,$2,$3,$4,$5,$6)
+      ON CONFLICT (provider_message_id) WHERE provider_message_id IS NOT NULL DO UPDATE SET
+        normalized_name=EXCLUDED.normalized_name, question=EXCLUDED.question,
+        confidence=EXCLUDED.confidence, observed_at=EXCLUDED.observed_at`,
+    [normalizedName, input.contactId ?? null, input.providerMessageId ?? null, input.question.trim(), input.confidence, input.observedAt ?? new Date()]);
+    const result = await client.query<{ events30d: string; contacts30d: string; contacts7d: string }>(`
+      SELECT count(*) FILTER (WHERE observed_at >= now() - interval '30 days')::text AS "events30d",
+        count(DISTINCT contact_id) FILTER (WHERE observed_at >= now() - interval '30 days')::text AS "contacts30d",
+        count(DISTINCT contact_id) FILTER (WHERE observed_at >= now() - interval '7 days')::text AS "contacts7d"
+      FROM ai_label_candidate_observations WHERE normalized_name=$1`, [normalizedName]);
+    return {
+      events30d: Number(result.rows[0]?.events30d ?? 0),
+      contacts30d: Number(result.rows[0]?.contacts30d ?? 0),
+      contacts7d: Number(result.rows[0]?.contacts7d ?? 0),
+    };
+  });
+}
+
+export async function promoteAiLabelCandidateQueries(candidateName: string, labelId: string, labelName: string) {
+  const normalizedName = normalizeAiLabelName(candidateName);
+  const result = await query(`UPDATE ai_query_logs q SET suggested_label_id=$2, suggested_label_name=$3,
+    classification_method='frequency', classification_confidence=GREATEST(COALESCE(q.classification_confidence,0),0.8), updated_at=now()
+    FROM ai_label_candidate_observations o
+    WHERE o.provider_message_id=q.provider_message_id AND o.normalized_name=$1
+      AND q.review_status='pending'`, [normalizedName, labelId, labelName]);
+  return result.rowCount ?? 0;
+}
+
+export async function updateAiAnswerLabel(id: string, input: { name: string; answer: string; active?: boolean; actor?: string | null }) {
+  const name = input.name.trim();
+  const answer = input.answer.trim();
+  const normalizedName = normalizeAiLabelName(name);
+  if (!name || !normalizedName || !answer) throw new Error('El nombre y la respuesta de la etiqueta son obligatorios.');
+  if (normalizedName === AI_UNCLEAR_LABEL_NAME) throw new Error('Ese nombre está reservado para la categoría interna de ruido.');
+  const target = await query<{ normalizedName: string }>(
+    'SELECT normalized_name AS "normalizedName" FROM ai_answer_labels WHERE id=$1', [id]);
+  if (target.rows[0]?.normalizedName === AI_UNCLEAR_LABEL_NAME) {
+    throw new Error('La categoría interna de ruido no se puede convertir en una etiqueta reutilizable.');
+  }
+  const result = await query<{ id: string }>(`UPDATE ai_answer_labels SET name=$2, normalized_name=$3, answer=$4, active=$5, updated_by=$6, updated_at=now() WHERE id=$1 RETURNING id`, [id, name, normalizedName, answer, input.active ?? true, input.actor ?? null]);
+  if (!result.rows[0]) return null;
+  await query(`UPDATE ai_answer_rules SET intent_label=$2, answer=$3, active=$4, updated_by=$5, updated_at=now() WHERE label_id=$1`, [id, name, answer, input.active ?? true, input.actor ?? null]);
+  return readAiAnswerLabel(id);
+}
+
+export async function deleteAiAnswerLabel(id: string) {
+  const target = await query<{ normalizedName: string }>(
+    'SELECT normalized_name AS "normalizedName" FROM ai_answer_labels WHERE id=$1', [id]);
+  if (!target.rows[0]) return;
+  if (target.rows[0].normalizedName === AI_UNCLEAR_LABEL_NAME) {
+    throw new Error('La etiqueta pregunta-no-entendible es necesaria como respaldo y no se puede eliminar.');
+  }
+  await transaction(async client => {
+    await client.query(`UPDATE ai_answer_rules SET active=false, label_id=NULL, intent_label=NULL, updated_at=now() WHERE label_id=$1`, [id]);
+    await client.query(`UPDATE ai_query_logs SET suggested_label_id=NULL, suggested_label_name=NULL,
+      classification_method='needs-review', classification_confidence=NULL, updated_at=now()
+      WHERE suggested_label_id=$1 AND review_status='pending'`, [id]);
+    await client.query(`DELETE FROM ai_answer_labels WHERE id=$1`, [id]);
+  });
+}
+
+export async function assignAiAnswerRuleLabel(ruleId: string, labelId: string, actor: string | null) {
+  const label = await query<{ name: string; normalizedName: string; answer: string; active: boolean }>('SELECT name, normalized_name AS "normalizedName", answer, active FROM ai_answer_labels WHERE id=$1', [labelId]);
+  if (!label.rows[0]) return null;
+  if (label.rows[0].normalizedName === AI_UNCLEAR_LABEL_NAME) throw new Error('La categoría de ruido no es una respuesta reutilizable.');
+  const result = await query<{ id: string }>(`UPDATE ai_answer_rules SET label_id=$2, intent_label=$3, answer=$4, active=$5, updated_by=$6, updated_at=now() WHERE id=$1 RETURNING id`, [ruleId, labelId, label.rows[0].name, label.rows[0].answer, label.rows[0].active, actor]);
+  return result.rows[0] ? readAiRule(ruleId) : null;
+}
+
+async function readAiAnswerLabel(id: string) {
+  const result = await query<AiAnswerLabel>(`SELECT ${aiAnswerLabelColumns}
+    FROM ai_answer_labels l WHERE l.id=$1`, [id]);
+  return result.rows[0] ?? null;
+}
+
+export async function saveAiAnswerRule(input: { question: string; answer: string; label?: string | null; labelId?: string | null; aliases?: string[]; active?: boolean; actor?: string | null }) {
+  const question = input.question.trim();
+  const answer = input.answer.trim();
+  const normalizedQuestion = normalizeText(question);
+  if (!question || !normalizedQuestion || !answer) throw new Error('La pregunta y la respuesta son obligatorias.');
+  const label = input.label?.trim() || null;
+  if (label && normalizeAiLabelName(label) === AI_UNCLEAR_LABEL_NAME) {
+    throw new Error('La categoría de ruido no es una respuesta reutilizable.');
+  }
+  let canonicalAnswer = answer;
+  let selectedLabelId = input.labelId ?? null;
+  let selectedLabelName = label;
+  if (selectedLabelId) {
+    const selected = await query<{ name: string; normalizedName: string; answer: string }>(
+      'SELECT name, normalized_name AS "normalizedName", answer FROM ai_answer_labels WHERE id=$1', [selectedLabelId]);
+    if (!selected.rows[0]) throw new Error('La etiqueta seleccionada no existe.');
+    if (selected.rows[0].normalizedName === AI_UNCLEAR_LABEL_NAME) {
+      throw new Error('La categoría de ruido no es una respuesta reutilizable.');
+    }
+    selectedLabelName = selected.rows[0].name;
+    canonicalAnswer = selected.rows[0].answer;
+  } else if (label) {
+    const existingLabel = await query<{ id: string; name: string; answer: string }>('SELECT id, name, answer FROM ai_answer_labels WHERE normalized_name=$1 LIMIT 1', [normalizeAiLabelName(label)]);
+    if (existingLabel.rows[0]) {
+      selectedLabelId = existingLabel.rows[0].id;
+      selectedLabelName = existingLabel.rows[0].name;
+      canonicalAnswer = existingLabel.rows[0].answer || answer;
+    } else {
+      const created = await createAiAnswerLabel({ name: label, answer, active: input.active, actor: input.actor });
+      selectedLabelId = created?.id ?? null;
+      selectedLabelName = created?.name ?? label;
+    }
+  }
+  const result = await query<{ id: string }>(`
+    INSERT INTO ai_answer_rules (question, normalized_question, intent_label, label_id, answer, active, manual, created_by, updated_by)
+    VALUES ($1, $2, $3, $4, $5, $6, true, $7, $7)
+    ON CONFLICT (normalized_question) DO UPDATE SET question = EXCLUDED.question,
+      intent_label = COALESCE(EXCLUDED.intent_label, ai_answer_rules.intent_label),
+      label_id = COALESCE(EXCLUDED.label_id, ai_answer_rules.label_id),
+      answer = EXCLUDED.answer, active = EXCLUDED.active, manual = true,
+      updated_by = EXCLUDED.updated_by, updated_at = now()
+    RETURNING id`, [question, normalizedQuestion, selectedLabelName, selectedLabelId, canonicalAnswer, input.active ?? true, input.actor ?? null]);
+  const id = result.rows[0].id;
+  if (selectedLabelId) await query(`UPDATE ai_answer_rules SET label_id=$2, intent_label=$3, answer=$4 WHERE id=$1`, [id, selectedLabelId, selectedLabelName, canonicalAnswer]);
+  await addAiRuleAliases(id, [question, ...(input.aliases ?? [])], input.actor ?? null);
+  return readAiRule(id);
+}
+
+export async function updateAiAnswerRule(id: string, input: { question: string; answer: string; label?: string | null; labelId?: string | null; aliases?: string[]; active?: boolean; actor?: string | null }) {
+  const question = input.question.trim();
+  const answer = input.answer.trim();
+  const normalizedQuestion = normalizeText(question);
+  if (!question || !normalizedQuestion || !answer) throw new Error('La pregunta y la respuesta son obligatorias.');
+  let labelName = input.label?.trim() || null;
+  if (labelName && normalizeAiLabelName(labelName) === AI_UNCLEAR_LABEL_NAME) {
+    throw new Error('La categoría de ruido no es una respuesta reutilizable.');
+  }
+  if (input.labelId) {
+    const labelResult = await query<{ name: string; normalizedName: string }>(
+      'SELECT name, normalized_name AS "normalizedName" FROM ai_answer_labels WHERE id=$1', [input.labelId]);
+    if (!labelResult.rows[0]) throw new Error('La etiqueta seleccionada no existe.');
+    if (labelResult.rows[0].normalizedName === AI_UNCLEAR_LABEL_NAME) {
+      throw new Error('La categoría de ruido no es una respuesta reutilizable.');
+    }
+    labelName = labelResult.rows[0].name;
+    await query(`UPDATE ai_answer_labels SET answer=$2, active=$3, updated_by=$4, updated_at=now() WHERE id=$1`, [input.labelId, answer, input.active ?? true, input.actor ?? null]);
+  } else if (labelName) {
+    const labelResult = await query<{ id: string }>('SELECT id FROM ai_answer_labels WHERE normalized_name=$1 LIMIT 1', [normalizeAiLabelName(labelName)]);
+    if (labelResult.rows[0]) {
+      await query(`UPDATE ai_answer_labels SET name=$2, answer=$3, active=$4, updated_by=$5, updated_at=now() WHERE id=$1`, [labelResult.rows[0].id, labelName, answer, input.active ?? true, input.actor ?? null]);
+      input = { ...input, labelId: labelResult.rows[0].id };
+    } else {
+      const created = await createAiAnswerLabel({ name: labelName, answer, active: input.active, actor: input.actor });
+      input = { ...input, labelId: created?.id ?? null };
+    }
+  }
+  const result = await query<{ id: string }>(`UPDATE ai_answer_rules SET question = $2, normalized_question = $3, intent_label = $4, label_id = $5, answer = $6,
+    active = $7, manual = true, updated_by = $8, updated_at = now() WHERE id = $1 RETURNING id`,
+    [id, question, normalizedQuestion, labelName, input.labelId ?? null, answer, input.active ?? true, input.actor ?? null]);
+  if (!result.rows[0]) return null;
+  if (input.labelId) {
+    await query(`UPDATE ai_answer_rules SET intent_label=$2, answer=$3, active=$4, updated_by=$5, updated_at=now()
+      WHERE label_id=$1 AND id<>$6`, [input.labelId, labelName, answer, input.active ?? true, input.actor ?? null, id]);
+  }
+  await addAiRuleAliases(id, [question, ...(input.aliases ?? [])], input.actor ?? null);
+  return readAiRule(id);
+}
+
+async function readAiRule(id: string) {
+  const result = await query<AiAnswerRule>(`SELECT ${aiAnswerRuleColumns} FROM ai_answer_rules r LEFT JOIN ai_answer_labels l ON l.id = r.label_id WHERE r.id = $1`, [id]);
+  return result.rows[0] ?? null;
+}
+
+async function addAiRuleAliases(ruleId: string, aliases: string[], actor: string | null) {
+  for (const alias of aliases) {
+    const text = alias.trim();
+    const normalized = normalizeText(text);
+    if (!text || !normalized) continue;
+    await query(`INSERT INTO ai_answer_rule_aliases (answer_rule_id, alias, normalized_alias, created_by)
+      VALUES ($1, $2, $3, $4) ON CONFLICT (normalized_alias) DO UPDATE SET answer_rule_id = EXCLUDED.answer_rule_id`, [ruleId, text, normalized, actor]);
+  }
+}
+
+export async function deleteAiAnswerRule(id: string) {
+  await query('DELETE FROM ai_answer_rules WHERE id = $1', [id]);
+}
+
+export async function recordAiQuery(input: {
+  contactId?: string | null; incomingMessageId?: string | null; providerMessageId?: string | null; question: string; answer?: string;
+  outcome: string; source?: string; aiEnabled?: boolean; matchedAnswerRuleId?: string | null; matchedAnswerLabelId?: string | null; model?: string | null;
+  suggestedLabelId?: string | null; suggestedLabelName?: string | null; classificationMethod?: string | null; classificationConfidence?: number | null;
+  reviewStatus?: 'pending' | 'resolved' | 'ignored'; reviewedBy?: string | null;
+  tokens?: number; elapsedMs?: number; errorCode?: string | null;
+}) {
+  const source = input.source ?? 'production';
+  const reviewStatus = input.reviewStatus ?? (source === 'manual' ? 'ignored'
+    : ['answered', 'clarify', 'handoff', 'unavailable', 'edited', 'silence', 'paused'].includes(input.outcome) ? 'resolved' : 'pending');
+  let suggestedLabelId = input.suggestedLabelId ?? null;
+  let suggestedLabelName = input.suggestedLabelName?.trim() || null;
+  let classificationMethod = input.classificationMethod ?? null;
+  let classificationConfidence = input.classificationConfidence ?? null;
+  const values = [input.contactId ?? null, input.incomingMessageId ?? null, input.providerMessageId ?? null, input.question.trim(), input.answer ?? '',
+    input.outcome, source, input.aiEnabled ?? false, input.matchedAnswerRuleId ?? null, input.matchedAnswerLabelId ?? null,
+    suggestedLabelId, suggestedLabelName, classificationMethod, classificationConfidence,
+    reviewStatus, reviewStatus === 'pending' ? null : new Date(), input.reviewedBy ?? null, input.model ?? null,
+    input.tokens ?? 0, input.elapsedMs ?? 0, input.errorCode ?? null];
+  const result = await query<AiQueryLog>(`INSERT INTO ai_query_logs
+    (contact_id, incoming_message_id, provider_message_id, question, answer, outcome, source, ai_enabled, matched_answer_rule_id, matched_label_id,
+     suggested_label_id, suggested_label_name, classification_method, classification_confidence, review_status, reviewed_at, reviewed_by, model, tokens, elapsed_ms, error_code)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+    ON CONFLICT (provider_message_id) WHERE provider_message_id IS NOT NULL DO UPDATE SET
+      answer = EXCLUDED.answer, outcome = EXCLUDED.outcome, source = EXCLUDED.source, ai_enabled = EXCLUDED.ai_enabled,
+      matched_answer_rule_id = EXCLUDED.matched_answer_rule_id, matched_label_id = EXCLUDED.matched_label_id,
+      suggested_label_id = EXCLUDED.suggested_label_id, suggested_label_name = EXCLUDED.suggested_label_name,
+      classification_method = EXCLUDED.classification_method, classification_confidence = EXCLUDED.classification_confidence,
+      review_status = EXCLUDED.review_status, reviewed_at = EXCLUDED.reviewed_at, reviewed_by = EXCLUDED.reviewed_by,
+      model = EXCLUDED.model, tokens = EXCLUDED.tokens, elapsed_ms = EXCLUDED.elapsed_ms, error_code = EXCLUDED.error_code, updated_at = now()
+    RETURNING id, contact_id AS "contactId", question, answer, outcome, source, ai_enabled AS "aiEnabled", matched_answer_rule_id AS "matchedAnswerRuleId", matched_label_id AS "matchedAnswerLabelId",
+      suggested_label_id AS "suggestedLabelId", suggested_label_name AS "suggestedLabelName", classification_method AS "classificationMethod", classification_confidence AS "classificationConfidence",
+      review_status AS "reviewStatus", reviewed_at AS "reviewedAt", reviewed_by AS "reviewedBy", NULL::text AS label,
+      model, tokens, elapsed_ms AS "elapsedMs", error_code AS "errorCode", created_at AS "createdAt", updated_at AS "updatedAt"`, values);
+  return result.rows[0];
+}
+
+export type AiQueryView = 'attention' | 'answered' | 'noise' | 'errors' | 'tests' | 'all';
+export async function listAiQueryLogs(input: { page?: number; limit?: number; status?: string; source?: string; q?: string; reviewStatus?: string; view?: AiQueryView } = {}) {
+  const page = Math.max(1, input.page ?? 1);
+  const limit = Math.min(100, Math.max(1, input.limit ?? 40));
+  const values: unknown[] = [];
+  const where = ['1=1'];
+  if (input.view === 'attention') where.push(`q.source <> 'manual' AND q.review_status = 'pending'`);
+  if (input.view === 'answered') where.push(`q.source <> 'manual' AND q.review_status = 'resolved' AND q.outcome <> 'unavailable'`);
+  if (input.view === 'noise') where.push(`q.source <> 'manual' AND q.review_status = 'ignored'`);
+  if (input.view === 'errors') where.push(`q.source <> 'manual' AND q.outcome = 'unavailable'`);
+  if (input.view === 'tests') where.push(`q.source = 'manual'`);
+  if (input.status?.trim()) { values.push(input.status.trim()); where.push(`q.outcome = $${values.length}`); }
+  if (input.source?.trim()) { values.push(input.source.trim()); where.push(`q.source = $${values.length}`); }
+  if (input.reviewStatus?.trim()) { values.push(input.reviewStatus.trim()); where.push(`q.review_status = $${values.length}`); }
+  if (input.q?.trim()) { values.push(`%${input.q.trim()}%`); where.push(`(q.question ILIKE $${values.length} OR q.answer ILIKE $${values.length} OR c.phone ILIKE $${values.length} OR c.name ILIKE $${values.length} OR c.public_name ILIKE $${values.length})`); }
+  const countResult = await query<{ count: string }>(`SELECT count(*)::text AS count FROM ai_query_logs q LEFT JOIN contacts c ON c.id = q.contact_id WHERE ${where.join(' AND ')}`, values);
+  const offset = (page - 1) * limit;
+  const rows = await query<AiQueryLog>(`SELECT ${aiQueryColumns} FROM ai_query_logs q LEFT JOIN contacts c ON c.id = q.contact_id LEFT JOIN ai_answer_rules r ON r.id = q.matched_answer_rule_id LEFT JOIN ai_answer_labels al ON al.id = q.matched_label_id LEFT JOIN ai_answer_labels sl ON sl.id = q.suggested_label_id WHERE ${where.join(' AND ')} ORDER BY q.created_at DESC LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+    [...values, limit, offset]);
+  return { items: rows.rows, total: Number(countResult.rows[0]?.count ?? 0), page, limit };
+}
+
+export async function resolveAiQuery(id: string, input: {
+  labelId?: string | null;
+  labelName?: string | null;
+  answer?: string | null;
+}, actor: string | null) {
+  const resolved = await transaction(async client => {
+    const existing = await client.query<{ question: string; contactId: string | null; suggestedLabelId: string | null; suggestedLabelName: string | null }>(`
+      SELECT question, contact_id AS "contactId", suggested_label_id AS "suggestedLabelId", suggested_label_name AS "suggestedLabelName"
+      FROM ai_query_logs WHERE id=$1 FOR UPDATE`, [id]);
+    const queryRow = existing.rows[0];
+    if (!queryRow) return null;
+
+    let labelId = input.labelId ?? queryRow.suggestedLabelId;
+    let labelName = input.labelName?.trim() || queryRow.suggestedLabelName || '';
+    const suppliedAnswer = input.answer?.trim();
+    let label: { id: string; name: string; normalizedName: string; answer: string } | undefined;
+    if (labelId) {
+      label = (await client.query<{ id: string; name: string; normalizedName: string; answer: string }>(
+        'SELECT id, name, normalized_name AS "normalizedName", answer FROM ai_answer_labels WHERE id=$1 FOR UPDATE', [labelId])).rows[0];
+      if (!label) throw new Error('La etiqueta seleccionada no existe.');
+      if (label.normalizedName === AI_UNCLEAR_LABEL_NAME) throw new Error('Los mensajes sin sentido no pueden convertirse en una respuesta reutilizable.');
+    } else {
+      const normalizedName = normalizeAiLabelName(labelName);
+      if (!labelName || !normalizedName) throw new Error('Elegí una etiqueta o creá una nueva.');
+      if (!suppliedAnswer) throw new Error('Escribí la respuesta que compartirá esta etiqueta.');
+      if (normalizedName === AI_UNCLEAR_LABEL_NAME) throw new Error('Elegí un tema concreto para crear una respuesta reutilizable.');
+      label = (await client.query<{ id: string; name: string; normalizedName: string; answer: string }>(`
+        INSERT INTO ai_answer_labels (name, normalized_name, answer, active, created_by, updated_by)
+        VALUES ($1,$2,$3,true,$4,$4)
+        ON CONFLICT (normalized_name) DO UPDATE SET updated_at=now()
+        RETURNING id, name, normalized_name AS "normalizedName", answer`, [labelName, normalizedName, suppliedAnswer, actor])).rows[0];
+      labelId = label.id;
+    }
+
+    labelName = label.name;
+    const canonicalAnswer = suppliedAnswer || label.answer.trim();
+    if (!canonicalAnswer) throw new Error('Escribí la respuesta que compartirá esta etiqueta.');
+    if (suppliedAnswer) {
+      await client.query(`UPDATE ai_answer_labels SET answer=$2, active=true, updated_by=$3, updated_at=now() WHERE id=$1`, [labelId, canonicalAnswer, actor]);
+      await client.query(`UPDATE ai_answer_rules SET answer=$2, active=true, updated_by=$3, updated_at=now() WHERE label_id=$1`, [labelId, canonicalAnswer, actor]);
+    }
+
+    const sameSuggestedGroup = queryRow.suggestedLabelId === labelId
+      && label.normalizedName !== AI_UNCLEAR_LABEL_NAME;
+    const pending = await client.query<{ id: string; question: string }>(`
+      SELECT id, question FROM ai_query_logs
+      WHERE review_status='pending' AND (id=$1 OR ($2::boolean AND suggested_label_id=$3))
+      ORDER BY created_at ASC FOR UPDATE`, [id, sameSuggestedGroup, labelId]);
+    const rootQuestion = queryRow.question.trim();
+    const normalizedQuestion = normalizeText(rootQuestion);
+    const rule = await client.query<{ id: string }>(`
+      INSERT INTO ai_answer_rules (question, normalized_question, intent_label, label_id, answer, active, manual, created_by, updated_by)
+      VALUES ($1,$2,$3,$4,$5,true,true,$6,$6)
+      ON CONFLICT (normalized_question) DO UPDATE SET question=EXCLUDED.question, intent_label=EXCLUDED.intent_label,
+        label_id=EXCLUDED.label_id, answer=EXCLUDED.answer, active=true, manual=true, updated_by=EXCLUDED.updated_by, updated_at=now()
+      RETURNING id`, [rootQuestion, normalizedQuestion, labelName, labelId, canonicalAnswer, actor]);
+    const ruleId = rule.rows[0].id;
+    for (const item of pending.rows) {
+      const normalizedAlias = normalizeText(item.question);
+      if (!normalizedAlias) continue;
+      await client.query(`INSERT INTO ai_answer_rule_aliases (answer_rule_id, alias, normalized_alias, created_by)
+        VALUES ($1,$2,$3,$4)
+        ON CONFLICT (normalized_alias) DO UPDATE SET answer_rule_id=EXCLUDED.answer_rule_id, alias=EXCLUDED.alias`,
+      [ruleId, item.question.trim(), normalizedAlias, actor]);
+    }
+    const ids = pending.rows.map(item => item.id);
+    await client.query(`UPDATE ai_query_logs SET answer=$2, outcome='edited', review_status='resolved', reviewed_at=now(), reviewed_by=$3,
+      matched_answer_rule_id=$4, matched_label_id=$5, suggested_label_id=$5, suggested_label_name=$6, updated_at=now()
+      WHERE id = ANY($1::uuid[])`, [ids, canonicalAnswer, actor, ruleId, labelId, labelName]);
+    return { contactId: queryRow.contactId, labelId, ruleId, count: ids.length };
+  });
+  if (!resolved) return null;
+  await audit(actor ?? 'admin', 'ai_query_resolved', resolved.contactId ?? undefined, undefined,
+    { queryId: id, labelId: resolved.labelId, groupedQueries: resolved.count });
+  const result = await query<AiQueryLog>(`SELECT ${aiQueryColumns} FROM ai_query_logs q
+    LEFT JOIN contacts c ON c.id=q.contact_id LEFT JOIN ai_answer_rules r ON r.id=q.matched_answer_rule_id
+    LEFT JOIN ai_answer_labels al ON al.id=q.matched_label_id LEFT JOIN ai_answer_labels sl ON sl.id=q.suggested_label_id
+    WHERE q.id=$1`, [id]);
+  return result.rows[0] ?? null;
+}
+
+/** Backwards-compatible endpoint used by older admin clients. */
+export async function updateAiQueryAnswer(id: string, answer: string, actor: string | null, label?: string | null) {
+  return resolveAiQuery(id, { labelName: label, answer }, actor);
+}
+
+export async function markAiQueryAsNoise(id: string, actor: string | null) {
+  const fallback = await ensureAiAnswerLabelDraft(AI_UNCLEAR_LABEL_NAME, 'ai-system', AI_UNCLEAR_LABEL_ANSWER);
+  if (!fallback) throw new Error('No se pudo preparar la categoría de ruido.');
+  const result = await query<AiQueryLog>(`UPDATE ai_query_logs SET
+      review_status='ignored', reviewed_at=now(), reviewed_by=$3,
+      suggested_label_id=$2, suggested_label_name=$4,
+      classification_method='unintelligible', classification_confidence=1, updated_at=now()
+    WHERE id=$1
+    RETURNING id, contact_id AS "contactId", question, answer, outcome, source, ai_enabled AS "aiEnabled",
+      matched_answer_rule_id AS "matchedAnswerRuleId", matched_label_id AS "matchedAnswerLabelId",
+      suggested_label_id AS "suggestedLabelId", suggested_label_name AS "suggestedLabelName",
+      classification_method AS "classificationMethod", classification_confidence AS "classificationConfidence",
+      review_status AS "reviewStatus", reviewed_at AS "reviewedAt", reviewed_by AS "reviewedBy",
+      NULL::text AS label, model, tokens, elapsed_ms AS "elapsedMs", error_code AS "errorCode",
+      created_at AS "createdAt", updated_at AS "updatedAt"`, [id, fallback.id, actor, fallback.name]);
+  const item = result.rows[0] ?? null;
+  if (item) await audit(actor ?? 'admin', 'ai_query_marked_noise', item.contactId ?? undefined, undefined, { queryId: id });
+  return item;
+}
+
+export async function reopenAiQuery(id: string, actor: string | null) {
+  const result = await query<AiQueryLog>(`UPDATE ai_query_logs SET
+      review_status='pending', reviewed_at=NULL, reviewed_by=NULL,
+      suggested_label_id=NULL, suggested_label_name=NULL,
+      classification_method='manual-review', classification_confidence=NULL, updated_at=now()
+    WHERE id=$1
+    RETURNING id, contact_id AS "contactId", question, answer, outcome, source, ai_enabled AS "aiEnabled",
+      matched_answer_rule_id AS "matchedAnswerRuleId", matched_label_id AS "matchedAnswerLabelId",
+      suggested_label_id AS "suggestedLabelId", suggested_label_name AS "suggestedLabelName",
+      classification_method AS "classificationMethod", classification_confidence AS "classificationConfidence",
+      review_status AS "reviewStatus", reviewed_at AS "reviewedAt", reviewed_by AS "reviewedBy",
+      NULL::text AS label, model, tokens, elapsed_ms AS "elapsedMs", error_code AS "errorCode",
+      created_at AS "createdAt", updated_at AS "updatedAt"`, [id]);
+  const item = result.rows[0] ?? null;
+  if (item) await audit(actor ?? 'admin', 'ai_query_reopened', item.contactId ?? undefined, undefined, { queryId: id });
+  return item;
 }

@@ -67,3 +67,4 @@ playwright-report/
 .agents/
 tool/
 abastobot-*-request.json
+.vercel

@@ -12,16 +12,45 @@ import {
   buildAdvisorFollowupMessage,
   isMenuCommand,
   resolveIncomingMenuOption,
+  shouldIgnoreConversationNoise,
+  shouldQueueAiLearning,
   shouldSkipAutomaticResponse,
 } from '../src/services/botProcessor';
+
+assert.equal(shouldQueueAiLearning({ text: 'En donde estan?', type: 'text' }), false,
+  'Una pregunta resuelta por dirección no entra en aprendizaje.');
+assert.equal(shouldQueueAiLearning({ text: 'Quiero un catalogo con sus productos y precios', type: 'text' }), false,
+  'Una pregunta resuelta por catálogo no entra en aprendizaje.');
+assert.equal(shouldQueueAiLearning({ text: 'Tendrás el catálogo?', type: 'text' }), false,
+  'Una forma natural de pedir el catálogo queda en el menú.');
+assert.equal(shouldQueueAiLearning({ text: 'De dónde son?', type: 'text' }), false,
+  'Una forma natural de pedir la ubicación queda en el menú.');
+assert.equal(shouldQueueAiLearning({ text: 'Hola cómo estás?', type: 'text' }), false,
+  'Un saludo de cortesía no entra en aprendizaje.');
+assert.equal(shouldQueueAiLearning({ text: 'Traen a domicilio? estoy en zona sur', type: 'text' }), true,
+  'Una pregunta no cubierta sí entra en aprendizaje.');
+assert.equal(shouldQueueAiLearning({ text: 'Ok', type: 'text' }), false,
+  'Una confirmación breve no es una pregunta pendiente.');
+assert.equal(shouldIgnoreConversationNoise({ text: 'Ok', type: 'text' }), true,
+  'Una confirmación breve cierra el turno sin derivar al asesor.');
+assert.equal(shouldIgnoreConversationNoise({ text: 'Sí', type: 'text' }, true), false,
+  'Una respuesta breve dentro del armado de pedido conserva su contexto.');
+assert.equal(shouldQueueAiLearning({ text: 'Sí', type: 'text' }, false, true), true,
+  'Una respuesta corta a una pregunta previa del asistente debe conservar el contexto.');
+assert.equal(shouldIgnoreConversationNoise({ text: 'Ok', type: 'text' }, false, true), false,
+  'Ok no es ruido cuando responde una pregunta previa del asistente.');
+assert.equal(shouldQueueAiLearning({ text: 'Necesito información sobre factura A', type: 'text' }), true,
+  'Una pregunta completa con la palabra información debe ir a la IA, no abrir el menú genérico.');
 
 const menuCases: Array<[string, string]> = [
   ['1', 'horarios'],
   ['dirección!!!', 'direccion'],
   ['📍 Dirección', 'direccion'],
   ['¿Cuál es la ubicación del negocio?', 'direccion'],
+  ['¿De dónde son?', 'direccion'],
   ['💲 Precios', 'lista_precio'],
   ['lista de precios', 'lista_precio'],
+  ['¿Tendrás el catálogo?', 'lista_precio'],
   ['📝 Nuevo Pedido', 'hacer_pedido'],
   ['nuevo pedido', 'hacer_pedido'],
   ['👤 Asesor Humano', 'asesor'],
@@ -58,12 +87,14 @@ assert.equal(shouldSkipAutomaticResponse(now - 121_000, new Date(now).toISOStrin
 assert.equal(isMenuCommand('Hola'), true);
 assert.equal(isMenuCommand('hola bot'), true);
 assert.equal(isMenuCommand('buenas tardes'), true);
+assert.equal(isMenuCommand('Hola cómo estás?'), true);
 assert.equal(isMenuCommand('ver menu'), true);
 assert.equal(isMenuCommand('opciones'), true);
 assert.equal(isMenuCommand('Ver más info'), true);
 assert.equal(isMenuCommand('necesito información'), true);
 assert.equal(isMenuCommand('info sobre el negocio'), true);
-assert.equal(isMenuCommand('tienen información de precios?'), true);
+assert.equal(isMenuCommand('tienen información de precios?'), false,
+  'Una pregunta completa no debe degradarse a un menú por contener la palabra información.');
 assert.equal(isMenuCommand('2 cajas de queso cremoso'), false);
 assert.equal(isMenuCommand('tienen manteca?'), false);
 assert.equal(ADVISOR_FOLLOWUP_DELAY_MS, 10 * 60 * 1000);

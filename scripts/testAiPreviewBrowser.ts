@@ -52,6 +52,10 @@ async function run() {
           await send('4'); await send('2 hormas de cremoso');
           assert.match(await page.locator('.bubble.assistant').last().innerText(), /ningún pedido real/);
           await send('Simular fallo'); assert.match(await page.locator('#chat-status').innerText(), /saldo suficiente/);
+          const beforeSilence = await page.locator('.bubble.assistant').count();
+          await send('Gracias');
+          assert.equal(await page.locator('.bubble.assistant').count(), beforeSilence, 'silence must not add an assistant bubble');
+          assert.match(await page.locator('#evidence').innerText(), /Silencio deliberado/);
           assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, `desborde ${engine.name()} ${width}`);
           await page.screenshot({ path: `qa-artifacts/ai-${engine.name()}-${width}.png`, fullPage: true });
           await page.getByRole('button', { name: 'Revisar o cargar catálogo' }).click();

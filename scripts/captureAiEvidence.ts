@@ -23,7 +23,7 @@ async function captureEvidence() {
   };
 
   const key = (process.env.OPENROUTER_API_KEY || '').trim();
-  const model = process.env.OPENROUTER_MODEL || 'openrouter/free';
+  const model = process.env.OPENROUTER_MODEL || 'google/gemini-3.5-flash-lite';
   const complete = createOpenRouterClient({ key, model });
 
   const app = createPreviewApp(complete);

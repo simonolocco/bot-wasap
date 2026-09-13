@@ -2,24 +2,38 @@ import { sendCloudMessage, sendCloudTextMessage } from '../cloudClient';
 import {
   audit, cancelAdvisorFollowup, claimInitialGreeting, claimOutgoingMessage, completeJob, createOrder, createSupportTicket,
   completeAdvisorFollowup, getContactById, getJobEvent, getSession, hasRecentDuplicateIncoming, isAdvisorFollowupEligible,
-  markOutgoingFailed, markOutgoingSent, prepareOutgoingMessage, recordBotInteractionEvent, recordSupportTicketQuestion,
+  markOutgoingFailed, markOutgoingSent, prepareOutgoingMessage, recordAiQuery, recordBotInteractionEvent, recordSupportTicketQuestion,
   retryAdvisorFollowup, retryJob, scheduleAdvisorFollowup, updateSession,
+  ensureAiAnswerLabelDraft, findAiAnswerRule, getAiSettings, loadActiveAiLabelExamples, promoteAiLabelCandidateQueries,
+  recordAiLabelCandidateObservation, saveAiAnswerRule,
 } from '../db/repository';
 import {
   advisorReply, BUSINESS_ADDRESS, BUSINESS_SCHEDULE, EMPTY_ORDER_MESSAGE, FAQ_GENERAL, FAQ_OTHER_NO_ID, FAQ_OTHER_PROMPT,
   FAQ_OTHER_YES_ID, FOLLOW_UP_MENU_HEADER_TEXT, FOLLOW_UP_MENU_PROMPT, MAIN_MENU_OPTIONS, MENU_BUTTON_LABEL, MENU_HEADER_TEXT, MENU_PROMPT, ORDER_INSTRUCTIONS,
-  SUPPORT_TICKET_PROMPT, buildGreetingIntro, buildMenuListSections, formatPriceListMessage, normalizeText, resolveOptionIdFromText, type MenuOptionId,
+  SUPPORT_TICKET_PROMPT, buildGreetingIntro, buildMenuListSections, formatPriceListMessage, isMenuCommandText, normalizeText, resolveOptionIdFromText, type MenuOptionId,
 } from '../messageCatalog';
 import { buildOrderForwardLink } from './orderTicket';
-import { assistantEnabled, shouldUseAssistant, answerQuestion, type Turn } from '../ai/assistant';
+import { assistantEnabled, hasPendingQuestion, isLearningQueueNoise, shouldUseAssistant, type Turn } from '../ai/assistant';
 import { readCatalog } from '../ai/catalog';
 import { createOpenRouterClient } from '../ai/openRouter';
+import { resolveCustomerAiResponse } from '../ai/queryResolver';
+import { aiReviewStatus, deriveSuggestedAiTopic, learningConfidence } from '../ai/runtimePolicy';
+import { isUnintelligibleQuestion } from '../ai/inputQuality';
+import {
+  AI_UNCLEAR_LABEL_ANSWER, AI_UNCLEAR_LABEL_NAME, canonicalAutoLabelAnswer, decideAiLabelPromotion, normalizeAiTopic,
+} from '../ai/labelPolicy';
 import { listMessages } from '../db/repository';
 
 type Incoming = { from: string; profileName?: string; text?: string; selectedOptionId?: MenuOptionId; buttonReplyId?: string; type: string; sourceTimestamp?: number };
 const DUPLICATE_AUTO_RESPONSE_WINDOW_SECONDS = Math.max(0, Number.parseInt(process.env.DUPLICATE_AUTO_RESPONSE_WINDOW_SECONDS ?? '90', 10) || 90);
 const AUTO_RESPONSE_MAX_DELAY_SECONDS = Math.max(0, Number.parseInt(process.env.AUTO_RESPONSE_MAX_DELAY_SECONDS ?? '120', 10) || 120);
 export const ADVISOR_FOLLOWUP_DELAY_MS = 10 * 60 * 1000;
+
+async function productionAiEnabled() {
+  if (process.env.NODE_ENV !== 'production') return assistantEnabled();
+  try { return (await getAiSettings()).enabled; }
+  catch (error) { console.error('[worker] No se pudo leer el interruptor global de IA:', error); return false; }
+}
 
 export function shouldIgnoreIncomingForAutomaticResponse(type: string) {
   return type === 'reaction';
@@ -86,9 +100,7 @@ async function sendFollowUpMenu(contactId: string, to: string, key: string) {
 }
 
 export function isMenuCommand(text: string | undefined) {
-  const normalized = normalizeText(text);
-  if (['hola', 'hola bot', 'buenas', 'buenas bot', 'buen dia', 'buenas tardes', 'buenas noches', 'menu', 'opciones', 'ver menu', 'ver opciones'].includes(normalized)) return true;
-  return /\b(info|informacion|detalles|datos)\b/.test(normalized);
+  return isMenuCommandText(text);
 }
 
 export function resolveIncomingMenuOption(incoming: Pick<Incoming, 'text' | 'selectedOptionId' | 'buttonReplyId'>): MenuOptionId | undefined {
@@ -98,6 +110,26 @@ export function resolveIncomingMenuOption(incoming: Pick<Incoming, 'text' | 'sel
   if (/^[1-6]\s+/.test(normalizedText)) return undefined;
 
   return resolveOptionIdFromText(incoming.text);
+}
+
+/** A learning candidate is text that no real menu/flow resolver already owns. */
+export function shouldQueueAiLearning(
+  incoming: Pick<Incoming, 'text' | 'selectedOptionId' | 'buttonReplyId' | 'type'>,
+  awaitingOrderDetail = false,
+  pendingAssistantQuestion = false,
+) {
+  return !isMenuCommand(incoming.text)
+    && !resolveIncomingMenuOption(incoming)
+    && !isLearningQueueNoise(incoming.text, pendingAssistantQuestion)
+    && shouldUseAssistant(incoming, awaitingOrderDetail);
+}
+
+export function shouldIgnoreConversationNoise(
+  incoming: Pick<Incoming, 'text' | 'type'>,
+  awaitingOrderDetail = false,
+  pendingAssistantQuestion = false,
+) {
+  return !awaitingOrderDetail && incoming.type === 'text' && isLearningQueueNoise(incoming.text, pendingAssistantQuestion);
 }
 
 export async function processDueAdvisorFollowup(followup: { id: string; contact_id: string; attempts: number }) {
@@ -212,6 +244,9 @@ export async function processIncomingJob(job: { id: string; contact_id: string; 
         metadata: { botPaused: true, ticketId: ticket?.id ?? null },
         createdAt: eventTime,
       });
+      if (incoming.type === 'text' && rawText) {
+        await recordAiQuery({ contactId: job.contact_id, providerMessageId: event.provider_message_id, question: rawText, outcome: 'paused', source: 'production', aiEnabled: false });
+      }
 
       await completeJob(job.id);
       return;
@@ -219,6 +254,7 @@ export async function processIncomingJob(job: { id: string; contact_id: string; 
 
     const incomingSignature = incoming.text?.trim() || incoming.selectedOptionId || incoming.buttonReplyId || '';
     const menuCommand = isMenuCommand(incoming.text);
+    const resolvedMenuOption = resolveIncomingMenuOption(incoming);
     if (!menuCommand && await hasRecentDuplicateIncoming(job.contact_id, event.provider_message_id, incomingSignature, DUPLICATE_AUTO_RESPONSE_WINDOW_SECONDS)) {
       console.info(`[worker] Respuesta automática omitida para ${job.contact_id}: mensaje repetido dentro de ${DUPLICATE_AUTO_RESPONSE_WINDOW_SECONDS}s.`);
       await completeJob(job.id);
@@ -227,27 +263,154 @@ export async function processIncomingJob(job: { id: string; contact_id: string; 
     const session = await getSession(job.contact_id);
     const key = `event:${event.provider_message_id}`;
 
-    if (assistantEnabled() && shouldUseAssistant(incoming, session.awaiting_order_detail)) {
+    // Read recent turns before classifying acknowledgements: "sí", "ok" and
+    // "dale" may answer a question that the assistant just asked.
+    const assistantCandidate = shouldUseAssistant(incoming, session.awaiting_order_detail);
+    let history: Turn[] = [];
+    if (assistantCandidate) {
       const previous = await listMessages(job.contact_id, undefined, 10);
-      const history: Turn[] = previous.items.filter(m => m.providerMessageId !== event.provider_message_id && m.messageType === 'text')
+      history = previous.items
+        .filter(m => m.providerMessageId !== event.provider_message_id && m.messageType === 'text')
         .map(m => ({ role: m.direction === 'incoming' ? 'user' as const : 'assistant' as const, content: m.body }));
-      const complete = createOpenRouterClient({ key: process.env.OPENROUTER_API_KEY ?? '', model: process.env.OPENROUTER_MODEL ?? 'openai/gpt-oss-120b' });
-      const answer = await answerQuestion({ message: rawText, history }, await readCatalog(), complete);
-      // An operator may take the conversation while the provider is responding.
-      if ((await getContactById(job.contact_id))?.botPaused || shouldSkipAutomaticResponse(sourceTimestamp, event.received_at)) { await completeJob(job.id); return; }
-      await outgoing(job.contact_id, incoming.from, `${key}:ai`, answer.text);
-      if (!session.greeted) await claimInitialGreeting(job.contact_id, incoming.profileName?.trim() || 'Cliente');
+    }
+    const pendingAssistantQuestion = hasPendingQuestion(history);
+    if (shouldIgnoreConversationNoise(incoming, session.awaiting_order_detail, pendingAssistantQuestion)) {
       await recordBotInteractionEvent({
-        contactId: job.contact_id, providerMessageId: event.provider_message_id,
-        eventType: answer.outcome === 'unavailable' || answer.outcome === 'handoff' ? 'unrecognized_message' : 'flow_command',
-        rawText, normalizedText: normText, messageType: incoming.type, createdAt: eventTime,
-        metadata: { source: 'ai_preview', outcome: answer.outcome, model: answer.model, tokens: answer.tokens, elapsedMs: answer.elapsedMs, sources: answer.sources },
+        contactId: job.contact_id,
+        providerMessageId: event.provider_message_id,
+        eventType: 'flow_command',
+        rawText,
+        normalizedText: normText,
+        messageType: incoming.type,
+        createdAt: eventTime,
+        metadata: { source: 'acknowledgement', outcome: 'silence' },
       });
-      if (answer.outcome === 'unavailable' || answer.outcome === 'handoff') {
-        await scheduleAdvisorFollowup(job.contact_id, event.provider_message_id, new Date(Date.now() + ADVISOR_FOLLOWUP_DELAY_MS));
-      }
       await completeJob(job.id);
       return;
+    }
+
+    // The real menu resolver is authoritative. Previously this block ran first,
+    // which polluted the learning queue with address/catalog questions that the
+    // bot went on to answer correctly.
+    const aiCandidate = shouldQueueAiLearning(incoming, session.awaiting_order_detail, pendingAssistantQuestion);
+    if (aiCandidate) {
+      const aiEnabled = await productionAiEnabled();
+      const complete = createOpenRouterClient({ key: process.env.OPENROUTER_API_KEY ?? '', model: process.env.OPENROUTER_MODEL ?? 'google/gemini-3.5-flash-lite' });
+      const labelCandidates = await loadActiveAiLabelExamples();
+      const savedRule = await findAiAnswerRule(rawText, { persistSemantic: false });
+      const resolution = await resolveCustomerAiResponse({
+        question: rawText,
+        history,
+        catalog: await readCatalog(),
+        complete,
+        allowGeneration: aiEnabled,
+        savedRule,
+        labels: labelCandidates,
+      });
+      const classification = resolution.classification;
+      const unintelligible = classification.method === 'unintelligible' || isUnintelligibleQuestion(rawText);
+      let suggestedName = deriveSuggestedAiTopic(classification, resolution.answer);
+      let suggestedLabelId = resolution.matchedLabel?.id ?? savedRule?.labelId ?? null;
+      let matchedRuleId = resolution.matchedRuleId;
+      let matchedLabelId = resolution.matchedLabel?.id ?? savedRule?.labelId ?? null;
+      let classificationMethod: string = classification.method;
+      let confidence = learningConfidence(classification, resolution.answer);
+
+      if (unintelligible) {
+        const fallbackLabel = await ensureAiAnswerLabelDraft(AI_UNCLEAR_LABEL_NAME, 'ai-system', AI_UNCLEAR_LABEL_ANSWER);
+        suggestedName = fallbackLabel?.name ?? AI_UNCLEAR_LABEL_NAME;
+        suggestedLabelId = fallbackLabel?.id ?? null;
+        classificationMethod = 'unintelligible';
+        confidence = Math.max(confidence, 0.96);
+      }
+
+      if (!resolution.answer) {
+        await recordAiQuery({
+          contactId: job.contact_id, providerMessageId: event.provider_message_id, question: rawText,
+          answer: '', outcome: 'disabled', source: 'production', aiEnabled,
+          reviewStatus: unintelligible ? 'ignored' : 'pending',
+          suggestedLabelId, suggestedLabelName: suggestedName,
+          classificationMethod, classificationConfidence: confidence,
+        });
+        if (unintelligible) {
+          await recordBotInteractionEvent({ contactId: job.contact_id, providerMessageId: event.provider_message_id,
+            eventType: 'unrecognized_message', rawText, normalizedText: normText, messageType: incoming.type, createdAt: eventTime,
+            metadata: { source: 'unintelligible', outcome: 'disabled' } });
+          await completeJob(job.id);
+          return;
+        }
+        // The generative switch is off. Continue through the deterministic bot
+        // so its menu, greeting and advisor fallback remain available.
+      } else {
+        const answer = resolution.answer;
+
+        // A human can take the chat, the switch can turn off, or the message can
+        // become stale while the provider is working. Re-check before sending.
+        const latestContact = await getContactById(job.contact_id);
+        const generationStillEnabled = resolution.source !== 'generated' || await productionAiEnabled();
+        const becameStale = shouldSkipAutomaticResponse(sourceTimestamp, event.received_at);
+        if (!generationStillEnabled || latestContact?.botPaused || becameStale) {
+          const withheldOutcome = latestContact?.botPaused || becameStale ? 'paused' : 'disabled';
+          await recordAiQuery({ contactId: job.contact_id, providerMessageId: event.provider_message_id, question: rawText,
+            answer: '', outcome: withheldOutcome, source: 'production', aiEnabled: generationStillEnabled,
+            reviewStatus: withheldOutcome === 'disabled' ? 'pending' : 'resolved',
+            suggestedLabelId, suggestedLabelName: suggestedName, classificationMethod,
+            classificationConfidence: confidence, model: answer.model, tokens: answer.tokens,
+            elapsedMs: answer.elapsedMs, errorCode: becameStale ? 'stale-before-send' : null });
+          await completeJob(job.id);
+          return;
+        }
+
+        const responseSent = Boolean(answer.text.trim());
+        if (responseSent) await outgoing(job.contact_id, incoming.from, `${key}:ai-${resolution.source}`, answer.text.trim());
+        if (resolution.sendMenuAfter) await sendMenu(job.contact_id, incoming.from, `${key}:ai-menu`);
+
+        // Reusing an approved label may learn this wording as an alias. Manual
+        // tests never call this branch, so testing remains read-only.
+        if (resolution.source === 'approved-label' && resolution.matchedLabel) {
+          const learnedRule = await saveAiAnswerRule({ question: rawText, answer: resolution.matchedLabel.answer,
+            label: resolution.matchedLabel.name, labelId: resolution.matchedLabel.id, actor: 'ai-auto' });
+          matchedRuleId = learnedRule?.id ?? null;
+          matchedLabelId = resolution.matchedLabel.id;
+        }
+
+        let stats = { events30d: 0, contacts30d: 0, contacts7d: 0 };
+        if (suggestedName && normalizeAiTopic(suggestedName) !== AI_UNCLEAR_LABEL_NAME && confidence >= 0.8) {
+          stats = await recordAiLabelCandidateObservation({
+            name: suggestedName, question: rawText, confidence,
+            contactId: job.contact_id, providerMessageId: event.provider_message_id, observedAt: eventTime,
+          });
+          const promotion = decideAiLabelPromotion({ suggestedName, confidence, stats });
+          const canonicalAnswer = promotion.answer || canonicalAutoLabelAnswer(promotion.labelName);
+          if (promotion.promoted && canonicalAnswer) {
+            const promotedLabel = await ensureAiAnswerLabelDraft(promotion.labelName, 'ai-auto-frequency', canonicalAnswer);
+            if (promotedLabel) {
+              await promoteAiLabelCandidateQueries(promotion.labelName, promotedLabel.id, promotedLabel.name);
+              await saveAiAnswerRule({ question: rawText, answer: promotedLabel.answer,
+                label: promotedLabel.name, labelId: promotedLabel.id, actor: 'ai-auto-frequency' });
+              suggestedName = promotedLabel.name;
+              suggestedLabelId = promotedLabel.id;
+              classificationMethod = 'frequency';
+            }
+          }
+        }
+
+        const reviewStatus = aiReviewStatus({ source: 'production', aiEnabled, outcome: answer.outcome, responseSent, unintelligible });
+        await recordAiQuery({ contactId: job.contact_id, providerMessageId: event.provider_message_id, question: rawText,
+          answer: answer.text, outcome: answer.outcome, source: 'production', aiEnabled, reviewStatus,
+          matchedAnswerRuleId: matchedRuleId, matchedAnswerLabelId: matchedLabelId,
+          suggestedLabelId, suggestedLabelName: suggestedName,
+          classificationMethod, classificationConfidence: confidence,
+          model: answer.model, tokens: answer.tokens, elapsedMs: answer.elapsedMs, errorCode: answer.errorCode ?? null });
+        await recordBotInteractionEvent({ contactId: job.contact_id, providerMessageId: event.provider_message_id,
+          eventType: unintelligible ? 'unrecognized_message' : 'flow_command', rawText, normalizedText: normText,
+          messageType: incoming.type, createdAt: eventTime,
+          metadata: { source: resolution.source, outcome: answer.outcome, proposedLabel: suggestedName,
+            confidence, stats, responseSent } });
+        if (!session.greeted && responseSent) await claimInitialGreeting(job.contact_id, incoming.profileName?.trim() || 'Cliente');
+        await completeJob(job.id);
+        return;
+      }
     }
 
     if (incoming.buttonReplyId === FAQ_OTHER_YES_ID) {
@@ -288,7 +451,7 @@ export async function processIncomingJob(job: { id: string; contact_id: string; 
       await completeJob(job.id);
       return;
     }
-    let option = resolveIncomingMenuOption(incoming);
+    let option = resolvedMenuOption;
 
     const initialName = incoming.profileName?.trim() || session.display_name || '¡hola!';
     const firstInteraction = !session.greeted && await claimInitialGreeting(job.contact_id, initialName);

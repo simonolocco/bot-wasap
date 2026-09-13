@@ -111,8 +111,9 @@ const MENU_OPTION_DESCRIPTIONS: Record<MenuOptionId, string> = {
 
 const MENU_ALIASES: Record<MenuOptionId, string[]> = {
   horarios: ['horario de atencion', 'cuando atienden', 'cuando abren'],
-  direccion: ['ubicacion', 'donde estan', 'como llego'],
-  lista_precio: ['lista de precios', 'catalogos', 'catalogo de precios', 'ofertas'],
+  direccion: ['ubicacion', 'donde estan', 'donde quedan', 'de donde son', 'como llego', 'direccion del local'],
+  lista_precio: ['lista de precios', 'catalogos', 'catalogo de precios', 'tenes catalogo', 'tienen catalogo',
+    'tendras catalogo', 'tendras el catalogo', 'pasame el catalogo', 'quiero el catalogo', 'ofertas'],
   hacer_pedido: ['nuevo pedido', 'hacer un pedido', 'quiero pedir', 'quiero hacer un pedido'],
   asesor: ['asesor humano', 'hablar con alguien', 'hablar con un asesor', 'persona', 'humano'],
   preguntas_frecuentes: ['pregunta frecuente', 'preguntas', 'faq'],
@@ -150,6 +151,21 @@ export function normalizeText(input: string | undefined | null): string {
     .replace(/[^a-z0-9\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/** Menu triggers shared by production and the AI preview. */
+export function isMenuCommandText(input: string | undefined | null): boolean {
+  const normalized = normalizeText(input);
+  if (!normalized) return false;
+  if (['hola', 'hola bot', 'buenas', 'buenas bot', 'buen dia', 'buenos dias', 'buenas tardes', 'buenas noches', 'menu', 'opciones', 'ver menu', 'ver opciones'].includes(normalized)) return true;
+  // Preserve production greeting behavior for stretched greetings such as "holaaa".
+  if (/^ho+l+a+(?: bot)?$/.test(normalized)) return true;
+  // A greeting with a courtesy phrase is still only a greeting. Keeping it in
+  // the menu flow prevents it from polluting the unanswered-question inbox.
+  if (/^(?:hola|buen dia|buenos dias|buenas tardes|buenas noches)(?: (?:como estas|como va|que tal))?$/.test(normalized)) return true;
+  // Only a standalone, generic request opens the menu. A complete question
+  // such as "necesito información sobre factura A" belongs to the assistant.
+  return /^(?:(?:quiero|necesito|me das|pasame|dame|ver) )?(?:mas )?(?:info|imfo|informacion|detalles|datos)(?: (?:del negocio|sobre el negocio|de la empresa|generales))?(?: por favor)?(?: buenas tardes)?$/.test(normalized);
 }
 
 export function resolveOptionIdFromText(text: string | undefined | null): MenuOptionId | undefined {

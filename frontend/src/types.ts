@@ -251,3 +251,35 @@ export type BotAnalyticsData = {
     note: string;
   };
 };
+
+export type AiSettings = { enabled: boolean; updatedAt: string | null; updatedBy: string | null };
+export type AiAnswerLabel = {
+  id: string;
+  name: string;
+  normalizedName?: string;
+  answer: string;
+  active: boolean;
+  aliases: string[];
+  ruleIds?: string[];
+  aliasCount?: number;
+  createdBy?: string | null;
+  updatedBy?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+export type AiAnswerRule = {
+  id: string; question: string; normalizedQuestion: string; label: string | null; labelId?: string | null; labelAnswer?: string | null; aliases: string[]; answer: string; active: boolean; manual: boolean;
+  createdBy: string | null; updatedBy: string | null; createdAt: string; updatedAt: string;
+};
+export type AiQueryLog = {
+  id: string; contactId: string | null; contactName: string; phone: string; question: string; answer: string;
+  outcome: string; source: string; aiEnabled: boolean; matchedAnswerRuleId: string | null; matchedAnswerLabelId?: string | null; label: string | null; model: string | null;
+  suggestedLabelId?: string | null; suggestedLabelName?: string | null; classificationMethod?: string | null; classificationConfidence?: number | null;
+  reviewStatus?: 'pending' | 'resolved' | 'ignored'; reviewedAt?: string | null; reviewedBy?: string | null;
+  tokens: number; elapsedMs: number; errorCode: string | null; createdAt: string; updatedAt: string;
+};
+export type AiData = {
+  settings: AiSettings; rules: AiAnswerRule[]; labels?: AiAnswerLabel[]; model: string;
+  queries: { items: AiQueryLog[]; total: number; page: number; limit: number };
+  totals: { attention: number; answered: number; noise: number; errors: number; tests: number };
+};

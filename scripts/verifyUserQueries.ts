@@ -6,7 +6,7 @@ dotenv.config({ path: '.env.local', override: true });
 
 async function verify() {
   const key = (process.env.OPENROUTER_API_KEY || '').trim();
-  const model = process.env.OPENROUTER_MODEL || 'nvidia/nemotron-3-super-120b-a12b:free';
+  const model = process.env.OPENROUTER_MODEL || 'google/gemini-3.5-flash-lite';
   const complete = createOpenRouterClient({ key, model });
 
   const app = createPreviewApp(complete);

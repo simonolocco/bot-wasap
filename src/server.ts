@@ -11,9 +11,13 @@ import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { buildMediaPayload, getWhatsAppTransport, hasCloudCredentials, sendCloudMessage, sendCloudTextMessage, uploadCloudMedia } from './cloudClient';
 import { pool, query } from './db/pool';
-import { audit, claimOrderTicketFallback, claimOrderTicketFallbackById, closeSupportTicket, createContact, dashboard, deleteContact, deleteTemplate, exportContacts, getBotAnalytics, getConversation, getConversationStats, getContactById, getMediaAssetById, getMediaAssetByMessageId, getMessageById, getTicketById, isValidAnalyticsDateOnly, listAudit, listContacts, listConversations, listMessages, listOrders, listTemplates, listTickets, markAllConversationsRead, markConversationRead, markOutgoingFailed, markOutgoingSent, prepareManualMessage, prepareOutgoingMessage, previewCampaignSegment, recordMessageStatus, resolveAnalyticsPeriod, retryOutgoingMessage, saveTemplate, setBotPaused, storeIncomingEvent, updateContact, updateMediaAsset, updateOrder, type SupportTicket } from './db/repository';
+import { assignAiAnswerRuleLabel, audit, claimOrderTicketFallback, claimOrderTicketFallbackById, closeSupportTicket, createAiAnswerLabel, createContact, dashboard, deleteAiAnswerLabel, deleteAiAnswerRule, deleteContact, deleteTemplate, exportContacts, findAiAnswerRule, getAiSettings, getBotAnalytics, getConversation, getConversationStats, getContactById, getMediaAssetById, getMediaAssetByMessageId, getMessageById, getTicketById, isValidAnalyticsDateOnly, listAiAnswerLabels, listAiAnswerRules, listAiQueryLogs, listAudit, listContacts, listConversations, listMessages, listOrders, listTemplates, listTickets, loadActiveAiLabelExamples, markAiQueryAsNoise, markAllConversationsRead, markConversationRead, markOutgoingFailed, markOutgoingSent, prepareManualMessage, prepareOutgoingMessage, previewCampaignSegment, recordAiQuery, recordMessageStatus, reopenAiQuery, resolveAiQuery, resolveAnalyticsPeriod, retryOutgoingMessage, saveAiAnswerRule, saveTemplate, setAiEnabled, setBotPaused, storeIncomingEvent, updateAiAnswerLabel, updateAiAnswerRule, updateAiQueryAnswer, updateContact, updateMediaAsset, updateOrder, type AiQueryView, type SupportTicket } from './db/repository';
 import { orderWindowExpired, sendOrderTicketFallback } from './services/orderTicketFallback';
 import { MENU_BUTTON_LABEL, MENU_HEADER_TEXT, MENU_PROMPT, buildMenuListSections, ticketClosureMessage } from './messageCatalog';
+import { createOpenRouterClient } from './ai/openRouter';
+import { readCatalog } from './ai/catalog';
+import { resolveCustomerAiResponse } from './ai/queryResolver';
+import { deriveSuggestedAiTopic, learningConfidence } from './ai/runtimePolicy';
 import { checkMediaStorage, ensureMediaCached, ensureMediaThumbnail, isSafeUpload, markMediaUploadFailed, storeMedia } from './services/mediaStorage';
 import { parseIncoming } from './whatsappIncoming';
 
@@ -218,6 +222,117 @@ function openStream(req: Request, res: Response, contactId: string | null) {
   req.on('close', () => { clearInterval(heartbeat); streams.delete(res); });
 }
 app.get('/api/dashboard', async (_req, res) => res.json({ ...(await dashboard()), cloudReady: hasCloudCredentials(), transport: getWhatsAppTransport(), mediaStorage: await checkMediaStorage() }));
+app.get('/api/ai', async (req, res) => {
+  const status = qs(req.query.status);
+  const source = qs(req.query.source);
+  const search = qs(req.query.q);
+  const requestedView = qs(req.query.view) ?? 'attention';
+  const view: AiQueryView = ['attention', 'answered', 'noise', 'errors', 'tests', 'all'].includes(requestedView)
+    ? requestedView as AiQueryView
+    : 'attention';
+  const [settings, labels, rules, queries, attention, answered, noise, errors, tests] = await Promise.all([
+    getAiSettings(), listAiAnswerLabels(search), listAiAnswerRules(search),
+    listAiQueryLogs({ page: positive(req.query.page, 1, 1000), limit: positive(req.query.limit, 40, 100), status, source, q: search, view }),
+    listAiQueryLogs({ limit: 1, q: search, view: 'attention' }),
+    listAiQueryLogs({ limit: 1, q: search, view: 'answered' }),
+    listAiQueryLogs({ limit: 1, q: search, view: 'noise' }),
+    listAiQueryLogs({ limit: 1, q: search, view: 'errors' }),
+    listAiQueryLogs({ limit: 1, q: search, view: 'tests' }),
+  ]);
+  return res.json({ settings, labels, rules, queries, model: process.env.OPENROUTER_MODEL ?? 'google/gemini-3.5-flash-lite',
+    totals: { attention: attention.total, answered: answered.total, noise: noise.total, errors: errors.total, tests: tests.total } });
+});
+app.get('/api/ai/status', async (_req, res) => res.json(await getAiSettings()));
+app.patch('/api/ai/status', async (req, res) => {
+  const parsed = z.object({ enabled: z.boolean() }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'El estado de IA es inválido.' });
+  const actor = req.session.user ?? 'admin';
+  const settings = await setAiEnabled(parsed.data.enabled, actor);
+  await audit(actor, parsed.data.enabled ? 'ai_enabled' : 'ai_disabled', undefined, undefined, { enabled: parsed.data.enabled });
+  return res.json(settings);
+});
+app.post('/api/ai/test', async (req, res) => {
+  const parsed = z.object({ question: z.string().trim().min(1).max(2500) }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'Escribí una pregunta válida.' });
+  const question = parsed.data.question;
+  const actor = req.session.user ?? 'admin';
+  const complete = createOpenRouterClient({ key: process.env.OPENROUTER_API_KEY ?? '', model: process.env.OPENROUTER_MODEL ?? 'google/gemini-3.5-flash-lite' });
+  const [savedRule, labels, settings, catalog] = await Promise.all([
+    findAiAnswerRule(question, { persistSemantic: false }),
+    loadActiveAiLabelExamples(),
+    getAiSettings(),
+    readCatalog(),
+  ]);
+  const resolution = await resolveCustomerAiResponse({ question, history: [], catalog, complete,
+    allowGeneration: true, savedRule, labels });
+  const answer = resolution.answer!;
+  const suggestedName = deriveSuggestedAiTopic(resolution.classification, answer);
+  const log = await recordAiQuery({ question, answer: answer.text, outcome: answer.outcome, source: 'manual',
+    aiEnabled: settings.enabled, matchedAnswerRuleId: resolution.matchedRuleId,
+    matchedAnswerLabelId: resolution.matchedLabel?.id ?? savedRule?.labelId ?? null,
+    suggestedLabelId: resolution.matchedLabel?.id ?? savedRule?.labelId ?? null,
+    suggestedLabelName: suggestedName ?? resolution.matchedLabel?.name ?? savedRule?.label ?? null,
+    classificationMethod: resolution.classification.method,
+    classificationConfidence: learningConfidence(resolution.classification, answer),
+    model: answer.model, tokens: answer.tokens, elapsedMs: answer.elapsedMs, errorCode: answer.errorCode ?? null });
+  await audit(actor, 'ai_manual_test', undefined, undefined, { queryId: log?.id ?? null });
+  return res.json({ answer: { ...answer, sendMenuAfter: resolution.sendMenuAfter,
+    label: resolution.matchedLabel?.name ?? savedRule?.label ?? null, responseSource: resolution.source }, query: log });
+});
+app.post('/api/ai/labels', async (req, res) => {
+  const parsed = z.object({ name: z.string().trim().min(1).max(120), answer: z.string().trim().min(1).max(5000), active: z.boolean().optional() }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'El nombre y la respuesta de la etiqueta son obligatorios.' });
+  return res.status(201).json(await createAiAnswerLabel({ ...parsed.data, actor: req.session.user ?? 'admin' }));
+});
+app.patch('/api/ai/labels/:id', async (req, res) => {
+  const parsed = z.object({ name: z.string().trim().min(1).max(120), answer: z.string().trim().min(1).max(5000), active: z.boolean().optional() }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'El nombre y la respuesta de la etiqueta son obligatorios.' });
+  const item = await updateAiAnswerLabel(req.params.id, { ...parsed.data, actor: req.session.user ?? 'admin' });
+  return item ? res.json(item) : res.status(404).json({ error: 'Etiqueta no encontrada.' });
+});
+app.delete('/api/ai/labels/:id', async (req, res) => { await deleteAiAnswerLabel(req.params.id); return res.sendStatus(204); });
+app.patch('/api/ai/answers/:id/label', async (req, res) => {
+  const parsed = z.object({ labelId: z.string().uuid() }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'Elegí una etiqueta válida.' });
+  const item = await assignAiAnswerRuleLabel(req.params.id, parsed.data.labelId, req.session.user ?? 'admin');
+  return item ? res.json(item) : res.status(404).json({ error: 'Pregunta o etiqueta no encontrada.' });
+});
+app.post('/api/ai/answers', async (req, res) => {
+  const parsed = z.object({ question: z.string().trim().min(1).max(2500), answer: z.string().trim().min(1).max(5000), label: z.string().trim().max(120).optional(), labelId: z.string().uuid().optional(), aliases: z.array(z.string().trim().max(2500)).max(50).optional(), active: z.boolean().optional() }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'La pregunta y la respuesta son obligatorias.' });
+  return res.status(201).json(await saveAiAnswerRule({ ...parsed.data, actor: req.session.user ?? 'admin' }));
+});
+app.patch('/api/ai/answers/:id', async (req, res) => {
+  const parsed = z.object({ question: z.string().trim().min(1).max(2500), answer: z.string().trim().min(1).max(5000), label: z.string().trim().max(120).optional(), labelId: z.string().uuid().optional(), aliases: z.array(z.string().trim().max(2500)).max(50).optional(), active: z.boolean().optional() }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'La pregunta y la respuesta son obligatorias.' });
+  const item = await updateAiAnswerRule(req.params.id, { ...parsed.data, actor: req.session.user ?? 'admin' });
+  return item ? res.json(item) : res.status(404).json({ error: 'Respuesta no encontrada.' });
+});
+app.delete('/api/ai/answers/:id', async (req, res) => { await deleteAiAnswerRule(req.params.id); return res.sendStatus(204); });
+app.patch('/api/ai/queries/:id/answer', async (req, res) => {
+  const parsed = z.object({ answer: z.string().trim().min(1).max(5000), label: z.string().trim().max(120).optional() }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'La respuesta no puede estar vacía.' });
+  const item = await updateAiQueryAnswer(req.params.id, parsed.data.answer, req.session.user ?? 'admin', parsed.data.label);
+  return item ? res.json(item) : res.status(404).json({ error: 'Consulta no encontrada.' });
+});
+app.patch('/api/ai/queries/:id/resolve', async (req, res) => {
+  const parsed = z.object({
+    labelId: z.string().uuid().nullable().optional(),
+    labelName: z.string().trim().min(1).max(120).nullable().optional(),
+    answer: z.string().trim().min(1).max(5000).nullable().optional(),
+  }).refine(value => Boolean(value.labelId || value.labelName), { message: 'Elegí o creá una etiqueta.' }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'Elegí una etiqueta y completá su respuesta si todavía está vacía.' });
+  const item = await resolveAiQuery(req.params.id, parsed.data, req.session.user ?? 'admin');
+  return item ? res.json(item) : res.status(404).json({ error: 'Consulta no encontrada.' });
+});
+app.patch('/api/ai/queries/:id/noise', async (req, res) => {
+  const item = await markAiQueryAsNoise(req.params.id, req.session.user ?? 'admin');
+  return item ? res.json(item) : res.status(404).json({ error: 'Consulta no encontrada.' });
+});
+app.patch('/api/ai/queries/:id/reopen', async (req, res) => {
+  const item = await reopenAiQuery(req.params.id, req.session.user ?? 'admin');
+  return item ? res.json(item) : res.status(404).json({ error: 'Consulta no encontrada.' });
+});
 app.get('/api/analytics', async (req, res) => {
   const schema = z.object({
     period: z.enum(['7d', '30d', '90d', 'custom']).optional().default('30d'),

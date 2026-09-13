@@ -8,11 +8,15 @@ export async function login(page: Page) {
   await page.getByLabel('Usuario').fill(username);
   await page.getByLabel('Contraseña').fill(password);
   await page.getByRole('button', { name: 'Ingresar' }).click();
-  await expect(page.getByRole('navigation', { name: 'Navegación principal' })).toBeVisible();
+  const isMobile = (page.viewportSize()?.width ?? Number.POSITIVE_INFINITY) <= 760;
+  await expect(
+    page.getByRole('navigation', { name: isMobile ? 'Accesos principales' : 'Navegación principal' }),
+  ).toBeVisible();
 }
 
 export async function openNavigationOnMobile(page: Page) {
   const viewport = page.viewportSize();
   if (!viewport || viewport.width > 760) return;
+  await page.getByRole('button', { name: 'Más secciones' }).click();
   await expect(page.getByRole('navigation', { name: 'Navegación principal' })).toBeVisible();
 }

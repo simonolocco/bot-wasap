@@ -24,11 +24,11 @@ async function run() {
     assert.equal(assistantEnabled({ AI_ASSISTANT_ENABLED: 'true' }), false);
   });
   check('menús, pedido, audio y botones no son interceptados', () => {
-    for (const text of ['1', '6', 'horarios', 'menu', 'cancelar']) assert.equal(shouldUseAssistant({ text, type: 'text' }), false);
+    for (const text of ['1', '6', 'horarios', 'menu', 'cancelar', 'holaaa', 'Ver más info']) assert.equal(shouldUseAssistant({ text, type: 'text' }), false);
     assert.equal(shouldUseAssistant({ text: 'precio cremoso', type: 'text', selectedOptionId: 'lista_precio' }), false);
     assert.equal(shouldUseAssistant({ text: '2 cajas', type: 'text' }, true), false);
     assert.equal(shouldUseAssistant({ text: 'texto', type: 'audio' }), false);
-    for (const text of ['¿Cuál es el precio del cremoso?', 'Ver más info', 'de donde son']) assert.equal(shouldUseAssistant({ text, type: 'text' }), true);
+    for (const text of ['¿Cuál es el precio del cremoso?', 'de donde son']) assert.equal(shouldUseAssistant({ text, type: 'text' }), true);
   });
   check('precio exacto de fuente validada', () => {
     const response = renderAnswer({ ...base, productQuery: 'cremoso', tier: 'mayorista' }, catalog);
@@ -50,6 +50,31 @@ async function run() {
     for (const topic of ['minimum', 'payments', 'holiday'] as const) assert.equal(renderAnswer({ ...base, topics: [topic] }, catalog).outcome, 'handoff');
     assert.match(renderAnswer({ ...base, stock: true }, catalog).text, /No tengo stock en tiempo real/);
     assert.doesNotMatch(renderAnswer({ ...base, topics: ['shipping'] }, catalog).text, /envío gratis|entrega garantizada/i);
+  });
+  check('silencio deliberado retorna outcome silence y texto vacío', () => {
+    const silenceResult = renderAnswer({ ...base, silence: true }, catalog);
+    assert.equal(silenceResult.outcome, 'silence');
+    assert.equal(silenceResult.text, '');
+  });
+  check('asesor con pregunta de negocio no cancela la respuesta de negocio', () => {
+    const response = renderAnswer({ ...base, human: true, topics: ['shipping'] }, catalog);
+    assert.notEqual(response.outcome, 'silence');
+    assert.match(response.text, /retiro|comisionista/i);
+  });
+  const delivery = await answerQuestion({ message: 'Traen a domicilio? estoy en zona sur' }, catalog, async () => {
+    throw new Error('La consulta de entrega debe resolverse localmente.');
+  });
+  check('traen a domicilio se interpreta como envío y no como dirección', () => {
+    assert.equal(delivery.outcome, 'answered');
+    assert.match(delivery.text, /retiro|comisionista|transporte/i);
+    assert.doesNotMatch(delivery.text, /^📍 \*Dirección\*/);
+  });
+  check('queja no incluye dirección física', () => {
+    const response = renderAnswer({ ...base, complaint: true }, catalog);
+    assert.equal(response.outcome, 'handoff');
+    assert.doesNotMatch(response.text, /Av\. Juan B\. Justo|Dirección/i);
+    // Must NOT contain "enseguida" or "prioritaria"
+    assert.doesNotMatch(response.text, /enseguida|de inmediato|prioritaria/i);
   });
   let calls = 0;
   const complete: Complete = async messages => { calls++; assert.equal(messages[0].role, 'system'); return { content: JSON.stringify({ ...base, topics: ['address'] }), model: 'test', tokens: 5 }; };
@@ -85,6 +110,8 @@ async function run() {
     assert.equal((await fetch(`${url}/api/message`, { method: 'POST', headers: { cookie, 'Content-Type': 'application/json' }, body: '{"message":"hola"}' })).status, 403);
     assert.equal((await fetch(`${url}/api/message`, { method: 'POST', headers: { ...headers, Origin: 'https://example.com' }, body: '{"message":"hola"}' })).status, 403);
     assert.equal((await fetch(`${url}/api/message`, { method: 'POST', headers, body: '{"message":""}' })).status, 400); checks += 3;
+    const greetingMenu: any = await (await fetch(`${url}/api/message`, { method: 'POST', headers, body: JSON.stringify({ message: 'holaaa' }) })).json();
+    assert.match(greetingMenu.text, /1\.|Horarios|Precios/); assert.equal(greetingMenu.model, ''); checks++;
     const response: any = await (await fetch(`${url}/api/message`, { method: 'POST', headers, body: JSON.stringify({ message: 'de donde son' }) })).json();
     assert.match(response.text, /Juan B. Justo/); checks++;
     await fetch(`${url}/api/pause`, { method: 'POST', headers, body: '{"paused":true}' });

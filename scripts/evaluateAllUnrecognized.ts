@@ -1,3 +1,4 @@
+/** @deprecated Use scripts/replayCorpus.ts, which preserves typed current records and marks dry runs pending. */
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
@@ -222,7 +223,7 @@ async function runEvaluation() {
   console.log('----------------------------------------------------------------------');
 
   if (failedTests === 0) {
-    console.log('✅ ÉXITO TOTAL: 100% de los mensajes reales e históricos respondidos con coherencia, seguridad anti-alucinación y filtro de reclamos/spam.');
+    console.log('✅ Las verificaciones deterministas pasaron. Esto no prueba la coherencia semántica de todos los mensajes; usar scripts/replayCorpus.ts para el corpus actual.');
   } else {
     throw new Error(`Fallaron ${failedTests} verificaciones.`);
   }

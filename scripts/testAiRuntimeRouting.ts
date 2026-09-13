@@ -1,0 +1,87 @@
+import assert from 'node:assert/strict';
+import { emptyCatalog } from '../src/ai/catalog';
+import type { Complete } from '../src/ai/openRouter';
+import { AiProviderError } from '../src/ai/openRouter';
+import { resolveCustomerAiResponse } from '../src/ai/queryResolver';
+import { aiReviewStatus, deriveSuggestedAiTopic } from '../src/ai/runtimePolicy';
+
+const catalog = emptyCatalog();
+const intent = {
+  topics: [] as string[], productQuery: '', tier: 'unknown', catalog: false,
+  human: false, order: false, stock: false, social: 'none', unknown: true,
+};
+
+async function main() {
+  let providerCalls = 0;
+  const unknownComplete: Complete = async () => {
+    providerCalls += 1;
+    return { content: JSON.stringify(intent), model: 'routing-test', tokens: 4 };
+  };
+
+  const meaningful = await resolveCustomerAiResponse({
+    question: '¿Emiten factura A?', catalog, complete: unknownComplete,
+    allowGeneration: true, labels: [],
+  });
+  assert.equal(meaningful.source, 'generated');
+  assert.ok(meaningful.answer?.text.trim(), 'Una pregunta entendible siempre debe recibir texto.');
+  assert.equal(meaningful.answer?.outcome, 'clarify');
+  assert.equal(providerCalls, 1);
+
+  const fallbackRule = await resolveCustomerAiResponse({
+    question: '¿Emiten factura A?', catalog, complete: unknownComplete, allowGeneration: true, labels: [],
+    savedRule: { id: 'bad-rule', answer: 'No entendí', label: 'pregunta-no-entendible', labelId: 'fallback' },
+  });
+  assert.equal(fallbackRule.source, 'generated', 'Una regla fallback histórica nunca debe bloquear la respuesta real.');
+  assert.equal(providerCalls, 2);
+
+  const approved = await resolveCustomerAiResponse({
+    question: '¿Aceptan transferencia?', catalog, complete: unknownComplete, allowGeneration: false,
+    labels: [{ id: 'pagos', name: 'pagos', answer: 'Aceptamos transferencia.', examples: ['medios de pago'] }],
+  });
+  assert.equal(approved.source, 'approved-label');
+  assert.equal(approved.answer?.text, 'Aceptamos transferencia.');
+  assert.equal(providerCalls, 2, 'Una etiqueta aprobada no debe consumir una llamada al proveedor.');
+
+  const disabled = await resolveCustomerAiResponse({
+    question: '¿Emiten factura A?', catalog, complete: unknownComplete, allowGeneration: false, labels: [],
+  });
+  assert.equal(disabled.source, 'disabled');
+  assert.equal(disabled.answer, null);
+  assert.equal(providerCalls, 2, 'El interruptor apagado no debe llamar al proveedor.');
+
+  const garbage = await resolveCustomerAiResponse({
+    question: 'asdjkahsd', catalog, complete: unknownComplete, allowGeneration: true, labels: [],
+  });
+  assert.equal(garbage.classification.method, 'unintelligible');
+  assert.equal(garbage.answer?.outcome, 'clarify');
+  assert.ok(garbage.answer?.text.trim());
+  assert.equal(providerCalls, 2, 'El ruido claro se resuelve localmente.');
+
+  const contextComplete: Complete = async () => ({
+    content: JSON.stringify({ ...intent, unknown: false, catalog: true }), model: 'routing-test', tokens: 3,
+  });
+  const contextual = await resolveCustomerAiResponse({
+    question: 'Sí', history: [{ role: 'assistant', content: '¿Querés que te pase el catálogo?' }],
+    catalog, complete: contextComplete, allowGeneration: true, labels: [],
+  });
+  assert.notEqual(contextual.answer?.outcome, 'silence', 'Sí debe usar el contexto de la pregunta anterior.');
+  assert.ok(contextual.answer?.text.trim());
+
+  const failingComplete: Complete = async () => { throw new AiProviderError('rate_limit', 'limited'); };
+  const unavailable = await resolveCustomerAiResponse({
+    question: '¿Trabajan con cuenta corriente?', catalog, complete: failingComplete, allowGeneration: true, labels: [],
+  });
+  assert.equal(unavailable.answer?.outcome, 'unavailable');
+  assert.equal(unavailable.answer?.errorCode, 'rate_limit');
+  assert.ok(unavailable.answer?.text.trim(), 'Una caída del proveedor también debe dejar una respuesta al cliente.');
+
+  assert.equal(aiReviewStatus({ source: 'production', aiEnabled: true, outcome: 'answered', responseSent: true, unintelligible: false }), 'resolved');
+  assert.equal(aiReviewStatus({ source: 'production', aiEnabled: true, outcome: 'unavailable', responseSent: true, unintelligible: false }), 'resolved');
+  assert.equal(aiReviewStatus({ source: 'production', aiEnabled: false, outcome: 'disabled', responseSent: false, unintelligible: false }), 'pending');
+  assert.equal(aiReviewStatus({ source: 'production', aiEnabled: true, outcome: 'clarify', responseSent: true, unintelligible: true }), 'ignored');
+  assert.equal(deriveSuggestedAiTopic({ existingLabelId: null, suggestedName: 'pagos', confidence: .9, method: 'semantic' }, meaningful.answer), 'pagos');
+
+  console.log('AI runtime routing tests: OK');
+}
+
+main().catch(error => { console.error(error); process.exitCode = 1; });

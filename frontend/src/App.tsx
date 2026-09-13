@@ -13,7 +13,7 @@ import type {
 } from './types';
 import './styles.css';
 
-type View = 'inbox' | 'dashboard' | 'analytics' | 'contacts' | 'orders' | 'tickets' | 'templates';
+type View = 'inbox' | 'dashboard' | 'analytics' | 'contacts' | 'orders' | 'tickets' | 'templates' | 'ia';
 type Theme = 'system' | 'light' | 'dark';
 
 const stages: Record<string, string> = {
@@ -120,6 +120,7 @@ function Avatar({
    ═══════════════════════════════════════════════════════ */
 
 type IconName =
+  | 'ai'
   | 'dashboard'
   | 'analytics'
   | 'chat'
@@ -148,6 +149,7 @@ type IconName =
 
 function SvgIcon({ name, size = 17 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, React.ReactNode> = {
+    ai: <><path d="m12 3 1.5 5.5L19 10l-5.5 1.5L12 17l-1.5-5.5L5 10l5.5-1.5Z" /><path d="m19 16 .7 2.3L22 19l-2.3.7L19 22l-.7-2.3L16 19l2.3-.7Z" /></>,
     dashboard: <><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></>,
     analytics: <><rect x="3" y="13" width="4" height="8" rx="1" /><rect x="10" y="8" width="4" height="13" rx="1" /><rect x="17" y="3" width="4" height="18" rx="1" /></>,
     chat: <><path d="M20 11.5a7.5 7.5 0 0 1-8 7.5 8.4 8.4 0 0 1-3.2-.6L4 20l1.6-3.9A7.2 7.2 0 0 1 4 11.5 7.5 7.5 0 0 1 12 4a7.5 7.5 0 0 1 8 7.5Z" /><path d="M8 11h.01M12 11h.01M16 11h.01" /></>,
@@ -180,6 +182,7 @@ function SvgIcon({ name, size = 17 }: { name: IconName; size?: number }) {
 const viewTitles: Record<View, [string, string]> = {
   dashboard: ['Resumen', 'Trabajo pendiente y actividad comercial.'],
   analytics: ['Analíticas', 'Comportamiento del bot, uso de menús y mensajes no entendidos.'],
+  ia: ['IA', 'Probá respuestas, guardá correcciones y controlá la IA en producción.'],
   inbox: ['Conversaciones', 'Bandeja comercial con historial completo.'],
   tickets: ['Tickets', 'Preguntas y pedidos que requieren atención.'],
   contacts: ['Contactos', 'Toda tu base, paginada y editable.'],
@@ -204,6 +207,7 @@ function Sidebar({
   const items: Array<[View, IconName, string]> = [
     ['dashboard', 'dashboard', 'Resumen'],
     ['analytics', 'analytics', 'Analíticas'],
+    ['ia', 'ai', 'IA'],
     ['inbox', 'chat', 'Conversaciones'],
     ['tickets', 'ticket', 'Tickets'],
     ['contacts', 'contact', 'Contactos'],
@@ -233,7 +237,7 @@ function Sidebar({
             {id === 'inbox' && unread > 0 && <b>{unread > 99 ? '99+' : unread}</b>}
           </button>
         ))}
-        <button type="button" className={`mobile-nav-link ${['dashboard', 'analytics', 'templates'].includes(view) ? 'active' : ''}`} aria-label="Más secciones" aria-expanded={sidebarOpen} aria-controls="all-sections" onClick={onToggle}><SvgIcon name="moreHorizontal" size={20} /><span>Más</span></button>
+        <button type="button" className={`mobile-nav-link ${['dashboard', 'analytics', 'templates', 'ia'].includes(view) ? 'active' : ''}`} aria-label="Más secciones" aria-expanded={sidebarOpen} aria-controls="all-sections" onClick={onToggle}><SvgIcon name="moreHorizontal" size={20} /><span>Más</span></button>
       </nav>
       <div className="sidebar-bottom">
         <span className="connection-badge"><i /> WhatsApp conectado</span>

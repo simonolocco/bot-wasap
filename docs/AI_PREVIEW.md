@@ -8,7 +8,7 @@ Desde esta carpeta: `npm run ai:preview`. Luego abrir <http://127.0.0.1:4010>.
 
 Usa `.env.local` (ver `.env.ai-preview.example`). La configuración local prevalece sobre variables heredadas del sistema. No copiar el `.env` completo de producción: la prueba sólo necesita OpenRouter y los enlaces comerciales. La clave queda fuera de Git y del navegador.
 
-La clave de la prueba se sincronizó con `OPENROUTER_API_KEY` de `/opt/comprobantes-wa/.env`, por solicitud del usuario. La copia antigua de `invoice/.env` correspondía a otra cuenta. No se modificó el archivo remoto. El modelo de conversación se mantiene en `openai/gpt-oss-120b`. Se prefiere el proveedor Groq, con alternativas permitidas, para reducir variaciones de latencia y respetar las respuestas estructuradas.
+La clave de la prueba se sincronizó con `OPENROUTER_API_KEY` de `/opt/comprobantes-wa/.env`, por solicitud del usuario. La copia antigua de `invoice/.env` correspondía a otra cuenta. El modelo de conversación y lectura visual es `google/gemini-3.5-flash-lite`.
 
 ## Qué probar
 
@@ -30,9 +30,11 @@ El catálogo persistido está en `storage/ai-preview/catalog.json` (ignorado por
 
 El Excel incluido es histórico (octubre de 2025). Nunca se aprobó como precio actual. El PDF mayorista enlazado por el bot tiene fecha 07/09/2026 y se usa para comprobar la importación; una fecha de emisión no se transforma automáticamente en fecha de vencimiento. No activar un catálogo por el mero hecho de que la extracción terminó.
 
-## Integración preparada para el worker de desarrollo
+## Integración preparada para el worker
 
-El worker incluye el mismo servicio, apagado por defecto. Sólo se ejecuta si `AI_ASSISTANT_ENABLED=true` y `NODE_ENV` es `development` o `test`. Está bloqueado en producción aun con la bandera habilitada. Respeta botones, comandos de menú, modo pedido, antigüedad y duplicados. Comprueba de nuevo la pausa humana y la antigüedad al terminar la llamada. Las salidas usan el mecanismo de envío idempotente existente. El resultado queda registrado con `source=ai_preview`, fuentes, tokens, tiempo y desenlace; las consultas derivadas conservan seguimiento al asesor.
+El worker incluye el mismo resolvedor que usa el probador del panel. En desarrollo se habilita con `AI_ASSISTANT_ENABLED=true`; en producción se controla desde el interruptor persistido de la sección IA. Respeta botones, comandos de menú, modo pedido, antigüedad y duplicados. Comprueba de nuevo la pausa humana, el interruptor y la antigüedad al terminar una llamada. Las salidas usan el mecanismo de envío idempotente existente.
+
+Una pregunta entendible no depende de que su tema sea frecuente. Primero se responde mediante una regla aprobada, una etiqueta o la IA; después se registra el aprendizaje. `pregunta-no-entendible` queda reservado para ruido real. Las pruebas manuales no crean reglas y el panel separa respuestas, errores, ruido y consultas por revisar.
 
 La pantalla local simula los efectos de menú y pedidos; no prueba la entrega real de Meta ni escribe en su base. Antes de habilitar un worker externo hace falta una base y número de prueba, y validación de entrega e idempotencia con ellos. Esta versión no transcribe audios ni genera notas de voz: el modelo elegido trabaja con texto.
 
@@ -40,6 +42,8 @@ La pantalla local simula los efectos de menú y pedidos; no prueba la entrega re
 
 - `npm run build:server`
 - `npm run test:unit` (suite existente, sin producción)
+- `npm run test:ai:routing` (contrato compartido entre WhatsApp y el probador)
+- `npm run test:ai:admin-ui` (panel IA en escritorio y móvil, con API simulada)
 - `npm run test:ai` (22 comprobaciones: datos, separación de listas, vigencia, errores, pausa, importación completa, sesiones y controles de acceso)
 - `node node_modules/ts-node/dist/bin.js scripts/testAiPreviewBrowser.ts` (Chromium y WebKit, 1440/390/320 px; datos sintéticos sin llamadas externas)
 - `node node_modules/ts-node/dist/bin.js scripts/smokeAiPreview.ts` (7 consultas reales a OpenRouter; consume saldo, no usa conversaciones identificables; los precios de prueba existen sólo en memoria)
