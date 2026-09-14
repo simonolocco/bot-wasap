@@ -10,7 +10,7 @@ const invoicePreview = 'No tengo confirmada la emisión de factura A en este can
 const label = { id: 'label-envios', name: 'envios', normalizedName: 'envios', answer: 'Coordinamos el traslado con un comisionista.', active: true,
   aliases: ['¿Hacen envíos?'], aliasCount: 1, createdAt: now, updatedAt: now };
 const invoiceLabel = { id: 'label-facturacion', name: 'facturacion', normalizedName: 'facturacion', answer: invoicePreview, active: false,
-  aliases: [], aliasCount: 0, createdBy: 'ai-auto-preview', createdAt: now, updatedAt: now };
+  aliases: ['¿Emiten factura A?'], aliasCount: 1, createdBy: 'ai-auto-preview', createdAt: now, updatedAt: now };
 let markedNoise = false;
 let resolved = false;
 let resolvedPayload: Record<string, unknown> | null = null;
@@ -23,7 +23,7 @@ function item(view: string) {
   if (view === 'errors') return { ...base, question: '¿Trabajan con cuenta corriente?', answer: 'El servicio de IA no pudo procesar tu mensaje en este momento. Podés reintentarlo.', previewAnswer: 'El servicio de IA no pudo procesar tu mensaje en este momento. Podés reintentarlo.', previewOutcome: 'unavailable', previewSource: 'generated', previewGeneratedAt: now, outcome: 'unavailable', reviewStatus: 'resolved', classificationMethod: 'none', classificationConfidence: 0, model: 'fixture', errorCode: 'rate_limit' };
   if (view === 'noise') return { ...base, question: 'asdjkahsd', answer: 'No llegué a reconocer una consulta en ese mensaje.', previewAnswer: 'No llegué a reconocer una consulta en ese mensaje.', previewOutcome: 'clarify', previewSource: 'generated', previewGeneratedAt: now, outcome: 'clarify', reviewStatus: 'ignored', classificationMethod: 'unintelligible', classificationConfidence: .96, model: '', errorCode: null };
   if (view === 'tests') return { ...base, contactId: null, contactName: '', phone: '', question: '¿Hacen envíos?', answer: label.answer, previewAnswer: label.answer, previewOutcome: 'answered', previewSource: 'approved-label', previewGeneratedAt: now, outcome: 'answered', source: 'manual', reviewStatus: 'ignored', classificationMethod: 'semantic', classificationConfidence: .96, model: 'respuesta aprobada', errorCode: null };
-  return { ...base, question: '¿Emiten factura A?', answer: '', previewAnswer: invoicePreview, previewOutcome: 'handoff', previewSource: 'generated', previewModel: 'fixture', previewGeneratedAt: now, outcome: 'disabled', aiEnabled: false, reviewStatus: 'pending', classificationMethod: 'semantic', classificationConfidence: .9, suggestedLabelId: invoiceLabel.id, suggestedLabelName: invoiceLabel.name, model: null, errorCode: null };
+  return { ...base, question: '¿Emiten factura A?', answer: '', previewAnswer: invoicePreview, previewOutcome: 'handoff', previewSource: 'generated', previewModel: 'fixture', previewGeneratedAt: now, outcome: 'disabled', aiEnabled: false, reviewStatus: 'pending', classificationMethod: 'semantic', classificationConfidence: .9, suggestedLabelId: null, suggestedLabelName: invoiceLabel.name, model: null, errorCode: null };
 }
 
 function json(res: http.ServerResponse, value: unknown, status = 200) {
@@ -123,6 +123,7 @@ async function run() {
         .some(input => input.value === 'envios'));
       assert.equal(await page.locator('.ai-label-card').count(), 2, 'Etiquetas no debe heredar el filtro oculto de Preguntas.');
       assert.equal(await page.getByText('Nueva · creada por IA', { exact: true }).count(), 1);
+      assert.equal(await page.getByText('¿Emiten factura A?', { exact: true }).count(), 1);
       assert.equal(await page.getByRole('heading', { name: 'Preguntas de clientes' }).count(), 0);
       await page.screenshot({ path: `qa-artifacts/ai-admin-labels-${width}.png`, fullPage: true });
       await page.getByRole('button', { name: 'Preguntas y respuestas', exact: true }).click();

@@ -346,6 +346,16 @@ export async function processIncomingJob(job: { id: string; contact_id: string; 
       } else {
         const answer = resolution.answer;
 
+        // A reviewable response must arrive with the topic already selected.
+        // New topics remain inactive drafts until the operator approves them.
+        if (!suggestedLabelId && suggestedName && normalizeAiTopic(suggestedName) !== AI_UNCLEAR_LABEL_NAME
+          && confidence >= 0.8 && answer.text.trim() && !['silence', 'unavailable'].includes(answer.outcome)) {
+          const draftAnswer = canonicalAutoLabelAnswer(suggestedName) || answer.text;
+          const draftLabel = await ensureAiAnswerLabelDraft(suggestedName, 'ai-auto-preview', draftAnswer, false);
+          suggestedLabelId = draftLabel?.id ?? null;
+          suggestedName = draftLabel?.name ?? suggestedName;
+        }
+
         // A human can take the chat, the switch can turn off, or the message can
         // become stale while the provider is working. Re-check before sending.
         const latestContact = await getContactById(job.contact_id);

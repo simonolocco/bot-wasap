@@ -31,6 +31,9 @@ const CANONICAL_ANSWERS: Record<string, string> = {
     'La compra mínima es de 1/2 horma en adelante.',
     'Podés indicarnos qué producto buscás para ayudarte con la presentación disponible.',
   ].join(' '),
+  saludos: '¡Hola! Bienvenido/a a Distribuidora Abasto del Campo 👋 ¿En qué podemos ayudarte hoy?',
+  agradecimientos: '¡Gracias por escribirnos! Estamos a tu disposición.',
+  'consulta-general': '¿En qué podemos ayudarte? Podés consultar precios, catálogo, horarios, envíos o contactar a un asesor.',
   stock: [
     'El stock cambia durante el día y no puedo confirmarlo en tiempo real.',
     `Mauricio te confirma disponibilidad y presentación del producto: ${MAURICIO_URL}`,

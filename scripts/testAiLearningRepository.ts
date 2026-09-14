@@ -70,6 +70,10 @@ async function main() {
     assert.equal(pending.total, 2);
     assert.ok(pending.items.every(item => item.suggestedLabelId === draft!.id));
     assert.equal((await listAiQueryLogs({ reviewStatus: 'ignored', q: marker })).total, 1);
+    const pendingLabel = (await listAiAnswerLabels(marker)).find(label => label.id === draft!.id);
+    assert.ok(pendingLabel?.aliases.some(alias => alias.includes('traen a domicilio')),
+      'Una pregunta pendiente debe aparecer asociada a la etiqueta sugerida antes de aprobarla.');
+    assert.ok(pendingLabel?.aliases.some(alias => alias.includes('realizan entregas')));
 
     const canonical = 'Coordinamos cada envío con un comisionista.\n\n[[MENU]]';
     const resolved = await resolveAiQuery(pending.items[0].id, { labelId: draft!.id, answer: canonical }, 'qa');

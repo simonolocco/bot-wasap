@@ -1429,14 +1429,19 @@ function AiView() {
       }, []);
       const reusableLabels = loadedLabels.filter(label => (label.normalizedName ?? label.name.toLocaleLowerCase().replace(/\s+/g, '-')) !== 'pregunta-no-entendible');
       setDrafts(Object.fromEntries(result.queries.items.map(item => {
-        const label = reusableLabels.find(candidate => candidate.id === (item.suggestedLabelId ?? item.matchedAnswerLabelId));
+        const suggestedKey = item.suggestedLabelName?.trim().toLocaleLowerCase().replace(/\s+/g, '-') ?? '';
+        const label = reusableLabels.find(candidate => candidate.id === (item.suggestedLabelId ?? item.matchedAnswerLabelId))
+          ?? reusableLabels.find(candidate => (candidate.normalizedName ?? candidate.name.trim().toLocaleLowerCase().replace(/\s+/g, '-')) === suggestedKey);
         const approvablePreview = item.previewOutcome === 'unavailable' ? '' : item.previewAnswer || '';
-        return [item.id, label?.answer || approvablePreview];
+        return [item.id, approvablePreview || label?.answer || ''];
       })));
       setEditedDrafts({});
       setQueryLabelIds(Object.fromEntries(result.queries.items.map(item => {
         const id = item.suggestedLabelId ?? item.matchedAnswerLabelId ?? '';
-        return [item.id, reusableLabels.some(label => label.id === id) ? id : ''];
+        if (reusableLabels.some(label => label.id === id)) return [item.id, id];
+        const suggestedKey = item.suggestedLabelName?.trim().toLocaleLowerCase().replace(/\s+/g, '-') ?? '';
+        const suggested = reusableLabels.find(label => (label.normalizedName ?? label.name.trim().toLocaleLowerCase().replace(/\s+/g, '-')) === suggestedKey);
+        return [item.id, suggested?.id ?? ''];
       })));
       setLabelDrafts(Object.fromEntries(reusableLabels.map(label => [label.id, { name: label.name, answer: label.answer }])));
     } catch (reason) {

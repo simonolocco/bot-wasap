@@ -1971,6 +1971,7 @@ const aiAnswerLabelColumns = `l.id, l.name, l.normalized_name AS "normalizedName
   ARRAY(SELECT DISTINCT example FROM (
     SELECT r2.question AS example FROM ai_answer_rules r2 WHERE r2.label_id=l.id
     UNION SELECT a2.alias AS example FROM ai_answer_rules r3 JOIN ai_answer_rule_aliases a2 ON a2.answer_rule_id=r3.id WHERE r3.label_id=l.id
+    UNION SELECT q2.question AS example FROM ai_query_logs q2 WHERE q2.suggested_label_id=l.id
   ) label_examples ORDER BY example) AS aliases,
   ARRAY(SELECT r4.id::text FROM ai_answer_rules r4 WHERE r4.label_id=l.id ORDER BY r4.id::text) AS "ruleIds",
   l.created_by AS "createdBy", l.updated_by AS "updatedBy", l.created_at AS "createdAt", l.updated_at AS "updatedAt"`;
@@ -2015,6 +2016,7 @@ export async function ensureAiAnswerLabelDraft(nameInput: string, actor: string 
     VALUES ($1,$2,$4,$5,$3,$3)
     ON CONFLICT (normalized_name) DO UPDATE SET
       answer=CASE WHEN btrim(ai_answer_labels.answer)='' AND btrim(EXCLUDED.answer)<>'' THEN EXCLUDED.answer ELSE ai_answer_labels.answer END,
+      active=ai_answer_labels.active OR EXCLUDED.active,
       updated_at=now()
     RETURNING id`, [name, normalizedName, actor, answer, active]);
   return readAiAnswerLabel(result.rows[0].id);

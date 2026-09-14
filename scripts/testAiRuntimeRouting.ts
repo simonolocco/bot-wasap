@@ -4,6 +4,7 @@ import type { Complete } from '../src/ai/openRouter';
 import { AiProviderError } from '../src/ai/openRouter';
 import { resolveCustomerAiResponse } from '../src/ai/queryResolver';
 import { aiReviewStatus, deriveSuggestedAiTopic } from '../src/ai/runtimePolicy';
+import type { Intent } from '../src/ai/assistant';
 
 const catalog = emptyCatalog();
 const intent = {
@@ -92,6 +93,10 @@ async function main() {
   assert.equal(aiReviewStatus({ source: 'production', aiEnabled: false, outcome: 'disabled', responseSent: false, unintelligible: false }), 'pending');
   assert.equal(aiReviewStatus({ source: 'production', aiEnabled: true, outcome: 'clarify', responseSent: true, unintelligible: true }), 'ignored');
   assert.equal(deriveSuggestedAiTopic({ existingLabelId: null, suggestedName: 'pagos', confidence: .9, method: 'semantic' }, meaningful.answer), 'pagos');
+  assert.equal(deriveSuggestedAiTopic({ existingLabelId: null, suggestedName: null, confidence: 0, method: 'none' }, {
+    ...meaningful.answer!, intent: { ...intent, social: 'greeting', unknown: false } as Intent,
+  }), 'saludos');
+  assert.equal(deriveSuggestedAiTopic({ existingLabelId: null, suggestedName: null, confidence: 0, method: 'none' }, meaningful.answer), 'consulta-general');
 
   console.log('AI runtime routing tests: OK');
 }

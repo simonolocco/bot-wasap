@@ -29,7 +29,10 @@ export function deriveSuggestedAiTopic(classification: AiLabelClassification, an
   const topic = intent.topics.map(value => TOPIC_NAMES[value]).find(Boolean);
   if (topic) return topic;
   if (intent.human) return 'asesor';
-  return null;
+  if (intent.social === 'greeting') return 'saludos';
+  if (intent.social === 'thanks' || intent.social === 'goodbye') return 'agradecimientos';
+  if (intent.unknown) return 'consulta-general';
+  return answer?.text.trim() ? 'consulta-general' : null;
 }
 
 export function learningConfidence(classification: AiLabelClassification, answer: Answer | null) {
