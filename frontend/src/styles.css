@@ -1609,6 +1609,14 @@ html[data-theme="dark"] .chip-count { background: rgba(255, 255, 255, 0.16); }
   font-size: 10px;
   white-space: nowrap;
 }
+.contact-activity-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.analytics-export-button { white-space: nowrap; }
 .contact-activity-average small {
   color: var(--muted);
   font-size: 9px;

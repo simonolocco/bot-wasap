@@ -23,6 +23,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
+  Download,
   FileText,
   Heart,
   HelpCircle,
@@ -80,6 +81,11 @@ function formatAnalyticsDate(value: string): string {
 
 function normalizeFilterText(value: string): string {
   return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es-AR').trim();
+}
+
+function analyticsExcelUrl(dataset: 'activity' | 'contacts', from: string, to: string) {
+  const params = new URLSearchParams({ dataset, from, to });
+  return `/api/analytics/export.xlsx?${params.toString()}`;
 }
 
 const stages: Record<string, { label: string; tone: string }> = {
@@ -382,6 +388,10 @@ export default function AnalyticsView({
   });
   const displayTrend = (!chartFromValid && !chartToValid) ? data.trend : (chartRangeInvalid ? data.trend : filteredTrend);
   const descendingDisplayTrend = [...displayTrend].sort((left, right) => right.date.localeCompare(left.date));
+  const periodFrom = dateOnlyInArgentina(new Date(data.period.from));
+  const periodTo = dateOnlyInArgentina(new Date(data.period.to));
+  const activityExportFrom = chartRangeInvalid ? periodFrom : (chartFrom || periodFrom);
+  const activityExportTo = chartRangeInvalid ? periodTo : (chartTo || periodTo);
 
   return (
     <div className="analytics-layout animate-fade-in">
@@ -778,6 +788,14 @@ export default function AnalyticsView({
           </div>
 
           <div className="section-header-controls chart-date-filter-controls">
+            <a
+              className="button secondary sm analytics-export-button"
+              href={analyticsExcelUrl('activity', activityExportFrom, activityExportTo)}
+              download
+              aria-label="Descargar actividad diaria en Excel"
+            >
+              <Download size={13} /> Descargar Excel
+            </a>
             <span className="section-counter">
               {displayTrend.length} {displayTrend.length === 1 ? 'día con actividad' : 'días con actividad'}
             </span>
@@ -1063,7 +1081,15 @@ export default function AnalyticsView({
               </p>
             </div>
           </div>
-          <div className="section-header-controls">
+          <div className="section-header-controls contact-activity-controls">
+            <a
+              className="button secondary sm analytics-export-button"
+              href={analyticsExcelUrl('contacts', periodFrom, periodTo)}
+              download
+              aria-label="Descargar contactos nuevos y recurrentes en Excel"
+            >
+              <Download size={13} /> Descargar Excel
+            </a>
             <div className="contact-activity-summary" aria-label="Resumen de contactos">
               <span className="contact-activity-counter new"><i aria-hidden="true" />{(data.summary.totalNewContacts ?? 0).toLocaleString('es-AR')} nuevos</span>
               <span className="contact-activity-counter returning"><i aria-hidden="true" />{(data.summary.totalReturningContacts ?? 0).toLocaleString('es-AR')} recurrentes</span>

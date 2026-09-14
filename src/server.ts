@@ -19,6 +19,7 @@ import { readCatalog } from './ai/catalog';
 import { resolveCustomerAiResponse } from './ai/queryResolver';
 import { deriveSuggestedAiTopic, learningConfidence } from './ai/runtimePolicy';
 import { generateAndStoreAiQueryPreview } from './services/aiPreviewProcessor';
+import { analyticsExcelFilename, buildAnalyticsExcel } from './services/analyticsExcel';
 import { checkMediaStorage, ensureMediaCached, ensureMediaThumbnail, isSafeUpload, markMediaUploadFailed, storeMedia } from './services/mediaStorage';
 import { parseIncoming } from './whatsappIncoming';
 
@@ -346,6 +347,32 @@ app.patch('/api/ai/queries/:id/noise', async (req, res) => {
 app.patch('/api/ai/queries/:id/reopen', async (req, res) => {
   const item = await reopenAiQuery(req.params.id, req.session.user ?? 'admin');
   return item ? res.json(item) : res.status(404).json({ error: 'Consulta no encontrada.' });
+});
+app.get('/api/analytics/export.xlsx', async (req, res) => {
+  const schema = z.object({
+    dataset: z.enum(['activity', 'contacts']),
+    from: z.string().refine(isValidAnalyticsDateOnly, 'La fecha inicial debe tener formato YYYY-MM-DD.'),
+    to: z.string().refine(isValidAnalyticsDateOnly, 'La fecha final debe tener formato YYYY-MM-DD.'),
+  }).superRefine((value, ctx) => {
+    if (value.from > value.to) ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'La fecha inicial debe ser anterior o igual a la fecha final.',
+      path: ['from'],
+    });
+  });
+  const parsed = schema.safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({
+    error: parsed.error.issues[0]?.message || 'Parámetros de exportación inválidos.',
+    issues: parsed.error.issues,
+  });
+  const { dataset, from, to } = parsed.data;
+  const data = await getBotAnalytics({ period: 'custom', from, to, limit: 100 });
+  const workbook = await buildAnalyticsExcel(data, dataset);
+  const filename = analyticsExcelFilename(dataset, from, to);
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.send(workbook);
 });
 app.get('/api/analytics', async (req, res) => {
   const schema = z.object({

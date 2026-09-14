@@ -146,6 +146,16 @@ async function run() {
       return;
     }
 
+    if (pathname === '/api/analytics/export.xlsx' && req.method === 'GET') {
+      const dataset = url.searchParams.get('dataset');
+      const filename = dataset === 'contacts' ? 'contactos-diarios-prueba.xlsx' : 'actividad-diaria-prueba.xlsx';
+      res.writeHead(200, {
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'Content-Disposition': `attachment; filename="${filename}"`,
+      });
+      return res.end(Buffer.from('PK mock xlsx download'));
+    }
+
     if (pathname === '/api/analytics' && req.method === 'GET') {
       lastRequestedPeriod = url.searchParams.get('period') || '30d';
       lastRequestedFrom = url.searchParams.get('from') || '';
@@ -313,6 +323,16 @@ async function run() {
     assert.match(await dailyAverage.innerText(), /Promedio diario/i, 'El gráfico debe mostrar su promedio diario.');
     assert.match(await dailyAverage.innerText(), /11,7 nuevos/i, 'El promedio de contactos nuevos debe calcularse con los días visibles.');
     assert.match(await dailyAverage.innerText(), /9,7 recurrentes/i, 'El promedio de recurrentes debe calcularse con los días visibles.');
+    const activityExportLink = page.getByRole('link', { name: 'Descargar actividad diaria en Excel', exact: true });
+    const contactsExportLink = page.getByRole('link', { name: 'Descargar contactos nuevos y recurrentes en Excel', exact: true });
+    assert.match(await activityExportLink.getAttribute('href') ?? '', /dataset=activity/, 'La actividad debe apuntar a su propio Excel.');
+    assert.match(await contactsExportLink.getAttribute('href') ?? '', /dataset=contacts/, 'Los contactos deben apuntar a su propio Excel.');
+    const activityDownloadPromise = page.waitForEvent('download');
+    await activityExportLink.click();
+    assert.equal((await activityDownloadPromise).suggestedFilename(), 'actividad-diaria-prueba.xlsx');
+    const contactsDownloadPromise = page.waitForEvent('download');
+    await contactsExportLink.click();
+    assert.equal((await contactsDownloadPromise).suggestedFilename(), 'contactos-diarios-prueba.xlsx');
     await newContactsSection.screenshot({ path: path.join(artifactsDir, 'analytics-contact-activity-1440.png') });
     await page.locator('.table-responsive-trend').screenshot({ path: path.join(artifactsDir, 'analytics-daily-trend-1440.png') });
 
@@ -320,6 +340,7 @@ async function run() {
     const chartFromInput = page.locator('.chart-date-input').first();
     await chartFromInput.fill('2026-08-20');
     assert.equal(await page.locator('.trend-row').count(), 2, 'Filtrar desde el 20 debe mostrar 2 días');
+    assert.match(await activityExportLink.getAttribute('href') ?? '', /from=2026-08-20/, 'El Excel de actividad debe respetar el filtro visible.');
     await page.locator('.chart-date-clear').click();
     assert.equal(await page.locator('.trend-row').count(), 3, 'Limpiar filtro del gráfico debe restaurar todos los días');
 
