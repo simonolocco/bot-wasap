@@ -265,7 +265,7 @@ app.post('/api/ai/test', async (req, res) => {
     readCatalog(),
   ]);
   const resolution = await resolveCustomerAiResponse({ question, history: [], catalog, complete,
-    allowGeneration: true, savedRule, labels });
+    allowCustomerResponse: true, savedRule, labels });
   const answer = resolution.answer!;
   const suggestedName = deriveSuggestedAiTopic(resolution.classification, answer);
   const log = await recordAiQuery({ question, answer: answer.text, outcome: answer.outcome, source: 'manual',

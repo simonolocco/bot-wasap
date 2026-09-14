@@ -50,7 +50,7 @@ export async function generateAndStoreAiQueryPreview(
     history: context.history,
     catalog: dependencies.catalog,
     complete: dependencies.complete,
-    allowGeneration: true,
+    allowCustomerResponse: true,
     savedRule,
     labels: dependencies.labels,
   });

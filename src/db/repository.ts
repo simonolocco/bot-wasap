@@ -55,7 +55,7 @@ export type AiQueryLog = {
   reviewStatus: 'pending' | 'resolved' | 'ignored'; reviewedAt: string | null; reviewedBy: string | null;
   previewAnswer: string | null; previewOutcome: string | null; previewSource: string | null; previewModel: string | null;
   previewTokens: number | null; previewElapsedMs: number | null; previewErrorCode: string | null; previewGeneratedAt: string | null;
-  tokens: number; elapsedMs: number; errorCode: string | null; createdAt: string; updatedAt: string;
+  tokens: number; elapsedMs: number; errorCode: string | null; messageAt?: string; createdAt: string; updatedAt: string;
 };
 
 export type AiLabelCandidateStats = {
@@ -116,6 +116,7 @@ const aiQueryColumns = `q.id, q.contact_id AS "contactId", COALESCE(NULLIF(c.pub
   q.preview_answer AS "previewAnswer", q.preview_outcome AS "previewOutcome", q.preview_source AS "previewSource",
   q.preview_model AS "previewModel", q.preview_tokens AS "previewTokens", q.preview_elapsed_ms AS "previewElapsedMs",
   q.preview_error_code AS "previewErrorCode", q.preview_generated_at AS "previewGeneratedAt",
+  COALESCE((SELECT m.created_at FROM messages m WHERE m.provider_message_id=q.provider_message_id LIMIT 1), q.created_at) AS "messageAt",
   q.created_at AS "createdAt", q.updated_at AS "updatedAt"`;
 
 function normalizedAiLabelName(name: string) {
@@ -333,8 +334,15 @@ export async function recoverStaleAdvisorFollowups(maxHeartbeatAgeSeconds = 30, 
 }
 
 export async function getJobEvent(jobId: string) {
-  const result = await query<{ payload: unknown; contact_id: string; provider_message_id: string; received_at: string; source_timestamp: string | null }>(`
-    SELECT e.payload, j.contact_id, e.provider_message_id, e.received_at, e.source_timestamp FROM jobs j JOIN webhook_events e ON e.id = j.webhook_event_id WHERE j.id = $1`, [jobId]);
+  const result = await query<{ payload: unknown; contact_id: string; provider_message_id: string; received_at: string; source_timestamp: string | null; isFirstIncoming: boolean }>(`
+    SELECT e.payload, j.contact_id, e.provider_message_id, e.received_at, e.source_timestamp,
+      NOT EXISTS (
+        SELECT 1 FROM messages older
+        JOIN messages current ON current.provider_message_id=e.provider_message_id
+        WHERE older.contact_id=j.contact_id AND older.direction='incoming'
+          AND (older.created_at, older.id) < (current.created_at, current.id)
+      ) AS "isFirstIncoming"
+    FROM jobs j JOIN webhook_events e ON e.id = j.webhook_event_id WHERE j.id = $1`, [jobId]);
   return result.rows[0] ?? null;
 }
 
@@ -347,13 +355,15 @@ export async function hasRecentDuplicateIncoming(contactId: string, providerMess
   const normalizedBody = body.trim().toLocaleLowerCase();
   if (!normalizedBody || windowSeconds <= 0) return false;
   const result = await query<{ id: string }>(`
-    SELECT id FROM messages
-    WHERE contact_id = $1
-      AND direction = 'incoming'
-      AND provider_message_id <> $2
-      AND lower(btrim(COALESCE(body, ''))) = $3
-      AND created_at >= now() - ($4::int * interval '1 second')
-    ORDER BY created_at DESC
+    SELECT duplicate.id FROM messages duplicate
+    JOIN messages current ON current.provider_message_id = $2
+    WHERE duplicate.contact_id = $1
+      AND duplicate.direction = 'incoming'
+      AND duplicate.provider_message_id <> $2
+      AND lower(btrim(COALESCE(duplicate.body, ''))) = $3
+      AND duplicate.created_at >= current.created_at - ($4::int * interval '1 second')
+      AND (duplicate.created_at, duplicate.id) < (current.created_at, current.id)
+    ORDER BY duplicate.created_at DESC, duplicate.id DESC
     LIMIT 1`, [contactId, providerMessageId, normalizedBody, windowSeconds]);
   return Boolean(result.rows[0]);
 }

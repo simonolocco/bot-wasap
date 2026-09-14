@@ -12,6 +12,7 @@ import {
   ADVISOR_FOLLOWUP_DELAY_MS,
   automaticResponseAgeMs,
   buildAdvisorFollowupMessage,
+  initialMenuRequired,
   isMenuCommand,
   resolveIncomingMenuOption,
   shouldIgnoreConversationNoise,
@@ -104,6 +105,9 @@ assert.equal(isMenuCommand('tienen manteca?'), false);
 assert.equal(ADVISOR_FOLLOWUP_DELAY_MS, 10 * 60 * 1000);
 assert.match(buildAdvisorFollowupMessage('https://wa.me/5493510000000'), /asesor humano/);
 assert.match(buildAdvisorFollowupMessage('https://wa.me/5493510000000'), /https:\/\/wa\.me/);
+assert.equal(initialMenuRequired(false), true, 'Todo primer mensaje debe abrir solamente el saludo y menú inicial.');
+assert.equal(initialMenuRequired(true), false, 'Después del primer menú el flujo puede resolver opciones o usar IA.');
+assert.equal(initialMenuRequired(true, true), true, 'El retry del primer mensaje debe seguir siendo saludo y menú solamente.');
 
 // Classification logic verification
 function classifyInteraction(incoming: { text?: string; selectedOptionId?: string; buttonReplyId?: string }) {

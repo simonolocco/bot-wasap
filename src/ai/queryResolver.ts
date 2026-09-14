@@ -52,7 +52,8 @@ export async function resolveCustomerAiResponse(input: {
   history?: Turn[];
   catalog: Catalog;
   complete: Complete;
-  allowGeneration: boolean;
+  /** Customer-facing master switch. Private previews call this with true. */
+  allowCustomerResponse: boolean;
   savedRule?: ResolvableSavedRule | null;
   labels?: AiLabelCandidate[];
 }): Promise<CustomerAiResolution> {
@@ -62,30 +63,48 @@ export async function resolveCustomerAiResponse(input: {
     ? input.savedRule
     : null;
 
+  const classification = savedRule
+    ? {
+        existingLabelId: savedRule.labelId ?? null,
+        suggestedName: savedRule.label ?? null,
+        confidence: 1,
+        method: 'exact' as const,
+      }
+    : await classifyQuestionLabel(input.question, labels);
+  const matchedLabel = classification.existingLabelId
+    ? labels.find(label => label.id === classification.existingLabelId) ?? null
+    : null;
+
+  // The production switch governs every AI-assisted customer response,
+  // including deterministic rules and approved labels. The separate preview
+  // worker still calls this resolver with responses enabled so the admin can
+  // prepare knowledge while customer-facing AI is off.
+  if (!input.allowCustomerResponse) {
+    return {
+      source: 'disabled',
+      answer: null,
+      sendMenuAfter: false,
+      classification,
+      matchedRuleId: savedRule?.id ?? null,
+      matchedLabel,
+    };
+  }
+
   if (savedRule) {
     const answer = savedAnswer(savedRule.labelAnswer ?? savedRule.answer, 'Respuesta aprobada por el equipo');
     return {
       source: 'saved-rule',
       answer,
       sendMenuAfter: shouldSendMenu(answer),
-      classification: {
-        existingLabelId: savedRule.labelId ?? null,
-        suggestedName: savedRule.label ?? null,
-        confidence: 1,
-        method: 'exact',
-      },
+      classification,
       matchedRuleId: savedRule.id,
-      matchedLabel: labels.find(label => label.id === savedRule.labelId) ?? null,
+      matchedLabel,
     };
   }
 
   // This first pass is deterministic. It cheaply reuses approved knowledge;
   // an unmatched question is answered by the assistant instead of making a
   // second provider call just to invent a label.
-  const classification = await classifyQuestionLabel(input.question, labels);
-  const matchedLabel = classification.existingLabelId
-    ? labels.find(label => label.id === classification.existingLabelId) ?? null
-    : null;
   if (matchedLabel?.answer.trim()) {
     const answer = savedAnswer(matchedLabel.answer, `Etiqueta aprobada: ${matchedLabel.name}`);
     return {
@@ -95,17 +114,6 @@ export async function resolveCustomerAiResponse(input: {
       classification,
       matchedRuleId: null,
       matchedLabel,
-    };
-  }
-
-  if (!input.allowGeneration) {
-    return {
-      source: 'disabled',
-      answer: null,
-      sendMenuAfter: false,
-      classification,
-      matchedRuleId: null,
-      matchedLabel: null,
     };
   }
 

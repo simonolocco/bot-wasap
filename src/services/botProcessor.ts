@@ -78,10 +78,9 @@ async function outgoing(contactId: string, to: string, key: string, body: string
 }
 
 async function sendMenu(contactId: string, to: string, key: string) {
-  // Idempotency bucket: repeated menu triggers for the same contact within
-  // three seconds reuse the same outbound row and cannot send another menu.
-  const cooldownBucket = Math.floor(Date.now() / 3000);
-  await outgoing(contactId, to, `menu-cooldown:${contactId}:${cooldownBucket}`, MENU_PROMPT, {
+  // The source event is the idempotency boundary: retries reuse this row, but
+  // two different AI answers always receive their own menu afterward.
+  await outgoing(contactId, to, `${key}:menu`, MENU_PROMPT, {
     messaging_product: 'whatsapp', to, type: 'interactive', interactive: {
       type: 'list', header: { type: 'text', text: MENU_HEADER_TEXT }, body: { text: MENU_PROMPT },
       action: { button: MENU_BUTTON_LABEL, sections: buildMenuListSections() },
@@ -130,6 +129,11 @@ export function shouldIgnoreConversationNoise(
   pendingAssistantQuestion = false,
 ) {
   return !awaitingOrderDetail && incoming.type === 'text' && isLearningQueueNoise(incoming.text, pendingAssistantQuestion);
+}
+
+/** Every real first message is welcome/menu-only, including after a retry. */
+export function initialMenuRequired(greeted: boolean, isFirstIncoming = false) {
+  return !greeted || isFirstIncoming;
 }
 
 export async function processDueAdvisorFollowup(followup: { id: string; contact_id: string; attempts: number }) {
@@ -256,13 +260,81 @@ export async function processIncomingJob(job: { id: string; contact_id: string; 
     const incomingSignature = incoming.text?.trim() || incoming.selectedOptionId || incoming.buttonReplyId || '';
     const menuCommand = isMenuCommand(incoming.text);
     const resolvedMenuOption = resolveIncomingMenuOption(incoming);
-    if (!menuCommand && await hasRecentDuplicateIncoming(job.contact_id, event.provider_message_id, incomingSignature, DUPLICATE_AUTO_RESPONSE_WINDOW_SECONDS)) {
+    if (!menuCommand && !resolvedMenuOption && await hasRecentDuplicateIncoming(job.contact_id, event.provider_message_id, incomingSignature, DUPLICATE_AUTO_RESPONSE_WINDOW_SECONDS)) {
       console.info(`[worker] Respuesta automática omitida para ${job.contact_id}: mensaje repetido dentro de ${DUPLICATE_AUTO_RESPONSE_WINDOW_SECONDS}s.`);
       await completeJob(job.id);
       return;
     }
     const session = await getSession(job.contact_id);
     const key = `event:${event.provider_message_id}`;
+
+    // The first customer message always receives the normal welcome and menu.
+    // We deliberately stop here even if the text already resembles a menu
+    // option or an approved AI label. A meaningful free-text question is still
+    // queued for a private admin preview so the knowledge base can learn from
+    // it without answering the customer on this first turn.
+    const initialName = incoming.profileName?.trim() || session.display_name || '¡hola!';
+    const initialMenuPending = initialMenuRequired(session.greeted, event.isFirstIncoming);
+    const firstInteraction = initialMenuPending
+      && (session.greeted || await claimInitialGreeting(job.contact_id, initialName));
+    if (firstInteraction) {
+      try {
+        const latestContact = await getContactById(job.contact_id);
+        if (latestContact?.botPaused) {
+          await updateSession(job.contact_id, { greeted: false });
+          await completeJob(job.id);
+          return;
+        }
+        await outgoing(job.contact_id, incoming.from, `${key}:greeting`, buildGreetingIntro(initialName));
+        if (!resolvedMenuOption && !menuCommand) {
+          await recordBotInteractionEvent({
+            contactId: job.contact_id,
+            providerMessageId: event.provider_message_id,
+            eventType: 'unrecognized_message',
+            rawText,
+            normalizedText: normText,
+            messageType: incoming.type,
+            metadata: { reason: 'first_interaction_unrecognized_text' },
+            createdAt: eventTime,
+          });
+        }
+        await recordBotInteractionEvent({
+          contactId: job.contact_id,
+          providerMessageId: event.provider_message_id,
+          eventType: 'menu_requested',
+          rawText,
+          normalizedText: normText,
+          messageType: incoming.type,
+          metadata: { source: 'first_greeting' },
+          createdAt: eventTime,
+        });
+        await sendMenu(job.contact_id, incoming.from, key);
+        console.info(`[worker] Primera interacción de ${job.contact_id}: saludo y menú enviados.`);
+      } catch (error) {
+        // The outgoing rows are idempotent by event. Releasing the greeting
+        // claim lets the retry finish whichever of greeting/menu did not send.
+        await updateSession(job.contact_id, { greeted: false }).catch(() => undefined);
+        throw error;
+      }
+
+      if (shouldQueueAiLearning(incoming, session.awaiting_order_detail, false)) {
+        const aiEnabled = await productionAiEnabled();
+        const logged = await recordAiQuery({
+          contactId: job.contact_id,
+          providerMessageId: event.provider_message_id,
+          question: rawText,
+          answer: '',
+          outcome: 'disabled',
+          source: 'production',
+          aiEnabled,
+          reviewStatus: 'pending',
+        });
+        if (logged?.id) await enqueueAiQueryPreview(logged.id);
+      }
+
+      await completeJob(job.id);
+      return;
+    }
 
     // Read recent turns before classifying acknowledgements: "sí", "ok" and
     // "dale" may answer a question that the assistant just asked.
@@ -304,7 +376,7 @@ export async function processIncomingJob(job: { id: string; contact_id: string; 
         history,
         catalog: await readCatalog(),
         complete,
-        allowGeneration: aiEnabled,
+        allowCustomerResponse: aiEnabled,
         savedRule,
         labels: labelCandidates,
       });
@@ -359,12 +431,12 @@ export async function processIncomingJob(job: { id: string; contact_id: string; 
         // A human can take the chat, the switch can turn off, or the message can
         // become stale while the provider is working. Re-check before sending.
         const latestContact = await getContactById(job.contact_id);
-        const generationStillEnabled = resolution.source !== 'generated' || await productionAiEnabled();
+        const responseStillEnabled = await productionAiEnabled();
         const becameStale = shouldSkipAutomaticResponse(sourceTimestamp, event.received_at);
-        if (!generationStillEnabled || latestContact?.botPaused || becameStale) {
+        if (!responseStillEnabled || latestContact?.botPaused || becameStale) {
           const withheldOutcome = latestContact?.botPaused || becameStale ? 'paused' : 'disabled';
           await recordAiQuery({ contactId: job.contact_id, providerMessageId: event.provider_message_id, question: rawText,
-            answer: '', outcome: withheldOutcome, source: 'production', aiEnabled: generationStillEnabled,
+            answer: '', outcome: withheldOutcome, source: 'production', aiEnabled: responseStillEnabled,
             reviewStatus: withheldOutcome === 'disabled' ? 'pending' : 'resolved',
             suggestedLabelId, suggestedLabelName: suggestedName, classificationMethod,
             classificationConfidence: confidence, model: answer.model, tokens: answer.tokens,
@@ -471,38 +543,12 @@ export async function processIncomingJob(job: { id: string; contact_id: string; 
     }
     let option = resolvedMenuOption;
 
-    const initialName = incoming.profileName?.trim() || session.display_name || '¡hola!';
-    const firstInteraction = !session.greeted && await claimInitialGreeting(job.contact_id, initialName);
-    if (firstInteraction) {
-      await outgoing(job.contact_id, incoming.from, `${key}:greeting`, buildGreetingIntro(initialName));
-      console.info(`[worker] Primera interacción de ${job.contact_id}: saludo enviado.`);
-      if (!option) {
-        if (!isMenuCommand(incoming.text)) {
-          await recordBotInteractionEvent({
-            contactId: job.contact_id,
-            providerMessageId: event.provider_message_id,
-            eventType: 'unrecognized_message',
-            rawText,
-            normalizedText: normText,
-            messageType: incoming.type,
-            metadata: { reason: 'first_interaction_unrecognized_text' },
-            createdAt: eventTime,
-          });
-        }
-        await recordBotInteractionEvent({
-          contactId: job.contact_id,
-          providerMessageId: event.provider_message_id,
-          eventType: 'menu_requested',
-          rawText,
-          normalizedText: normText,
-          messageType: incoming.type,
-          metadata: { source: 'first_greeting' },
-          createdAt: eventTime,
-        });
-        await sendMenu(job.contact_id, incoming.from, key);
-        await completeJob(job.id);
-        return;
-      }
+    // A human may take the conversation while deterministic classification is
+    // running. Re-check before any normal bot flow sends another message.
+    const latestContactBeforeBotFlow = await getContactById(job.contact_id);
+    if (latestContactBeforeBotFlow?.botPaused) {
+      await completeJob(job.id);
+      return;
     }
 
     if (session.awaiting_order_detail && (isMenuCommand(incoming.text) || normalizeText(incoming.text) === 'cancelar')) {

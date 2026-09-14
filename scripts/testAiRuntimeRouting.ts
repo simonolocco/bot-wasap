@@ -21,7 +21,7 @@ async function main() {
 
   const meaningful = await resolveCustomerAiResponse({
     question: '¿Emiten factura A?', catalog, complete: unknownComplete,
-    allowGeneration: true, labels: [],
+    allowCustomerResponse: true, labels: [],
   });
   assert.equal(meaningful.source, 'generated');
   assert.ok(meaningful.answer?.text.trim(), 'Una pregunta entendible siempre debe recibir texto.');
@@ -32,20 +32,20 @@ async function main() {
   const location = await resolveCustomerAiResponse({
     question: '¿Eres de Río Cuarto?', catalog,
     complete: async () => { throw new Error('La pregunta de ubicación debe resolverse aun sin proveedor.'); },
-    allowGeneration: true, labels: [],
+    allowCustomerResponse: true, labels: [],
   });
   assert.match(location.answer?.text ?? '', /Av\. Juan B\. Justo 5048|Córdoba Capital/,
     'La consulta de la captura debe mostrar la respuesta concreta de ubicación.');
 
   const fallbackRule = await resolveCustomerAiResponse({
-    question: '¿Emiten factura A?', catalog, complete: unknownComplete, allowGeneration: true, labels: [],
+    question: '¿Emiten factura A?', catalog, complete: unknownComplete, allowCustomerResponse: true, labels: [],
     savedRule: { id: 'bad-rule', answer: 'No entendí', label: 'pregunta-no-entendible', labelId: 'fallback' },
   });
   assert.equal(fallbackRule.source, 'generated', 'Una regla fallback histórica nunca debe bloquear la respuesta real.');
   assert.equal(providerCalls, 2);
 
   const approved = await resolveCustomerAiResponse({
-    question: '¿Aceptan transferencia?', catalog, complete: unknownComplete, allowGeneration: false,
+    question: '¿Aceptan transferencia?', catalog, complete: unknownComplete, allowCustomerResponse: true,
     labels: [{ id: 'pagos', name: 'pagos', answer: 'Aceptamos transferencia.', examples: ['medios de pago'] }],
   });
   assert.equal(approved.source, 'approved-label');
@@ -53,8 +53,33 @@ async function main() {
   assert.equal(approved.sendMenuAfter, true, 'Una etiqueta aprobada no necesita marcador para enviar el menú.');
   assert.equal(providerCalls, 2, 'Una etiqueta aprobada no debe consumir una llamada al proveedor.');
 
+  const approvedWhileOff = await resolveCustomerAiResponse({
+    question: '¿Aceptan transferencia?', catalog, complete: unknownComplete, allowCustomerResponse: false,
+    labels: [{ id: 'pagos', name: 'pagos', answer: 'Aceptamos transferencia.', examples: ['medios de pago'] }],
+  });
+  assert.equal(approvedWhileOff.source, 'disabled');
+  assert.equal(approvedWhileOff.answer, null, 'Con la IA apagada una etiqueta aprobada no responde al cliente.');
+  assert.equal(approvedWhileOff.matchedLabel?.id, 'pagos', 'La coincidencia se conserva para preparar la vista previa privada.');
+  assert.equal(providerCalls, 2, 'El modo apagado tampoco llama al proveedor al reconocer una etiqueta.');
+
+  const savedWhileOff = await resolveCustomerAiResponse({
+    question: '¿Hacen envíos?', catalog, complete: unknownComplete, allowCustomerResponse: false, labels: [],
+    savedRule: { id: 'envios-rule', answer: 'Coordinamos el traslado.', label: 'envios', labelId: 'envios' },
+  });
+  assert.equal(savedWhileOff.source, 'disabled');
+  assert.equal(savedWhileOff.answer, null, 'Con la IA apagada una regla exacta tampoco responde al cliente.');
+  assert.equal(savedWhileOff.matchedRuleId, 'envios-rule', 'La regla se conserva para la vista previa privada.');
+  assert.equal(providerCalls, 2);
+
+  const savedWhileOn = await resolveCustomerAiResponse({
+    question: '¿Hacen envíos?', catalog, complete: unknownComplete, allowCustomerResponse: true, labels: [],
+    savedRule: { id: 'envios-rule', answer: 'Coordinamos el traslado.', label: 'envios', labelId: 'envios' },
+  });
+  assert.equal(savedWhileOn.source, 'saved-rule');
+  assert.equal(savedWhileOn.sendMenuAfter, true, 'Toda respuesta exacta guardada debe terminar con el menú.');
+
   const disabled = await resolveCustomerAiResponse({
-    question: '¿Emiten factura A?', catalog, complete: unknownComplete, allowGeneration: false, labels: [],
+    question: '¿Emiten factura A?', catalog, complete: unknownComplete, allowCustomerResponse: false, labels: [],
   });
   assert.equal(disabled.source, 'disabled');
   assert.equal(disabled.answer, null);
@@ -62,7 +87,7 @@ async function main() {
   assert.equal(providerCalls, 2, 'El interruptor apagado no debe llamar al proveedor.');
 
   const garbage = await resolveCustomerAiResponse({
-    question: 'asdjkahsd', catalog, complete: unknownComplete, allowGeneration: true, labels: [],
+    question: 'asdjkahsd', catalog, complete: unknownComplete, allowCustomerResponse: true, labels: [],
   });
   assert.equal(garbage.classification.method, 'unintelligible');
   assert.equal(garbage.answer?.outcome, 'clarify');
@@ -74,14 +99,14 @@ async function main() {
   });
   const contextual = await resolveCustomerAiResponse({
     question: 'Sí', history: [{ role: 'assistant', content: '¿Querés que te pase el catálogo?' }],
-    catalog, complete: contextComplete, allowGeneration: true, labels: [],
+    catalog, complete: contextComplete, allowCustomerResponse: true, labels: [],
   });
   assert.notEqual(contextual.answer?.outcome, 'silence', 'Sí debe usar el contexto de la pregunta anterior.');
   assert.ok(contextual.answer?.text.trim());
 
   const failingComplete: Complete = async () => { throw new AiProviderError('rate_limit', 'limited'); };
   const unavailable = await resolveCustomerAiResponse({
-    question: '¿Trabajan con cuenta corriente?', catalog, complete: failingComplete, allowGeneration: true, labels: [],
+    question: '¿Trabajan con cuenta corriente?', catalog, complete: failingComplete, allowCustomerResponse: true, labels: [],
   });
   assert.equal(unavailable.answer?.outcome, 'unavailable');
   assert.equal(unavailable.answer?.errorCode, 'rate_limit');

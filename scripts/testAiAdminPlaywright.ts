@@ -18,7 +18,7 @@ let resolvedPayload: Record<string, unknown> | null = null;
 function item(view: string) {
   const base = { id: `query-${view}`, contactId: 'contact-1', contactName: 'María Gómez', phone: '5493515550101',
     source: 'production', aiEnabled: true, matchedAnswerRuleId: null, matchedAnswerLabelId: null,
-    suggestedLabelId: null, suggestedLabelName: null, tokens: 14, elapsedMs: 430, createdAt: now, updatedAt: now };
+    suggestedLabelId: null, suggestedLabelName: null, tokens: 14, elapsedMs: 430, messageAt: now, createdAt: now, updatedAt: now };
   if (view === 'answered') return { ...base, question: '¿Aceptan transferencia?', answer: 'Los medios de pago deben confirmarse con el asesor.', previewAnswer: null, previewOutcome: null, previewSource: null, previewGeneratedAt: null, outcome: 'handoff', reviewStatus: 'resolved', classificationMethod: 'semantic', classificationConfidence: .9, model: 'fixture', errorCode: null };
   if (view === 'errors') return { ...base, question: '¿Trabajan con cuenta corriente?', answer: 'El servicio de IA no pudo procesar tu mensaje en este momento. Podés reintentarlo.', previewAnswer: 'El servicio de IA no pudo procesar tu mensaje en este momento. Podés reintentarlo.', previewOutcome: 'unavailable', previewSource: 'generated', previewGeneratedAt: now, outcome: 'unavailable', reviewStatus: 'resolved', classificationMethod: 'none', classificationConfidence: 0, model: 'fixture', errorCode: 'rate_limit' };
   if (view === 'noise') return { ...base, question: 'asdjkahsd', answer: 'No llegué a reconocer una consulta en ese mensaje.', previewAnswer: 'No llegué a reconocer una consulta en ese mensaje.', previewOutcome: 'clarify', previewSource: 'generated', previewGeneratedAt: now, outcome: 'clarify', reviewStatus: 'ignored', classificationMethod: 'unintelligible', classificationConfidence: .96, model: '', errorCode: null };
@@ -94,9 +94,14 @@ async function run() {
       if (width <= 760) await page.getByRole('button', { name: 'Más secciones' }).click();
       await page.getByRole('button', { name: 'IA', exact: true }).click();
       await page.getByRole('heading', { name: 'Respuestas automáticas a clientes' }).waitFor();
+      await page.getByText('La IA no envía mensajes a clientes.', { exact: false }).waitFor();
+      await page.getByRole('button', { name: 'Activar respuestas de IA' }).waitFor();
       await page.getByRole('heading', { name: 'Preguntas de clientes' }).waitFor();
       const reviewCard = page.locator('.ai-query-item').filter({ hasText: '¿Emiten factura A?' });
       await reviewCard.waitFor();
+      await reviewCard.getByText('María Gómez', { exact: true }).waitFor();
+      await reviewCard.getByText('5493515550101', { exact: true }).waitFor();
+      assert.equal(await reviewCard.locator(`time[datetime="${now}"]`).count(), 1, 'Cada consulta debe mostrar la hora del mensaje original.');
       assert.equal(await reviewCard.getByLabel('Etiqueta').inputValue(), invoiceLabel.id);
       assert.equal(await reviewCard.getByLabel('Respuesta').inputValue(), invoicePreview);
       assert.equal(await reviewCard.getByRole('option', { name: 'Crear una etiqueta nueva' }).count(), 0);

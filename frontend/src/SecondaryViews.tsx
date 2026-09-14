@@ -1454,7 +1454,7 @@ function AiView() {
   async function toggle() {
     if (!data) return;
     setBusy(true); setNotice('');
-    try { await api('/api/ai/status', { method: 'PATCH', body: JSON.stringify({ enabled: !data.settings.enabled }) }); setNotice(data.settings.enabled ? 'Respuestas generativas apagadas. Las etiquetas aprobadas siguen funcionando.' : 'Respuestas generativas activadas.'); await load(); }
+    try { await api('/api/ai/status', { method: 'PATCH', body: JSON.stringify({ enabled: !data.settings.enabled }) }); setNotice(data.settings.enabled ? 'Respuestas de IA apagadas. Las vistas previas privadas siguen preparándose.' : 'Respuestas de IA activadas.'); await load(); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'No se pudo cambiar el estado.'); }
     finally { setBusy(false); }
   }
@@ -1557,10 +1557,10 @@ function AiView() {
   return (
     <div className="secondary-view ai-view">
       <section className={`ai-control-card ${data.settings.enabled ? 'is-enabled' : 'is-disabled'}`}>
-        <div className="ai-control-copy"><div className="ai-control-title"><span className="ai-live-dot" aria-hidden="true" /><h2>Respuestas automáticas a clientes</h2><span className={`ai-status ${data.settings.enabled ? 'answered' : 'disabled'}`}>{data.settings.enabled ? 'Activas' : 'Apagadas'}</span></div><p>{data.settings.enabled ? 'Cada consulta entendible recibe una respuesta: primero se usa el conocimiento aprobado y, si no alcanza, la IA responde con los datos disponibles del negocio.' : 'La IA generativa no envía mensajes a clientes. Igual prepara una vista previa privada para cada consulta, para que puedas revisar exactamente qué habría respondido.'}</p></div>
-        <button type="button" className={`button ${data.settings.enabled ? 'danger' : 'primary'}`} aria-pressed={data.settings.enabled} disabled={busy} onClick={() => void toggle()}>{data.settings.enabled ? 'Apagar IA generativa' : 'Activar IA generativa'}</button>
+        <div className="ai-control-copy"><div className="ai-control-title"><span className="ai-live-dot" aria-hidden="true" /><h2>Respuestas automáticas a clientes</h2><span className={`ai-status ${data.settings.enabled ? 'answered' : 'disabled'}`}>{data.settings.enabled ? 'Activas' : 'Apagadas'}</span></div><p>{data.settings.enabled ? 'El menú mantiene la prioridad. Sólo las consultas que quedan fuera del flujo reciben una respuesta aprobada o generada por IA.' : 'La IA no envía mensajes a clientes. Igual analiza las consultas y prepara vistas previas privadas para que puedas revisarlas antes de activarla.'}</p></div>
+        <button type="button" className={`button ${data.settings.enabled ? 'danger' : 'primary'}`} aria-pressed={data.settings.enabled} disabled={busy} onClick={() => void toggle()}>{data.settings.enabled ? 'Apagar respuestas de IA' : 'Activar respuestas de IA'}</button>
       </section>
-      <section className="ai-response-contract" aria-label="Cómo responde la IA"><strong>Cómo se decide cada respuesta</strong><ol><li>Busca una respuesta aprobada.</li><li>Si no existe, responde o pide el dato que falta.</li><li>Separa como ruido sólo mensajes sin significado recuperable.</li></ol></section>
+      <section className="ai-response-contract" aria-label="Cómo responde la IA"><strong>Cómo se decide cada respuesta</strong><ol><li>El primer mensaje siempre muestra el menú.</li><li>El bot resuelve primero las opciones conocidas.</li><li>La IA interviene sólo en lo que queda afuera.</li></ol></section>
       {notice && <div className="ai-notice" role="status">{notice}</div>}{error && <div className="form-error-banner" role="alert">{error}</div>}
       <nav className="ai-workspace-tabs" aria-label="Secciones de IA">
         <button type="button" className={workspaceView === 'queries' ? 'active' : ''} aria-current={workspaceView === 'queries' ? 'page' : undefined} onClick={() => setWorkspaceView('queries')}>Preguntas y respuestas</button>
@@ -1580,7 +1580,13 @@ function AiView() {
           const answerReady = Boolean((drafts[item.id] ?? '').trim());
           const assignedLabelName = selectedLabel?.name || item.label || item.suggestedLabelName;
           const readonlyAnswer = (item.previewAnswer ?? '').trim() || item.answer.trim() || 'No hay una respuesta registrada.';
+          const customerName = item.source === 'manual' ? 'Prueba manual' : cleanName(item.contactName, item.phone || 'Cliente sin nombre');
+          const messageAt = item.messageAt || item.createdAt;
           return <article className={`ai-query-item ${filter === 'attention' ? 'is-editable' : 'is-readonly'}`} key={item.id}>
+            <div className="ai-query-origin">
+              <span className="ai-query-customer"><Icon name="users" size={13} /><strong>{customerName}</strong>{item.phone && <small>{item.phone}</small>}</span>
+              <time dateTime={messageAt}><Icon name="clock" size={13} />{formatDate(messageAt, true)}</time>
+            </div>
             <div className="ai-question-copy"><span>Pregunta del cliente</span><h3>{item.question}</h3></div>
             {filter === 'attention' ? <>
               <label className="ai-field-label">Etiqueta<select className="ai-label-input" value={selectedLabelId} onChange={event => assignQueryLabel(item.id, event.target.value)}><option value="">Elegí una etiqueta</option>{labels.map(label => <option key={label.id} value={label.id}>{label.name}</option>)}</select></label>

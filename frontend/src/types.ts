@@ -278,7 +278,7 @@ export type AiQueryLog = {
   reviewStatus?: 'pending' | 'resolved' | 'ignored'; reviewedAt?: string | null; reviewedBy?: string | null;
   previewAnswer?: string | null; previewOutcome?: string | null; previewSource?: string | null; previewModel?: string | null;
   previewTokens?: number | null; previewElapsedMs?: number | null; previewErrorCode?: string | null; previewGeneratedAt?: string | null;
-  tokens: number; elapsedMs: number; errorCode: string | null; createdAt: string; updatedAt: string;
+  tokens: number; elapsedMs: number; errorCode: string | null; messageAt?: string; createdAt: string; updatedAt: string;
 };
 export type AiData = {
   settings: AiSettings; rules: AiAnswerRule[]; labels?: AiAnswerLabel[]; model: string;
