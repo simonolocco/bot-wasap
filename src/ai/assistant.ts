@@ -93,12 +93,11 @@ export const facts: Record<typeof topics[number], { text: string; source: string
   address: { text: BUSINESS_ADDRESS, source: 'Dirección del bot' },
   hours: { text: BUSINESS_SCHEDULE, source: 'Horarios del bot' },
   minimum: {
-    text: 'Atendemos compras mayoristas y minoristas. La compra mínima puede depender del producto y de la modalidad del pedido; no tengo un monto confirmado en este canal. Para verificarlo, consultalo con nuestro asesor comercial.',
-    source: 'Confirmación requerida · compra mínima y condiciones',
-    needsHuman: true,
+    text: 'Atendemos compras mayoristas y minoristas. La compra mínima es de 1/2 horma en adelante.',
+    source: 'Condición comercial · compra mínima',
   },
   retail: {
-    text: 'Sí, atendemos tanto a mayoristas como a particulares. La mayoría de los productos se comercializa desde media horma y algunas piezas grandes tienen porciones para consumo familiar. La presentación y compra mínima dependen del producto; si me indicás cuál buscás, lo revisamos o te derivo con el asesor.',
+    text: 'Sí, atendemos tanto a mayoristas como a particulares. La compra mínima es de 1/2 horma en adelante. Si me indicás qué producto buscás, te ayudo a encontrarlo.',
     source: 'Preguntas frecuentes · venta minorista',
   },
   payments: {
@@ -246,9 +245,9 @@ REGLAS DE NEGOCIO:
    - Si consultan por envíos a otras ciudades/provincias: aclará que estamos en Córdoba Capital, que se puede retirar o coordinar con comisionista, y ofrecé el contacto de Mauricio.
 3. COMPRA MÍNIMA Y CLIENTES:
    - Atendemos a MAYORISTAS y PARTICULARES.
-   - No inventes un monto mínimo: la compra mínima puede depender del producto y debe confirmarse con el asesor. Se sabe que se atiende a mayoristas y particulares, y que la mayoría de los productos se comercializa desde media horma.
+   - La compra mínima confirmada es de 1/2 HORMA EN ADELANTE. Informalo de forma directa tanto en consultas minoristas como al explicar cómo hacer un pedido.
 4. QUEJAS Y RECLAMOS:
-   - Si el cliente expresa molestia, enojo o problemas con un pedido: NUNCA envíes la dirección física ni menús. Mostrá empatía inmediata y derivalo a Mauricio. Marcar complaint=true y human=true.
+   - Si el cliente expresa molestia, enojo o problemas con un pedido: NUNCA envíes la dirección física. Mostrá empatía inmediata y derivalo a Mauricio. Marcar complaint=true y human=true.
 5. MENSAJES EXTERNOS Y FUERA DE LUGAR:
    - Si ofrecen productos (Snacks Buffalo, Fargo, publicidad), buscan trabajo (CV) o piden donaciones: aclará canal exclusivo para ventas. Marcar externalProposal=true y human=true.
 6. PRECIOS Y CATÁLOGO:
@@ -268,6 +267,10 @@ REGLAS DE NEGOCIO:
    - Nunca uses "enseguida", "de inmediato", "ya mismo", "ticket prioritario" ni promesas de entrega.
    - Nunca inventes sucursales, zonas de distribución, precios, stock, horarios de feriados.
    - Nunca respondas trivia general no relacionada con el negocio; si el mensaje es completamente off-topic, marcá unknown=true y guiá brevemente al menú.
+
+11. MENÚ DESPUÉS DE RESPONDER:
+   - Después de toda respuesta con texto, el sistema envía automáticamente el menú de opciones en un mensaje separado.
+   - No copies las opciones del menú dentro de la respuesta ni digas que el cliente debe pedirlo; cerrá la respuesta de forma natural.
 
 Respondé SIEMPRE en formato JSON estricto con el siguiente esquema:
 {
@@ -354,7 +357,7 @@ export function renderAnswer(
     (intent.topics.includes('information') && intent.topics.includes('shipping') && intent.topics.length === 2 && !intent.productQuery && !intent.catalog && !intent.human && !intent.order)
   ) {
     return {
-      text: `¡Hola! Bienvenido/a a *Distribuidora Abasto del Campo* 👋\n\nSomos distribuidores mayoristas y minoristas de quesos, fiambres y lácteos en *Córdoba Capital* (Av. Juan B. Justo 5048).\n\n• *Venta mayorista y minorista:* la mayoría de los productos se comercializa desde media horma; la presentación depende de cada producto.\n• *Retiro y logística:* podés retirar por nuestro depósito o coordinar el traslado mediante un comisionista o transporte de tu confianza.\n• *Horarios:* Lunes a Viernes de 8:15 a 16:00 hs y Sábados de 8:15 a 12:45 hs.\n\n¿Te gustaría consultar el catálogo de precios, un producto puntual o hablar con nuestro asesor Mauricio: ${advisorUrl()}?`,
+      text: `¡Hola! Bienvenido/a a *Distribuidora Abasto del Campo* 👋\n\nSomos distribuidores mayoristas y minoristas de quesos, fiambres y lácteos en *Córdoba Capital* (Av. Juan B. Justo 5048).\n\n• *Venta mayorista y minorista:* la compra mínima es de 1/2 horma en adelante.\n• *Retiro y logística:* podés retirar por nuestro depósito o coordinar el traslado mediante un comisionista o transporte de tu confianza.\n• *Horarios:* Lunes a Viernes de 8:15 a 16:00 hs y Sábados de 8:15 a 12:45 hs.\n\n¿Te gustaría consultar el catálogo de precios, un producto puntual o hablar con nuestro asesor Mauricio: ${advisorUrl()}?`,
       outcome: 'answered',
       sources: ['Información general de la distribuidora', 'Ubicación y horarios', 'Modalidad de venta'],
       products: [],
@@ -463,7 +466,7 @@ export function renderAnswer(
   }
   if (intent.order) {
     pieces.push(
-      'Para armar el pedido, elegí «Nuevo Pedido» (opción 4) y enviá la lista con cantidades, productos y marcas. Esta consulta no confirma ni modifica un pedido.'
+      'Para armar el pedido, elegí «Nuevo Pedido» (opción 4) y enviá la lista con cantidades, productos y marcas. La compra mínima es de 1/2 horma en adelante. Esta consulta no confirma ni modifica un pedido.'
     );
     sources.push('Instrucciones del flujo de pedidos');
   }

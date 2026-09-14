@@ -8,6 +8,7 @@ import { generateAndStoreAiQueryPreview } from '../src/services/aiPreviewProcess
 async function main() {
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL es obligatorio para esta prueba aislada.');
   const providerMessageId = `qa-preview-${randomUUID()}`;
+  let createdDraftId = '';
   try {
     const log = await recordAiQuery({
       providerMessageId,
@@ -38,10 +39,18 @@ async function main() {
     assert.equal(stored.previewOutcome, 'answered');
     assert.equal(stored.previewSource, 'generated');
     assert.equal(stored.suggestedLabelName, 'direccion');
+    assert.ok(stored.suggestedLabelId, 'La IA debe crear y seleccionar un borrador de etiqueta para el tema nuevo.');
+    const draft = (await query<{ id: string; active: boolean; createdBy: string | null }>(
+      'SELECT id, active, created_by AS "createdBy" FROM ai_answer_labels WHERE id=$1', [stored.suggestedLabelId])).rows[0];
+    if (draft?.createdBy === 'ai-auto-preview') {
+      createdDraftId = draft.id;
+      assert.equal(draft.active, false, 'El borrador automático no puede responder a clientes antes de aprobarse.');
+    }
     assert.ok(stored.previewGeneratedAt);
     console.log('AI private preview pipeline tests: OK');
   } finally {
     await query('DELETE FROM ai_query_logs WHERE provider_message_id=$1', [providerMessageId]);
+    if (createdDraftId) await query('DELETE FROM ai_answer_labels WHERE id=$1', [createdDraftId]);
     await closePool();
   }
 }

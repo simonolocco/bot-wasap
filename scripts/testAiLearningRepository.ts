@@ -36,6 +36,11 @@ async function main() {
     assert.equal(draft?.answer, initialDeliveryAnswer);
     labelIds.push(draft!.id);
 
+    const aiPreviewDraft = await ensureAiAnswerLabelDraft(`${marker}-preview`, 'ai-auto-preview', 'Respuesta propuesta.', false);
+    assert.ok(aiPreviewDraft?.id);
+    assert.equal(aiPreviewDraft?.active, false, 'Una etiqueta propuesta por una vista previa debe quedar inactiva hasta su aprobación.');
+    labelIds.push(aiPreviewDraft!.id);
+
     const fillableDraft = await ensureAiAnswerLabelDraft(`${marker}-manual`, 'qa', 'Primera respuesta aprobada.');
     assert.ok(fillableDraft?.id);
     labelIds.push(fillableDraft!.id);

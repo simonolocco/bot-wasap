@@ -24,6 +24,7 @@ async function main() {
   });
   assert.equal(meaningful.source, 'generated');
   assert.ok(meaningful.answer?.text.trim(), 'Una pregunta entendible siempre debe recibir texto.');
+  assert.equal(meaningful.sendMenuAfter, true, 'Toda respuesta generada con texto debe terminar con el menú.');
   assert.equal(meaningful.answer?.outcome, 'clarify');
   assert.equal(providerCalls, 1);
 
@@ -48,6 +49,7 @@ async function main() {
   });
   assert.equal(approved.source, 'approved-label');
   assert.equal(approved.answer?.text, 'Aceptamos transferencia.');
+  assert.equal(approved.sendMenuAfter, true, 'Una etiqueta aprobada no necesita marcador para enviar el menú.');
   assert.equal(providerCalls, 2, 'Una etiqueta aprobada no debe consumir una llamada al proveedor.');
 
   const disabled = await resolveCustomerAiResponse({
@@ -55,6 +57,7 @@ async function main() {
   });
   assert.equal(disabled.source, 'disabled');
   assert.equal(disabled.answer, null);
+  assert.equal(disabled.sendMenuAfter, false);
   assert.equal(providerCalls, 2, 'El interruptor apagado no debe llamar al proveedor.');
 
   const garbage = await resolveCustomerAiResponse({
@@ -82,6 +85,7 @@ async function main() {
   assert.equal(unavailable.answer?.outcome, 'unavailable');
   assert.equal(unavailable.answer?.errorCode, 'rate_limit');
   assert.ok(unavailable.answer?.text.trim(), 'Una caída del proveedor también debe dejar una respuesta al cliente.');
+  assert.equal(unavailable.sendMenuAfter, true, 'La respuesta de contingencia también debe devolver el menú.');
 
   assert.equal(aiReviewStatus({ source: 'production', aiEnabled: true, outcome: 'answered', responseSent: true, unintelligible: false }), 'resolved');
   assert.equal(aiReviewStatus({ source: 'production', aiEnabled: true, outcome: 'unavailable', responseSent: true, unintelligible: false }), 'resolved');

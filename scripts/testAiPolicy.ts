@@ -269,10 +269,14 @@ async function runMinimumTests() {
     const result = await answerQuestion({ message: msg }, catalog, mockComplete);
     check(`Compra mínima "${msg.slice(0, 60)}"`, () => {
       assert.ok(['handoff', 'answered'].includes(result.outcome as string), `outcome=${result.outcome}`);
-      assert.match(result.text, /depender|confirmar|asesor|media horma/i);
+      assert.match(result.text, /1\/2 horma en adelante/i);
       assert.doesNotMatch(result.text, /no exigimos un monto|no hay monto mínimo/i);
     });
   }
+  const order = await answerQuestion({ message: 'Quiero hacer un pedido' }, catalog, mockComplete);
+  check('Pedido informa el mínimo de 1/2 horma', () => {
+    assert.match(order.text, /1\/2 horma en adelante/i);
+  });
 }
 
 // ─── SECTION 7: Human advisor multi-topic ────────────────────────────────────
@@ -352,7 +356,7 @@ async function runProviderFallbackTests() {
   const cases = [
     { msg: '¿De dónde son?', pattern: /Córdoba Capital|Av\. Juan B\. Justo/ },
     { msg: '¿Qué horario hacen?', pattern: /8:15|12:45/ },
-    { msg: '¿Hay compra mínima?', pattern: /compra mínima|monto confirmado/i },
+    { msg: '¿Hay compra mínima?', pattern: /1\/2 horma en adelante/i },
     { msg: '¿Cuánto sale el cremoso?', pattern: /7\.099|8\.520|precio/i },
     { msg: 'Hola buenas tardes', pattern: /Bienvenido|ayudarte/i },
   ];

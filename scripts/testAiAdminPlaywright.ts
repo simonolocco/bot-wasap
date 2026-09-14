@@ -6,10 +6,14 @@ import { chromium } from '@playwright/test';
 
 const adminDir = path.resolve('public/admin');
 const now = '2026-09-13T14:00:00.000Z';
+const invoicePreview = 'No tengo confirmada la emisión de factura A en este canal. Podés consultarlo con Mauricio antes de realizar el pedido.';
 const label = { id: 'label-envios', name: 'envios', normalizedName: 'envios', answer: 'Coordinamos el traslado con un comisionista.', active: true,
   aliases: ['¿Hacen envíos?'], aliasCount: 1, createdAt: now, updatedAt: now };
+const invoiceLabel = { id: 'label-facturacion', name: 'facturacion', normalizedName: 'facturacion', answer: invoicePreview, active: false,
+  aliases: [], aliasCount: 0, createdBy: 'ai-auto-preview', createdAt: now, updatedAt: now };
 let markedNoise = false;
-const invoicePreview = 'No tengo confirmada la emisión de factura A en este canal. Podés consultarlo con Mauricio antes de realizar el pedido.';
+let resolved = false;
+let resolvedPayload: Record<string, unknown> | null = null;
 
 function item(view: string) {
   const base = { id: `query-${view}`, contactId: 'contact-1', contactName: 'María Gómez', phone: '5493515550101',
@@ -19,7 +23,7 @@ function item(view: string) {
   if (view === 'errors') return { ...base, question: '¿Trabajan con cuenta corriente?', answer: 'El servicio de IA no pudo procesar tu mensaje en este momento. Podés reintentarlo.', previewAnswer: 'El servicio de IA no pudo procesar tu mensaje en este momento. Podés reintentarlo.', previewOutcome: 'unavailable', previewSource: 'generated', previewGeneratedAt: now, outcome: 'unavailable', reviewStatus: 'resolved', classificationMethod: 'none', classificationConfidence: 0, model: 'fixture', errorCode: 'rate_limit' };
   if (view === 'noise') return { ...base, question: 'asdjkahsd', answer: 'No llegué a reconocer una consulta en ese mensaje.', previewAnswer: 'No llegué a reconocer una consulta en ese mensaje.', previewOutcome: 'clarify', previewSource: 'generated', previewGeneratedAt: now, outcome: 'clarify', reviewStatus: 'ignored', classificationMethod: 'unintelligible', classificationConfidence: .96, model: '', errorCode: null };
   if (view === 'tests') return { ...base, contactId: null, contactName: '', phone: '', question: '¿Hacen envíos?', answer: label.answer, previewAnswer: label.answer, previewOutcome: 'answered', previewSource: 'approved-label', previewGeneratedAt: now, outcome: 'answered', source: 'manual', reviewStatus: 'ignored', classificationMethod: 'semantic', classificationConfidence: .96, model: 'respuesta aprobada', errorCode: null };
-  return { ...base, question: '¿Emiten factura A?', answer: '', previewAnswer: invoicePreview, previewOutcome: 'handoff', previewSource: 'generated', previewModel: 'fixture', previewGeneratedAt: now, outcome: 'disabled', aiEnabled: false, reviewStatus: 'pending', classificationMethod: 'semantic', classificationConfidence: .9, suggestedLabelName: 'facturacion', model: null, errorCode: null };
+  return { ...base, question: '¿Emiten factura A?', answer: '', previewAnswer: invoicePreview, previewOutcome: 'handoff', previewSource: 'generated', previewModel: 'fixture', previewGeneratedAt: now, outcome: 'disabled', aiEnabled: false, reviewStatus: 'pending', classificationMethod: 'semantic', classificationConfidence: .9, suggestedLabelId: invoiceLabel.id, suggestedLabelName: invoiceLabel.name, model: null, errorCode: null };
 }
 
 function json(res: http.ServerResponse, value: unknown, status = 200) {
@@ -48,11 +52,25 @@ async function run() {
     if (url.pathname === '/api/stream') { res.writeHead(200, { 'Content-Type': 'text/event-stream' }); res.write(': ready\n\n'); return; }
     if (url.pathname === '/api/ai' && req.method === 'GET') {
       const view = url.searchParams.get('view') ?? 'attention';
-      const items = view === 'attention' && markedNoise ? [] : [item(view)];
-      return json(res, { settings: { enabled: false, updatedAt: now, updatedBy: 'qa' }, labels: [label], rules: [], model: 'fixture',
-        queries: { items, total: items.length, page: 1, limit: 50 }, totals: { attention: markedNoise ? 0 : 1, answered: 1, noise: markedNoise ? 2 : 1, errors: 1, tests: 1 } });
+      const items = view === 'attention' && (markedNoise || resolved) ? [] : [item(view)];
+      const query = (url.searchParams.get('q') ?? '').trim().toLocaleLowerCase();
+      const labels = [label, invoiceLabel].filter(candidate => !query
+        || candidate.name.toLocaleLowerCase().includes(query)
+        || candidate.answer.toLocaleLowerCase().includes(query));
+      return json(res, { settings: { enabled: false, updatedAt: now, updatedBy: 'qa' }, labels, rules: [], model: 'fixture',
+        queries: { items, total: items.length, page: 1, limit: 50 }, totals: { attention: markedNoise || resolved ? 0 : 1, answered: 1, noise: markedNoise ? 2 : 1, errors: 1, tests: 1 } });
     }
-    if (url.pathname === '/api/ai/test' && req.method === 'POST') return json(res, { answer: { text: label.answer, label: 'envios', sendMenuAfter: false, responseSource: 'approved-label' } });
+    if (url.pathname === '/api/ai/test' && req.method === 'POST') return json(res, { answer: { text: label.answer, label: 'envios', sendMenuAfter: true, responseSource: 'approved-label' } });
+    if (url.pathname.endsWith('/resolve') && req.method === 'PATCH') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        resolvedPayload = JSON.parse(body) as Record<string, unknown>;
+        resolved = true;
+        json(res, item('answered'));
+      });
+      return;
+    }
     if (url.pathname.endsWith('/preview') && req.method === 'POST') return json(res, item('attention'));
     if (url.pathname.endsWith('/noise') && req.method === 'PATCH') { markedNoise = true; return json(res, item('noise')); }
     if (url.pathname.endsWith('/reopen') && req.method === 'PATCH') { markedNoise = false; return json(res, item('attention')); }
@@ -67,6 +85,8 @@ async function run() {
   try {
     for (const width of [1440, 390]) {
       markedNoise = false;
+      resolved = false;
+      resolvedPayload = null;
       const page = await browser.newPage({ viewport: { width, height: 900 } });
       const errors: string[] = [];
       page.on('pageerror', error => errors.push(error.message));
@@ -74,24 +94,46 @@ async function run() {
       if (width <= 760) await page.getByRole('button', { name: 'Más secciones' }).click();
       await page.getByRole('button', { name: 'IA', exact: true }).click();
       await page.getByRole('heading', { name: 'Respuestas automáticas a clientes' }).waitFor();
-      await page.getByRole('heading', { name: 'Revisión y aprendizaje' }).waitFor();
-      await page.locator('.ai-preview-result p').filter({ hasText: invoicePreview }).waitFor();
-      assert.equal(await page.getByLabel('Respuesta para aprobar').inputValue(), invoicePreview);
+      await page.getByRole('heading', { name: 'Preguntas de clientes' }).waitFor();
+      const reviewCard = page.locator('.ai-query-item').filter({ hasText: '¿Emiten factura A?' });
+      await reviewCard.waitFor();
+      assert.equal(await reviewCard.getByLabel('Etiqueta').inputValue(), invoiceLabel.id);
+      assert.equal(await reviewCard.getByLabel('Respuesta').inputValue(), invoicePreview);
+      assert.equal(await reviewCard.getByRole('option', { name: 'Crear una etiqueta nueva' }).count(), 0);
+      assert.equal((await reviewCard.innerText()).includes('IA apagada'), false);
+      assert.equal((await reviewCard.innerText()).includes('Qué pasó realmente'), false);
       assert.equal(await page.getByText('pregunta-no-entendible', { exact: false }).count(), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true, `Desborde horizontal en ${width}px`);
       await page.locator('.main-view').evaluate(element => { element.scrollTop = 0; });
       await page.screenshot({ path: `qa-artifacts/ai-admin-initial-${width}.png`, fullPage: true });
       await page.locator('.ai-query-item').scrollIntoViewIfNeeded();
       await page.screenshot({ path: `qa-artifacts/ai-admin-review-${width}.png`, fullPage: true });
+      const correctedAnswer = 'Respuesta corregida por el operador.';
+      await reviewCard.getByLabel('Respuesta').fill(correctedAnswer);
+      await reviewCard.getByLabel('Etiqueta').selectOption(label.id);
+      assert.equal(await reviewCard.getByLabel('Respuesta').inputValue(), correctedAnswer,
+        'Cambiar la etiqueta no debe pisar una respuesta que el operador ya editó.');
+      await reviewCard.getByRole('button', { name: 'Guardar respuesta' }).click();
+      await page.getByText('Respuesta aprobada. La pregunta quedó asociada a la etiqueta elegida.').waitFor();
+      assert.deepEqual(resolvedPayload, { labelId: label.id, answer: correctedAnswer });
+      await page.getByPlaceholder('Buscar pregunta o contacto').fill('factura');
+      await page.getByRole('button', { name: 'Etiquetas', exact: true }).click();
+      await page.getByRole('heading', { name: 'Etiquetas', exact: true }).waitFor();
+      await page.waitForFunction(() => Array.from(document.querySelectorAll<HTMLInputElement>('.ai-label-card input.ai-label-input'))
+        .some(input => input.value === 'envios'));
+      assert.equal(await page.locator('.ai-label-card').count(), 2, 'Etiquetas no debe heredar el filtro oculto de Preguntas.');
+      assert.equal(await page.getByText('Nueva · creada por IA', { exact: true }).count(), 1);
+      assert.equal(await page.getByRole('heading', { name: 'Preguntas de clientes' }).count(), 0);
+      await page.screenshot({ path: `qa-artifacts/ai-admin-labels-${width}.png`, fullPage: true });
+      await page.getByRole('button', { name: 'Preguntas y respuestas', exact: true }).click();
       await page.getByLabel('Pregunta de prueba').fill('¿Hacen envíos?');
       await page.getByRole('button', { name: 'Probar respuesta' }).click();
       await page.locator('.ai-test-result p').filter({ hasText: label.answer }).waitFor();
       await page.getByRole('button', { name: 'Respondidas', exact: false }).click();
       await page.getByRole('heading', { name: 'Respuestas a clientes' }).waitFor();
       const historicalAnswer = 'Los medios de pago deben confirmarse con el asesor.';
-      assert.equal(await page.locator('.ai-preview-result p').filter({ hasText: historicalAnswer }).count(), 0,
-        'Una respuesta histórica nunca debe presentarse como una vista previa nueva.');
-      await page.locator('.ai-customer-result p').filter({ hasText: historicalAnswer }).waitFor();
+      await page.locator('.ai-readonly-answer p').filter({ hasText: historicalAnswer }).waitFor();
+      resolved = false;
       await page.getByRole('button', { name: 'Por revisar', exact: false }).click();
       await page.getByRole('button', { name: 'Marcar como ruido' }).click();
       await page.getByText('No hay consultas esperando revisión.').waitFor();

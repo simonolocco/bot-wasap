@@ -38,7 +38,7 @@ test('aprende una etiqueta canónica sin mostrar preguntas ya respondidas', asyn
   await login(page);
   await openNavigationOnMobile(page);
   await page.getByRole('button', { name: 'IA', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Revisión y aprendizaje' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Preguntas de clientes' })).toBeVisible();
   await page.getByPlaceholder('Buscar pregunta o contacto').fill(marker);
 
   const deliveryCard = page.getByRole('article').filter({
@@ -47,14 +47,16 @@ test('aprende una etiqueta canónica sin mostrar preguntas ya respondidas', asyn
   await expect(deliveryCard).toBeVisible();
   await expect(page.getByText(questions.address, { exact: true })).toHaveCount(0);
   await expect(page.getByText(questions.catalog, { exact: true })).toHaveCount(0);
-  await expect(deliveryCard.getByLabel('Etiqueta reutilizable')).toHaveValue(labelId);
+  await expect(deliveryCard.getByLabel('Etiqueta')).toHaveValue(labelId);
 
-  await expect(deliveryCard.getByLabel('Respuesta compartida')).toHaveValue(canonicalAnswer);
-  await deliveryCard.getByRole('button', { name: `Asignar a ${labelName}` }).click();
-  await expect(page.getByText('Pregunta resuelta. Sus variantes usarán la misma etiqueta y respuesta.')).toBeVisible();
+  await expect(deliveryCard.getByLabel('Respuesta')).toHaveValue(canonicalAnswer);
+  await deliveryCard.getByRole('button', { name: 'Guardar respuesta' }).click();
+  await expect(page.getByText('Respuesta aprobada. La pregunta quedó asociada a la etiqueta elegida.')).toBeVisible();
   await expect(page.getByText('No hay consultas esperando revisión.')).toBeVisible();
+  await page.getByRole('button', { name: 'Etiquetas', exact: true }).click();
   await expect(page.getByLabel('Respuesta compartida').last()).toHaveValue(canonicalAnswer);
 
+  await page.getByRole('button', { name: 'Preguntas y respuestas', exact: true }).click();
   for (const variant of ['hacen envios?', 'envios hacen?', 'llevan pedidos hasta mi casa?']) {
     await page.getByPlaceholder('Ej.: ¿Hacen envíos a Villa María?').fill(variant);
     await page.getByRole('button', { name: 'Probar respuesta' }).click();

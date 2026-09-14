@@ -24,14 +24,12 @@ const CANONICAL_ANSWERS: Record<string, string> = {
     `Mauricio puede ayudarte a coordinarlo: ${MAURICIO_URL}`,
   ].join(' '),
   minorista: [
-    'Atendemos tanto a clientes mayoristas como minoristas. La mayoría de nuestros productos se comercializa',
-    'desde media horma y, en piezas grandes, también puede haber porciones para consumo familiar.',
-    '',
-    `Consultá la presentación disponible con Mauricio: ${MAURICIO_URL}`,
+    'Atendemos tanto a clientes mayoristas como minoristas.',
+    'La compra mínima es de 1/2 horma en adelante.',
   ].join(' '),
   'compra-minima': [
-    'La compra mínima y la presentación dependen de cada producto; en muchos casos vendemos desde media horma.',
-    `Mauricio te confirma la cantidad exacta para lo que necesitás: ${MAURICIO_URL}`,
+    'La compra mínima es de 1/2 horma en adelante.',
+    'Podés indicarnos qué producto buscás para ayudarte con la presentación disponible.',
   ].join(' '),
   stock: [
     'El stock cambia durante el día y no puedo confirmarlo en tiempo real.',

@@ -39,6 +39,10 @@ function savedAnswer(template: string, source: string): Answer & { sendMenuAfter
   };
 }
 
+function shouldSendMenu(answer: Answer | null) {
+  return Boolean(answer?.text.trim());
+}
+
 /**
  * The one customer-response pipeline used by both the WhatsApp worker and the
  * admin tester. Learning metadata may observe its result, but can never gate it.
@@ -63,7 +67,7 @@ export async function resolveCustomerAiResponse(input: {
     return {
       source: 'saved-rule',
       answer,
-      sendMenuAfter: answer.sendMenuAfter,
+      sendMenuAfter: shouldSendMenu(answer),
       classification: {
         existingLabelId: savedRule.labelId ?? null,
         suggestedName: savedRule.label ?? null,
@@ -87,7 +91,7 @@ export async function resolveCustomerAiResponse(input: {
     return {
       source: 'approved-label',
       answer,
-      sendMenuAfter: answer.sendMenuAfter,
+      sendMenuAfter: shouldSendMenu(answer),
       classification,
       matchedRuleId: null,
       matchedLabel,
@@ -113,7 +117,7 @@ export async function resolveCustomerAiResponse(input: {
   return {
     source: 'generated',
     answer,
-    sendMenuAfter: false,
+    sendMenuAfter: shouldSendMenu(answer),
     classification,
     matchedRuleId: null,
     matchedLabel: null,

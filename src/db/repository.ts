@@ -2006,17 +2006,17 @@ export async function createAiAnswerLabel(input: { name: string; answer: string;
 }
 
 /** Creates a usable label without overwriting an existing operator answer. */
-export async function ensureAiAnswerLabelDraft(nameInput: string, actor: string | null = 'ai-auto', initialAnswer = '') {
+export async function ensureAiAnswerLabelDraft(nameInput: string, actor: string | null = 'ai-auto', initialAnswer = '', active = true) {
   const name = nameInput.trim();
   const normalizedName = normalizeAiLabelName(name);
   const answer = initialAnswer.trim();
   if (!name || !normalizedName || !answer) return null;
   const result = await query<{ id: string }>(`INSERT INTO ai_answer_labels (name, normalized_name, answer, active, created_by, updated_by)
-    VALUES ($1,$2,$4,true,$3,$3)
+    VALUES ($1,$2,$4,$5,$3,$3)
     ON CONFLICT (normalized_name) DO UPDATE SET
       answer=CASE WHEN btrim(ai_answer_labels.answer)='' AND btrim(EXCLUDED.answer)<>'' THEN EXCLUDED.answer ELSE ai_answer_labels.answer END,
       updated_at=now()
-    RETURNING id`, [name, normalizedName, actor, answer]);
+    RETURNING id`, [name, normalizedName, actor, answer, active]);
   return readAiAnswerLabel(result.rows[0].id);
 }
 

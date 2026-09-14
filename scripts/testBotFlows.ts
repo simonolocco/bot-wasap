@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import {
   FOLLOW_UP_MENU_HEADER_TEXT,
   FOLLOW_UP_MENU_PROMPT,
+  FAQ_GENERAL,
+  ORDER_INSTRUCTIONS,
   buildMenuListSections,
   normalizeText,
   resolveOptionIdFromText,
@@ -69,6 +71,8 @@ assert.equal(buildMenuListSections()[0].rows.length, 6);
 assert.equal(FOLLOW_UP_MENU_HEADER_TEXT, '¿En qué más podemos ayudarte?');
 assert.match(FOLLOW_UP_MENU_PROMPT, /otra consulta/);
 assert.match(FOLLOW_UP_MENU_PROMPT, /Asesor Humano/);
+assert.match(FAQ_GENERAL, /1\/2 horma en adelante/i);
+assert.match(ORDER_INSTRUCTIONS, /1\/2 horma en adelante/i);
 assert.equal(resolveIncomingMenuOption({ selectedOptionId: 'horarios' }), 'horarios');
 assert.equal(resolveIncomingMenuOption({ buttonReplyId: 'asesor' }), 'asesor');
 assert.equal(resolveIncomingMenuOption({ text: '👤 Asesor Humano' }), 'asesor');

@@ -1,5 +1,5 @@
 import { useSheetFocus } from './useSheetFocus';
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { api, cachedApi, formatDate, formatDateOnly, initials, invalidateApi } from './api';
 import AnalyticsView from './AnalyticsView';
 import type {
@@ -1340,10 +1340,7 @@ function ContactCreateModal({ onClose, onCreated }: { onClose: () => void; onCre
   );
 }
 
-function aiOutcomeLabel(value: string) {
-  return ({ answered: 'Respondida', clarify: 'Pidió una aclaración', handoff: 'Derivada a un asesor', unavailable: 'Respuesta de contingencia', silence: 'Sin respuesta necesaria', disabled: 'IA apagada', paused: 'Bot pausado', edited: 'Corregida' } as Record<string, string>)[value] ?? value;
-}
-
+type AiWorkspaceView = 'queries' | 'labels';
 type AiQueueView = 'attention' | 'answered' | 'noise' | 'errors' | 'tests';
 const aiQueueViews: Array<{ id: AiQueueView; label: string }> = [
   { id: 'attention', label: 'Por revisar' },
@@ -1353,25 +1350,12 @@ const aiQueueViews: Array<{ id: AiQueueView; label: string }> = [
   { id: 'tests', label: 'Pruebas' },
 ];
 const aiQueueCopy: Record<AiQueueView, { title: string; description: string; empty: string }> = {
-  attention: { title: 'Revisión y aprendizaje', description: 'Cada consulta muestra la respuesta que habría dado la IA, aunque el envío automático estuviera apagado. Si está bien, aprobala tal como está; si no, editala.', empty: 'No hay consultas esperando revisión.' },
+  attention: { title: 'Preguntas de clientes', description: 'Revisá la etiqueta elegida por la IA y corregí la respuesta sólo si hace falta.', empty: 'No hay consultas esperando revisión.' },
   answered: { title: 'Respuestas a clientes', description: 'Historial real de lo que contestó una regla aprobada, una etiqueta o la IA generativa.', empty: 'Todavía no hay respuestas registradas.' },
   errors: { title: 'Contingencias de IA', description: 'La consulta era entendible, pero el proveedor no estuvo disponible. El cliente recibió una respuesta de contingencia.', empty: 'No hay errores del proveedor.' },
   noise: { title: 'Ruido', description: 'Sólo mensajes sin una consulta recuperable, como signos sueltos, números aislados o texto aleatorio.', empty: 'No hay mensajes clasificados como ruido.' },
   tests: { title: 'Pruebas manuales', description: 'Resultados del probador. Nunca crean etiquetas ni cambian respuestas usadas con clientes.', empty: 'Todavía no hiciste pruebas manuales.' },
 };
-
-function aiClassificationLabel(value: string | null | undefined) {
-  return ({ exact: 'coincidencia exacta', fuzzy: 'variante conocida', semantic: 'tema detectado', frequency: 'tema recurrente', unintelligible: 'ruido confirmado', 'needs-review': 'requiere revisión', 'manual-review': 'revisión manual', none: 'sin tema sugerido', ambiguous: 'tema ambiguo' } as Record<string, string>)[value ?? ''] ?? 'clasificación histórica';
-}
-
-function aiPreviewSourceLabel(value: string | null | undefined) {
-  return ({ 'saved-rule': 'Respuesta aprobada', 'approved-label': 'Etiqueta aprobada', generated: 'IA generativa' } as Record<string, string>)[value ?? ''] ?? 'Vista previa';
-}
-
-const AI_MENU_MARKER = '[[MENU]]';
-function appendAiMenuMarker(value: string) {
-  return /\[\[\s*MENU\s*\]\]/i.test(value) ? value : `${value.trimEnd()}\n\n${AI_MENU_MARKER}`;
-}
 
 function AiLoadingState({ label }: { label: string }) { return <div className="loading-state"><span className="spinner" /> <span>{label}</span></div>; }
 function AiEmptyState({ title, description }: { title: string; description?: string }) { return <div className="empty-state"><strong>{title}</strong>{description && <p>{description}</p>}</div>; }
@@ -1382,19 +1366,19 @@ function AiView() {
   const [testAnswer, setTestAnswer] = useState('');
   const [testLabel, setTestLabel] = useState('');
   const [testSource, setTestSource] = useState('');
-  const [testMenu, setTestMenu] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [editedDrafts, setEditedDrafts] = useState<Record<string, boolean>>({});
   const [queryLabelIds, setQueryLabelIds] = useState<Record<string, string>>({});
-  const [queryNewLabels, setQueryNewLabels] = useState<Record<string, string>>({});
   const [labelDrafts, setLabelDrafts] = useState<Record<string, { name: string; answer: string }>>({});
   const [newLabel, setNewLabel] = useState({ name: '', answer: '' });
   const [showNewLabel, setShowNewLabel] = useState(false);
+  const [workspaceView, setWorkspaceView] = useState<AiWorkspaceView>('queries');
   const [filter, setFilter] = useState<AiQueueView>('attention');
   const [search, setSearch] = useState('');
   const [busy, setBusy] = useState(false);
-  const [previewingId, setPreviewingId] = useState('');
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  const loadRequestId = useRef(0);
 
   const legacyLabels = useMemo<AiAnswerLabel[]>(() => {
     if (!data) return [];
@@ -1425,9 +1409,12 @@ function AiView() {
     .filter(label => (label.normalizedName ?? label.name.toLocaleLowerCase().replace(/\s+/g, '-')) !== 'pregunta-no-entendible');
 
   async function load() {
+    const requestId = ++loadRequestId.current;
     setError('');
     try {
-      const result = await api<AiData>(`/api/ai?limit=50&view=${encodeURIComponent(filter)}${search ? `&q=${encodeURIComponent(search)}` : ''}`);
+      const visibleSearch = workspaceView === 'queries' ? search : '';
+      const result = await api<AiData>(`/api/ai?limit=50&view=${encodeURIComponent(filter)}${visibleSearch ? `&q=${encodeURIComponent(visibleSearch)}` : ''}`);
+      if (requestId !== loadRequestId.current) return;
       setData(result);
       const loadedLabels = result.labels?.length ? result.labels : result.rules.reduce<AiAnswerLabel[]>((all, rule) => {
         const name = rule.label?.trim() || `respuesta-${rule.id.slice(0, 8)}`;
@@ -1446,16 +1433,18 @@ function AiView() {
         const approvablePreview = item.previewOutcome === 'unavailable' ? '' : item.previewAnswer || '';
         return [item.id, label?.answer || approvablePreview];
       })));
+      setEditedDrafts({});
       setQueryLabelIds(Object.fromEntries(result.queries.items.map(item => {
         const id = item.suggestedLabelId ?? item.matchedAnswerLabelId ?? '';
         return [item.id, reusableLabels.some(label => label.id === id) ? id : ''];
       })));
-      setQueryNewLabels(Object.fromEntries(result.queries.items.map(item => [item.id,
-        item.suggestedLabelName === 'pregunta-no-entendible' ? '' : item.suggestedLabelName ?? ''])));
       setLabelDrafts(Object.fromEntries(reusableLabels.map(label => [label.id, { name: label.name, answer: label.answer }])));
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'No se pudo cargar la sección IA.'); }
+    } catch (reason) {
+      if (requestId !== loadRequestId.current) return;
+      setError(reason instanceof Error ? reason.message : 'No se pudo cargar la sección IA.');
+    }
   }
-  useEffect(() => { void load(); }, [filter, search]);
+  useEffect(() => { void load(); }, [filter, search, workspaceView]);
 
   async function toggle() {
     if (!data) return;
@@ -1467,17 +1456,16 @@ function AiView() {
   async function runTest(event: FormEvent) {
     event.preventDefault(); if (!question.trim()) return;
     setBusy(true); setTestAnswer(''); setTestSource(''); setNotice('');
-    try { const result = await api<{ answer: { text: string; label?: string | null; sendMenuAfter?: boolean; responseSource?: string } }>('/api/ai/test', { method: 'POST', body: JSON.stringify({ question }) }); setTestAnswer(result.answer.text); setTestLabel(result.answer.label ?? ''); setTestSource(result.answer.responseSource ?? ''); setTestMenu(Boolean(result.answer.sendMenuAfter)); await load(); }
+    try { const result = await api<{ answer: { text: string; label?: string | null; responseSource?: string } }>('/api/ai/test', { method: 'POST', body: JSON.stringify({ question }) }); setTestAnswer(result.answer.text); setTestLabel(result.answer.label ?? ''); setTestSource(result.answer.responseSource ?? ''); await load(); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'No se pudo probar la respuesta.'); }
     finally { setBusy(false); }
   }
   async function saveQuery(id: string) {
     const labelId = queryLabelIds[id] || null;
-    const label = labels.find(item => item.id === labelId);
-    const labelName = labelId ? null : (queryNewLabels[id] ?? '').trim() || null;
-    const answer = label?.answer.trim() ? undefined : (drafts[id] ?? '').trim() || undefined;
+    const answer = (drafts[id] ?? '').trim() || null;
+    if (!labelId || !answer) return;
     setBusy(true); setNotice('');
-    try { await api(`/api/ai/queries/${id}/resolve`, { method: 'PATCH', body: JSON.stringify({ labelId, labelName, answer }) }); setNotice('Pregunta resuelta. Sus variantes usarán la misma etiqueta y respuesta.'); await load(); }
+    try { await api(`/api/ai/queries/${id}/resolve`, { method: 'PATCH', body: JSON.stringify({ labelId, answer }) }); setNotice('Respuesta aprobada. La pregunta quedó asociada a la etiqueta elegida.'); await load(); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'No se pudo guardar la corrección.'); }
     finally { setBusy(false); }
   }
@@ -1493,19 +1481,14 @@ function AiView() {
     catch (reason) { setError(reason instanceof Error ? reason.message : 'No se pudo volver a abrir la consulta.'); }
     finally { setBusy(false); }
   }
-  async function regeneratePreview(id: string) {
-    setPreviewingId(id); setNotice(''); setError('');
-    try {
-      await api(`/api/ai/queries/${id}/preview`, { method: 'POST' });
-      setNotice('Vista previa actualizada. No se envió ningún mensaje al cliente.');
-      await load();
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'No se pudo generar la vista previa.'); }
-    finally { setPreviewingId(''); }
-  }
   function assignQueryLabel(id: string, labelId: string) {
     setQueryLabelIds(current => ({ ...current, [id]: labelId }));
     const label = labels.find(item => item.id === labelId);
-    if (label) setDrafts(current => ({ ...current, [id]: label.answer }));
+    if (label && !editedDrafts[id]) setDrafts(current => ({ ...current, [id]: label.answer }));
+  }
+  function editQueryDraft(id: string, answer: string) {
+    setDrafts(current => ({ ...current, [id]: answer }));
+    setEditedDrafts(current => ({ ...current, [id]: true }));
   }
   async function saveRule(rule: AiAnswerRule) {
     const draft = { question: rule.question, answer: rule.answer, label: rule.label ?? '' };
@@ -1574,50 +1557,43 @@ function AiView() {
       </section>
       <section className="ai-response-contract" aria-label="Cómo responde la IA"><strong>Cómo se decide cada respuesta</strong><ol><li>Busca una respuesta aprobada.</li><li>Si no existe, responde o pide el dato que falta.</li><li>Separa como ruido sólo mensajes sin significado recuperable.</li></ol></section>
       {notice && <div className="ai-notice" role="status">{notice}</div>}{error && <div className="form-error-banner" role="alert">{error}</div>}
+      <nav className="ai-workspace-tabs" aria-label="Secciones de IA">
+        <button type="button" className={workspaceView === 'queries' ? 'active' : ''} aria-current={workspaceView === 'queries' ? 'page' : undefined} onClick={() => setWorkspaceView('queries')}>Preguntas y respuestas</button>
+        <button type="button" className={workspaceView === 'labels' ? 'active' : ''} aria-current={workspaceView === 'labels' ? 'page' : undefined} onClick={() => { setSearch(''); setWorkspaceView('labels'); }}>Etiquetas</button>
+      </nav>
+      {workspaceView === 'queries' && <>
       <section className="ai-test-card">
         <div><h2>Probar una pregunta</h2><p className="ai-section-description">Usa el mismo recorrido que WhatsApp, pero no crea reglas ni altera el conocimiento aprobado.</p></div>
         <form onSubmit={runTest} className="ai-test-form"><textarea aria-label="Pregunta de prueba" value={question} onChange={event => setQuestion(event.target.value)} placeholder="Ej.: ¿Hacen envíos a Villa María?" rows={3} /><button className="button primary" disabled={busy || !question.trim()}>{busy ? 'Consultando…' : 'Probar respuesta'}</button></form>
-        {testAnswer && <div className="ai-test-result"><div className="ai-result-heading"><strong>Respuesta que recibiría el cliente</strong>{testSourceLabel && <span className="ai-label-badge">{testSourceLabel}{testLabel ? ` · ${testLabel}` : ''}</span>}</div><p>{testAnswer}</p>{testMenu && <small className="ai-editor-hint">Después de este texto también se enviaría el menú automático.</small>}</div>}
+        {testAnswer && <div className="ai-test-result"><div className="ai-result-heading"><strong>Respuesta que recibiría el cliente</strong>{testSourceLabel && <span className="ai-label-badge">{testSourceLabel}{testLabel ? ` · ${testLabel}` : ''}</span>}</div><p>{testAnswer}</p><small className="ai-editor-hint">Después se envía el menú automático.</small></div>}
       </section>
       <nav className="ai-queue-tabs" aria-label="Vistas de actividad de IA">{aiQueueViews.map(view => <button type="button" key={view.id} className={filter === view.id ? 'active' : ''} aria-current={filter === view.id ? 'page' : undefined} onClick={() => setFilter(view.id)}><span>{view.label}</span><strong>{data.totals[view.id]}</strong></button>)}</nav>
       <section className="ai-section-card"><div className="ai-section-heading"><div><h2>{queueCopy.title}</h2><p className="ai-section-description">{queueCopy.description}</p></div><div className="ai-filters"><label><span className="sr-only">Buscar en esta vista</span><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Buscar pregunta o contacto" /></label></div></div>
         {!data.queries.items.length ? <AiEmptyState title={queueCopy.empty} description={search ? 'Probá con otra búsqueda o limpiá el texto.' : undefined} /> : <div className="ai-query-list">{data.queries.items.map(item => {
           const selectedLabelId = queryLabelIds[item.id] ?? '';
           const selectedLabel = labels.find(label => label.id === selectedLabelId);
-          const newLabelName = queryNewLabels[item.id] ?? '';
-          const canonicalAnswer = selectedLabel?.answer.trim() ?? '';
-          const answerReady = Boolean(canonicalAnswer || (drafts[item.id] ?? '').trim());
-          const labelReady = Boolean(selectedLabelId || newLabelName.trim());
-          const confidence = typeof item.classificationConfidence === 'number' && item.classificationConfidence > 0 ? `${Math.round(item.classificationConfidence * 100)}%` : null;
-          const suggestion = item.suggestedLabelName && item.suggestedLabelName !== 'pregunta-no-entendible' ? item.suggestedLabelName : null;
-          const customerResult = item.answer.trim() || (item.outcome === 'disabled' ? 'La IA estaba apagada; la consulta siguió por el flujo normal del bot.' : item.outcome === 'paused' ? 'La conversación ya estaba siendo atendida por una persona.' : item.outcome === 'silence' ? 'El mensaje no requería una respuesta.' : 'No hay una respuesta registrada.');
-          const previewAnswer = (item.previewAnswer ?? '').trim();
-          const previewOutcome = item.previewOutcome;
-          const previewPending = item.source === 'production' && !item.previewGeneratedAt;
-          const previewText = previewAnswer || (previewOutcome === 'silence' ? 'La IA habría decidido no enviar texto porque el mensaje no requería respuesta.' : previewPending ? 'La respuesta simulada todavía no está lista. Podés generarla ahora.' : 'No hay una vista previa registrada para esta consulta.');
-          const actualDiffers = Boolean(item.answer.trim() && item.answer.trim() !== previewAnswer);
+          const answerReady = Boolean((drafts[item.id] ?? '').trim());
+          const assignedLabelName = selectedLabel?.name || item.label || item.suggestedLabelName;
+          const readonlyAnswer = (item.previewAnswer ?? '').trim() || item.answer.trim() || 'No hay una respuesta registrada.';
           return <article className={`ai-query-item ${filter === 'attention' ? 'is-editable' : 'is-readonly'}`} key={item.id}>
-            <header className="ai-query-header"><div className="ai-query-meta"><span className={`ai-status ${item.outcome}`}>{aiOutcomeLabel(item.outcome)}</span>{item.reviewStatus === 'pending' && <span className="ai-review-badge">Revisión pendiente</span>}<span>{item.contactName || 'Cliente'}{item.phone ? ` · ${item.phone}` : item.source === 'manual' ? ' · Prueba manual' : ''}</span></div><time>{formatDate(item.createdAt)}</time></header>
-            <h3>{item.question}</h3>
-            {(suggestion || confidence) && <div className="ai-topic-row">{suggestion && <span className="ai-label-badge">Tema sugerido: {suggestion}</span>}{confidence && <small>Confianza {confidence}</small>}</div>}
-            <div className={`ai-preview-result ${previewOutcome === 'unavailable' ? 'is-unavailable' : ''}`}><div className="ai-preview-heading"><div><span>Respuesta que habría dado la IA</span><small>{aiPreviewSourceLabel(item.previewSource)}</small></div>{item.source === 'production' && <button type="button" className="button ghost ai-preview-refresh" disabled={Boolean(previewingId)} onClick={() => void regeneratePreview(item.id)}>{previewingId === item.id ? 'Generando…' : previewPending ? 'Generar ahora' : 'Volver a generar'}</button>}</div><p>{previewText}</p><small className="ai-preview-note">Vista previa privada: generarla o editarla acá nunca envía un mensaje al cliente.</small></div>
-            {(item.outcome === 'disabled' || item.outcome === 'paused' || item.outcome === 'silence' || actualDiffers) && <div className="ai-customer-result"><span>Qué pasó realmente</span><p>{customerResult}</p></div>}
-            {filter === 'attention' && <div className="ai-learning-editor">
-              <div className="ai-editor-heading"><strong>Aprobar o corregir esta respuesta</strong><small>Si la vista previa está bien, dejala como está. Agrupá sólo preguntas que deban recibir exactamente la misma respuesta.</small></div>
-              <label className="ai-field-label">Etiqueta reutilizable<select className="ai-label-input" value={selectedLabelId} onChange={event => assignQueryLabel(item.id, event.target.value)}><option value="">Crear una etiqueta nueva</option>{labels.map(label => <option key={label.id} value={label.id}>{label.name}</option>)}</select></label>
-              {!selectedLabelId && <label className="ai-field-label">Nombre de la nueva etiqueta<input className="ai-label-input" value={newLabelName} onChange={event => setQueryNewLabels(current => ({ ...current, [item.id]: event.target.value }))} placeholder="Ej.: facturacion" /></label>}
-              <label className="ai-field-label">Respuesta para aprobar<textarea value={canonicalAnswer || drafts[item.id] || ''} readOnly={Boolean(canonicalAnswer)} onChange={event => setDrafts(current => ({ ...current, [item.id]: event.target.value }))} placeholder="Generá la vista previa para completar esta respuesta" rows={4} /></label>
-              {canonicalAnswer && <small className="ai-editor-hint">Esta etiqueta ya tiene una respuesta aprobada; al asignarla no se sobrescribirá.</small>}
-              <div className="ai-query-actions"><button type="button" className="button ghost" disabled={busy} onClick={() => void markNoise(item.id)}>Marcar como ruido</button><div>{!canonicalAnswer && <button type="button" className="button ghost" disabled={busy} onClick={() => setDrafts(current => ({ ...current, [item.id]: appendAiMenuMarker(current[item.id] ?? '') }))}>Agregar menú después</button>}<button type="button" className="button secondary" disabled={busy || !labelReady || !answerReady} onClick={() => void saveQuery(item.id)}>{selectedLabel ? `Aprobar con ${selectedLabel.name}` : 'Crear etiqueta y aprobar'}</button></div></div>
-            </div>}
-            <footer className="ai-query-footer"><small>{aiClassificationLabel(item.classificationMethod)}{(item.previewModel || item.model) ? ` · ${item.previewModel || item.model}` : ''}{(item.previewErrorCode || item.errorCode) ? ` · Código: ${item.previewErrorCode || item.errorCode}` : ''}</small>{filter === 'noise' && <button type="button" className="button ghost" disabled={busy} onClick={() => void reopenQuery(item.id)}>Volver a revisión</button>}</footer>
+            <div className="ai-question-copy"><span>Pregunta del cliente</span><h3>{item.question}</h3></div>
+            {filter === 'attention' ? <>
+              <label className="ai-field-label">Etiqueta<select className="ai-label-input" value={selectedLabelId} onChange={event => assignQueryLabel(item.id, event.target.value)}><option value="">Elegí una etiqueta</option>{labels.map(label => <option key={label.id} value={label.id}>{label.name}</option>)}</select></label>
+              <label className="ai-field-label">Respuesta<textarea value={drafts[item.id] || ''} onChange={event => editQueryDraft(item.id, event.target.value)} placeholder="La respuesta de la IA todavía no está lista" rows={3} /></label>
+              <div className="ai-query-actions"><button type="button" className="button ghost" disabled={busy} onClick={() => void markNoise(item.id)}>Marcar como ruido</button><button type="button" className="button secondary" disabled={busy || !selectedLabelId || !answerReady} onClick={() => void saveQuery(item.id)}>Guardar respuesta</button></div>
+            </> : <>
+              {assignedLabelName && <div className="ai-topic-row"><span className="ai-label-badge">{assignedLabelName}</span></div>}
+              <div className="ai-readonly-answer"><span>Respuesta</span><p>{readonlyAnswer}</p></div>
+              {filter === 'noise' && <footer className="ai-query-footer"><span /><button type="button" className="button ghost" disabled={busy} onClick={() => void reopenQuery(item.id)}>Volver a revisión</button></footer>}
+            </>}
           </article>;
         })}</div>}
       </section>
-      <section className="ai-section-card"><div className="ai-section-heading"><div><h2>Etiquetas y respuestas aprobadas</h2><p className="ai-section-description">Una etiqueta reúne variantes de la misma pregunta y les da una única respuesta controlada por tu equipo.</p></div><button type="button" className="button primary" onClick={() => setShowNewLabel(value => !value)}>{showNewLabel ? 'Cerrar formulario' : 'Nueva etiqueta'}</button></div>
-        {showNewLabel && <form className="ai-new-label-form" onSubmit={createLabel}><div className="ai-new-label-intro"><strong>Crear etiqueta</strong><span>Ejemplo: <b>envios</b>, <b>minorista</b> o <b>producto</b>.</span></div><label className="ai-field-label">Nombre de la etiqueta<input className="ai-label-input" value={newLabel.name} onChange={event => setNewLabel(current => ({ ...current, name: event.target.value }))} placeholder="envios" autoFocus /></label><label className="ai-field-label">Respuesta que usará la IA<textarea value={newLabel.answer} onChange={event => setNewLabel(current => ({ ...current, answer: event.target.value }))} placeholder={`Estamos en Córdoba Capital…\n\n${AI_MENU_MARKER}`} rows={5} /></label><small className="ai-editor-hint">Podés agregar <code>{AI_MENU_MARKER}</code> al final si querés que después envíe el menú.</small><div className="ai-query-actions"><span className="ai-rule-date">Después la asignás a las consultas desde “Asignar etiqueta”.</span><button className="button secondary" type="submit" disabled={busy || !newLabel.name.trim() || !newLabel.answer.trim()}>Crear etiqueta</button></div></form>}
-        {!labels.length ? <AiEmptyState title="Todavía no hay etiquetas" description="Creá la primera etiqueta para que varias preguntas compartan una única respuesta." /> : <div className="ai-rules-list">{labels.map(label => { const draft = labelDrafts[label.id] ?? { name: label.name, answer: label.answer }; return <article className="ai-rule-item ai-label-card" key={label.id}><div className="ai-label-card-heading"><div><span className="ai-label-badge">Etiqueta reutilizable</span><strong>{label.aliasCount ?? label.aliases.length} preguntas asociadas</strong></div><span className="ai-rule-date">Actualizada {formatDate(label.updatedAt)}</span></div><label className="ai-field-label">Nombre<input className="ai-label-input" value={draft.name} onChange={event => setLabelDrafts(current => ({ ...current, [label.id]: { ...draft, name: event.target.value } }))} /></label>{label.aliases.length > 0 && <div className="ai-aliases"><small>Preguntas asociadas:</small>{label.aliases.map((alias, index) => <span key={`${label.id}-${index}`}>{alias}</span>)}</div>}<label className="ai-field-label">Respuesta compartida<textarea value={draft.answer} onChange={event => setLabelDrafts(current => ({ ...current, [label.id]: { ...draft, answer: event.target.value } }))} rows={4} /></label><small className="ai-editor-hint">Todas las preguntas con esta etiqueta reciben esta respuesta. Usá <code>{AI_MENU_MARKER}</code> al final para enviar también el menú automático.</small><div className="ai-query-actions"><button className="button ghost" disabled={busy} onClick={() => setLabelDrafts(current => ({ ...current, [label.id]: { ...draft, answer: appendAiMenuMarker(draft.answer) } }))}>+ Menú después</button><div><button className="button secondary" disabled={busy || !draft.name.trim() || !draft.answer.trim()} onClick={() => void saveLabel(label)}>Guardar etiqueta</button><button className="button ghost" disabled={busy} onClick={() => void deleteLabel(label)}>Eliminar</button></div></div></article>; })}</div>}
-      </section>
+      </>}
+      {workspaceView === 'labels' && <section className="ai-section-card"><div className="ai-section-heading"><div><h2>Etiquetas</h2><p className="ai-section-description">La IA crea borradores para los temas nuevos. Acá podés corregir el nombre y la respuesta que compartirán todas sus preguntas.</p></div><button type="button" className="button primary" onClick={() => setShowNewLabel(value => !value)}>{showNewLabel ? 'Cerrar formulario' : 'Nueva etiqueta'}</button></div>
+        {showNewLabel && <form className="ai-new-label-form" onSubmit={createLabel}><div className="ai-new-label-intro"><strong>Crear etiqueta</strong><span>Usala sólo cuando el tema todavía no aparezca en la lista.</span></div><label className="ai-field-label">Nombre de la etiqueta<input className="ai-label-input" value={newLabel.name} onChange={event => setNewLabel(current => ({ ...current, name: event.target.value }))} placeholder="Ej.: facturacion" autoFocus /></label><label className="ai-field-label">Respuesta compartida<textarea value={newLabel.answer} onChange={event => setNewLabel(current => ({ ...current, answer: event.target.value }))} placeholder="Escribí la respuesta que recibirán las preguntas con esta etiqueta" rows={5} /></label><small className="ai-editor-hint">El menú se envía automáticamente después de cada respuesta.</small><div className="ai-query-actions"><span className="ai-rule-date">Después vas a poder elegirla desde Preguntas y respuestas.</span><button className="button secondary" type="submit" disabled={busy || !newLabel.name.trim() || !newLabel.answer.trim()}>Crear etiqueta</button></div></form>}
+        {!labels.length ? <AiEmptyState title="Todavía no hay etiquetas" description="Cuando la IA detecte un tema nuevo, su borrador aparecerá acá." /> : <div className="ai-rules-list">{labels.map(label => { const draft = labelDrafts[label.id] ?? { name: label.name, answer: label.answer }; const createdByAi = label.createdBy?.startsWith('ai-auto'); return <article className="ai-rule-item ai-label-card" key={label.id}><div className="ai-label-card-heading"><div><span className="ai-label-badge">{createdByAi && !label.active ? 'Nueva · creada por IA' : 'Etiqueta'}</span><strong>{label.aliasCount ?? label.aliases.length} preguntas asociadas</strong></div><span className="ai-rule-date">Actualizada {formatDate(label.updatedAt)}</span></div><label className="ai-field-label">Nombre<input className="ai-label-input" value={draft.name} onChange={event => setLabelDrafts(current => ({ ...current, [label.id]: { ...draft, name: event.target.value } }))} /></label>{label.aliases.length > 0 && <div className="ai-aliases"><small>Preguntas asociadas:</small>{label.aliases.map((alias, index) => <span key={`${label.id}-${index}`}>{alias}</span>)}</div>}<label className="ai-field-label">Respuesta compartida<textarea value={draft.answer} onChange={event => setLabelDrafts(current => ({ ...current, [label.id]: { ...draft, answer: event.target.value } }))} rows={4} /></label><small className="ai-editor-hint">Todas las preguntas con esta etiqueta reciben esta respuesta. El menú se agrega automáticamente después.</small><div className="ai-query-actions"><span /><div><button className="button secondary" disabled={busy || !draft.name.trim() || !draft.answer.trim()} onClick={() => void saveLabel(label)}>Guardar etiqueta</button><button className="button ghost" disabled={busy} onClick={() => void deleteLabel(label)}>Eliminar</button></div></div></article>; })}</div>}
+      </section>}
     </div>
   );
 }

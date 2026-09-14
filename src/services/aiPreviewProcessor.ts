@@ -5,6 +5,7 @@ import { deriveSuggestedAiTopic, learningConfidence } from '../ai/runtimePolicy'
 import {
   claimAiQueryPreviewGeneration,
   completeJob,
+  ensureAiAnswerLabelDraft,
   findAiAnswerRule,
   listAiQueryPreviewCandidates,
   loadActiveAiLabelExamples,
@@ -14,6 +15,7 @@ import {
   type AiPreviewJob,
   type AiQueryPreviewCursor,
 } from '../db/repository';
+import { canonicalAutoLabelAnswer } from '../ai/labelPolicy';
 
 type PreviewDependencies = {
   catalog: Catalog;
@@ -57,8 +59,16 @@ export async function generateAndStoreAiQueryPreview(
   const answer = resolution.answer;
   const classification = resolution.classification;
   const suggestedName = deriveSuggestedAiTopic(classification, answer);
-  const suggestedLabelId = resolution.matchedLabel?.id ?? savedRule?.labelId ?? null;
-  const suggestedLabelName = suggestedName ?? resolution.matchedLabel?.name ?? savedRule?.label ?? null;
+  const confidence = learningConfidence(classification, answer);
+  let suggestedLabelId = resolution.matchedLabel?.id ?? savedRule?.labelId ?? null;
+  let suggestedLabelName = suggestedName ?? resolution.matchedLabel?.name ?? savedRule?.label ?? null;
+  if (!suggestedLabelId && suggestedLabelName && confidence >= 0.8
+    && answer.text.trim() && !['silence', 'unavailable'].includes(answer.outcome)) {
+    const draftAnswer = canonicalAutoLabelAnswer(suggestedLabelName) || answer.text;
+    const draftLabel = await ensureAiAnswerLabelDraft(suggestedLabelName, 'ai-auto-preview', draftAnswer, false);
+    suggestedLabelId = draftLabel?.id ?? null;
+    suggestedLabelName = draftLabel?.name ?? suggestedLabelName;
+  }
   const item = await updateAiQueryPreview(queryId, {
     generationId: context.generationId,
     answer: answer.text,
@@ -71,7 +81,7 @@ export async function generateAndStoreAiQueryPreview(
     suggestedLabelId,
     suggestedLabelName,
     classificationMethod: classification.method,
-    classificationConfidence: learningConfidence(classification, answer),
+    classificationConfidence: confidence,
     updateSuggestion: answer.outcome !== 'unavailable',
   });
   if (!item) return { status: 'superseded' as const, item: null };
