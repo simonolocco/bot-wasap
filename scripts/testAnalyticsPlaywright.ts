@@ -6,8 +6,10 @@ import { chromium } from '@playwright/test';
 
 const root = process.cwd();
 const adminDir = path.join(root, 'public', 'admin');
+const artifactsDir = path.join(root, 'qa-artifacts');
 
 async function run() {
+  fs.mkdirSync(artifactsDir, { recursive: true });
   let lastRequestedPeriod = '';
   let lastRequestedFrom = '';
   let lastRequestedTo = '';
@@ -290,6 +292,8 @@ async function run() {
     const trendDates = await page.locator('.trend-date').allInnerTexts();
     assert.ok(trendDates.length >= 3, 'Fechas de tendencia presentes');
     assert.ok(trendDates.every(date => !/a\. m\.|p\. m\./i.test(date)), 'La tendencia debe mostrar fechas, no la hora 9:00 p. m.');
+    assert.match(trendDates[0], /21 ago 2026/i, 'La tabla debe comenzar por el día más reciente.');
+    assert.match(trendDates[trendDates.length - 1] ?? '', /19 ago 2026/i, 'La tabla debe terminar por el día más antiguo.');
     assert.ok(await page.getByText('Cómo leer esta tabla', { exact: true }).count() > 0, 'La tendencia debe explicar sus métricas');
     assert.equal(await page.locator('.trend-row').first().locator('td').count(), 6, 'La tendencia debe mostrar las métricas diarias explicadas');
 
@@ -304,6 +308,13 @@ async function run() {
     const barBoxHeight = await newContactsBarBox.evaluate((el) => el.getBoundingClientRect().height);
     assert.ok(barBoxHeight > 0, 'El gráfico de barras de contactos nuevos debe tener altura computable');
     assert.equal(await newContactsBarBox.locator('.recharts-bar-rectangle').count(), 6, 'Deben renderizarse las barras de contactos nuevos y recurrentes');
+    const dailyAverage = newContactsSection.locator('.contact-activity-average');
+    await dailyAverage.waitFor();
+    assert.match(await dailyAverage.innerText(), /Promedio diario/i, 'El gráfico debe mostrar su promedio diario.');
+    assert.match(await dailyAverage.innerText(), /11,7 nuevos/i, 'El promedio de contactos nuevos debe calcularse con los días visibles.');
+    assert.match(await dailyAverage.innerText(), /9,7 recurrentes/i, 'El promedio de recurrentes debe calcularse con los días visibles.');
+    await newContactsSection.screenshot({ path: path.join(artifactsDir, 'analytics-contact-activity-1440.png') });
+    await page.locator('.table-responsive-trend').screenshot({ path: path.join(artifactsDir, 'analytics-daily-trend-1440.png') });
 
     // 4.2c Verify Activity Chart date filter (From / To)
     const chartFromInput = page.locator('.chart-date-input').first();
@@ -481,14 +492,21 @@ async function run() {
     // Single column means only 1 width track (no space separated values)
     assert.ok(!kpiGridCols.includes(' '), `En mobile las tarjetas KPI deben estar en 1 sola columna (encontrado: ${kpiGridCols})`);
 
-    // Check tables (including daily trend table) are horizontally scrollable without breaking page viewport
+    // Daily trend is rendered as stacked cards on mobile and must remain inside the viewport.
     const mobileTrendRows = page.locator('.trend-row');
     assert.ok((await mobileTrendRows.count()) >= 3, 'Tabla de tendencia visible en mobile');
     const trendTableScroll = await page.locator('.table-responsive-trend').evaluate((el) => ({
       clientWidth: el.clientWidth,
       scrollWidth: el.scrollWidth,
     }));
-    assert.ok(trendTableScroll.scrollWidth > trendTableScroll.clientWidth, 'La tabla mobile debe quedar contenida en su propio scroll');
+    assert.ok(
+      trendTableScroll.scrollWidth <= trendTableScroll.clientWidth + 1,
+      `La tendencia mobile no debe desbordar (${trendTableScroll.scrollWidth} <= ${trendTableScroll.clientWidth})`,
+    );
+    const mobileTrendDisplay = await mobileTrendRows.first().evaluate((el) => window.getComputedStyle(el).display);
+    assert.equal(mobileTrendDisplay, 'grid', 'La tendencia debe presentarse como tarjetas en mobile');
+    await page.locator('section[aria-label="Contactos nuevos y recurrentes por día"]').screenshot({ path: path.join(artifactsDir, 'analytics-contact-activity-390.png') });
+    await page.locator('.table-responsive-trend').screenshot({ path: path.join(artifactsDir, 'analytics-daily-trend-390.png') });
     const mobileChartHeight = await page.locator('.recharts-responsive-box').first().evaluate((el) => el.getBoundingClientRect().height);
     assert.ok(mobileChartHeight >= 240, 'El gráfico mobile debe conservar una altura útil (encontrado: ' + mobileChartHeight + ')');
     const mobileFunnelDirection = await page.locator('.funnel-pipeline').first().evaluate((el) => window.getComputedStyle(el).flexDirection);

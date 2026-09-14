@@ -363,6 +363,13 @@ export default function AnalyticsView({
     ...point,
     returningContacts: returningByDay.get(point.date) ?? 0,
   }));
+  const contactActivityTotals = contactActivityByDay.reduce((totals, point) => ({
+    newContacts: totals.newContacts + point.newContacts,
+    returningContacts: totals.returningContacts + point.returningContacts,
+  }), { newContacts: 0, returningContacts: 0 });
+  const contactActivityDayCount = contactActivityByDay.length;
+  const averageNewContacts = contactActivityDayCount > 0 ? contactActivityTotals.newContacts / contactActivityDayCount : 0;
+  const averageReturningContacts = contactActivityDayCount > 0 ? contactActivityTotals.returningContacts / contactActivityDayCount : 0;
 
   // Activity chart filtered trend (chart date filter is a client-side slice of trend data)
   const chartFromValid = /^\d{4}-\d{2}-\d{2}$/.test(chartFrom);
@@ -374,6 +381,7 @@ export default function AnalyticsView({
     return true;
   });
   const displayTrend = (!chartFromValid && !chartToValid) ? data.trend : (chartRangeInvalid ? data.trend : filteredTrend);
+  const descendingDisplayTrend = [...displayTrend].sort((left, right) => right.date.localeCompare(left.date));
 
   return (
     <div className="analytics-layout animate-fade-in">
@@ -1007,7 +1015,7 @@ export default function AnalyticsView({
                 </tr>
               </thead>
               <tbody>
-                {displayTrend.map(t => (
+                {descendingDisplayTrend.map(t => (
                   <tr key={t.date} className="trend-row interactive-row">
                     <td data-label="Fecha">
                       <div className="cell-primary">
@@ -1059,6 +1067,12 @@ export default function AnalyticsView({
             <div className="contact-activity-summary" aria-label="Resumen de contactos">
               <span className="contact-activity-counter new"><i aria-hidden="true" />{(data.summary.totalNewContacts ?? 0).toLocaleString('es-AR')} nuevos</span>
               <span className="contact-activity-counter returning"><i aria-hidden="true" />{(data.summary.totalReturningContacts ?? 0).toLocaleString('es-AR')} recurrentes</span>
+              <span className="contact-activity-average" aria-label={`Promedio diario: ${averageNewContacts.toLocaleString('es-AR', { maximumFractionDigits: 1 })} contactos nuevos y ${averageReturningContacts.toLocaleString('es-AR', { maximumFractionDigits: 1 })} recurrentes`}>
+                <small>Promedio diario</small>
+                <strong><i className="new" aria-hidden="true" />{averageNewContacts.toLocaleString('es-AR', { maximumFractionDigits: 1 })} nuevos</strong>
+                <span aria-hidden="true">·</span>
+                <strong><i className="returning" aria-hidden="true" />{averageReturningContacts.toLocaleString('es-AR', { maximumFractionDigits: 1 })} recurrentes</strong>
+              </span>
             </div>
           </div>
         </div>
