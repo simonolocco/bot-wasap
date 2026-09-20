@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: comprobantes-whatsapp
+    env: node
+    buildCommand: npm install
+    startCommand: npm start
+    disk:
+      name: sqlite-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: TARGET_GROUP_NAME
+        value: COMPROBANTES
+      - key: RECIPIENT_ALIAS_MERCADO_FRESCOS
+        value: Mercado de Frescos Sa
+      - key: GROUP_MERCADO_FRESCOS_JID
+        value: 120363044365234281@g.us
+      - key: GROUP_MERCADO_FRESCOS_SUBJECT
+        value: Transferencias M FRESCOS

@@ -1,0 +1,30 @@
+{
+  "name": "baileys-group-media-downloader",
+  "version": "1.0.0",
+  "description": "WhatsApp bot using Baileys to download media from a specific group chat",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "local": "set DISABLE_WHATSAPP=true&& node server.js",
+    "test:ocr": "node tests/ocrService.test.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.110.8",
+    "@whiskeysockets/baileys": "6.7.22",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "exceljs": "^4.4.0",
+    "express": "^5.2.1",
+    "mime-types": "^3.0.2",
+    "multer": "^2.2.0",
+    "pg": "^8.22.0",
+    "pino": "^10.3.1",
+    "qrcode": "^1.5.4",
+    "qrcode-terminal": "^0.12.0",
+    "sharp": "^0.32.6",
+    "socket.io": "^4.8.3",
+    "sql.js": "^1.14.1",
+    "xlsx": "^0.18.5"
+  }
+}

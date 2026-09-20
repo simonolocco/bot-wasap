@@ -1,0 +1,13 @@
+.git
+.gitignore
+.env
+.env.*
+node_modules
+/auth_info
+/data
+/media
+/scratch
+*.xls
+*.xlsx
+*.log
+preview-check*.png

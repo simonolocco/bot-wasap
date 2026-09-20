@@ -1,0 +1,10 @@
+# Desarrollo local: no inicia Caddy ni backups. Abre la app en http://localhost:4002.
+services:
+  app:
+    ports:
+      - "4002:4002"
+    environment:
+      NODE_ENV: development
+  worker:
+    environment:
+      NODE_ENV: development

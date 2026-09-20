@@ -1,0 +1,16 @@
+{
+  "Rules": [
+    {
+      "ID": "delete-daily-after-7-days",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "abastobot/daily/" },
+      "Expiration": { "Days": 7 }
+    },
+    {
+      "ID": "delete-weekly-after-35-days",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "abastobot/weekly/" },
+      "Expiration": { "Days": 35 }
+    }
+  ]
+}

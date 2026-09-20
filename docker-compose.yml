@@ -1,0 +1,158 @@
+services:
+  postgres:
+    image: abastobot-postgres:${POSTGRES_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: deploy/postgres-walg.Dockerfile
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-abastobot}
+      POSTGRES_USER: ${POSTGRES_USER:-abastobot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      WALG_S3_PREFIX: s3://${BACKUP_S3_BUCKET:-abastobot-backups}/abastobot/walg
+      AWS_ENDPOINT: ${BACKUP_S3_ENDPOINT:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_REGION: ${AWS_DEFAULT_REGION:-auto}
+      AWS_S3_FORCE_PATH_STYLE: ${AWS_S3_FORCE_PATH_STYLE:-false}
+      WALG_COMPRESSION_METHOD: zstd
+    command:
+      - postgres
+      - -c
+      - archive_mode=${POSTGRES_ARCHIVE_MODE:-off}
+      - -c
+      - archive_command=${POSTGRES_ARCHIVE_COMMAND:-/bin/true}
+      - -c
+      - archive_timeout=${POSTGRES_ARCHIVE_TIMEOUT:-300s}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    image: abastobot-app:${APP_IMAGE_TAG:-local}
+    build: .
+    environment: &app_env
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-abastobot}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-abastobot}
+    command: ["node", "dist/migrate.js"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  app:
+    image: abastobot-app:${APP_IMAGE_TAG:-local}
+    build: .
+    restart: unless-stopped
+    environment: *app_env
+    env_file: .env
+    volumes:
+      - media_data:/app/storage/media
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    expose: ["4002"]
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:4002/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    image: abastobot-app:${APP_IMAGE_TAG:-local}
+    build: .
+    restart: unless-stopped
+    stop_grace_period: 30s
+    command: ["node", "dist/worker/index.js"]
+    environment: *app_env
+    env_file: .env
+    volumes:
+      - media_data:/app/storage/media
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  legacy-import:
+    build: .
+    profiles: ["tools"]
+    command: ["node", "dist/importLegacy.js"]
+    environment: *app_env
+    volumes:
+      - ./data:/app/data:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  backup:
+    build:
+      context: .
+      dockerfile: deploy/backup.Dockerfile
+    profiles: ["backup", "production"]
+    restart: unless-stopped
+    environment: *app_env
+    env_file: .env
+    volumes:
+      - media_data:/app/storage/media:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  walg-backup:
+    image: abastobot-postgres:${POSTGRES_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: deploy/postgres-walg.Dockerfile
+    profiles: ["backup", "production"]
+    restart: unless-stopped
+    command: ["/bin/sh", "-c", "while true; do walg-backup; sleep 86400; done"]
+    environment:
+      <<: *app_env
+      PGDATA: /var/lib/postgresql/data
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER:-abastobot}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:-abastobot}
+      WALG_S3_PREFIX: s3://${BACKUP_S3_BUCKET:-abastobot-backups}/abastobot/walg
+      AWS_ENDPOINT: ${BACKUP_S3_ENDPOINT:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_REGION: ${AWS_DEFAULT_REGION:-auto}
+      AWS_S3_FORCE_PATH_STYLE: ${AWS_S3_FORCE_PATH_STYLE:-false}
+      WALG_COMPRESSION_METHOD: zstd
+      WALG_RETAIN_FULL_BACKUPS: ${WALG_RETAIN_FULL_BACKUPS:-2}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    profiles: ["production"]
+    env_file: .env
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+    networks:
+      - default
+      - comprobantes
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:
+  media_data:
+
+networks:
+  comprobantes:
+    name: comprobantes-wa_default
+    external: true

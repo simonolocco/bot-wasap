@@ -1,0 +1,770 @@
+import { sendCloudMessage, sendCloudTextMessage } from '../cloudClient';
+import {
+  audit, cancelAdvisorFollowup, claimInitialGreeting, claimOutgoingMessage, completeJob, createOrder, createSupportTicket,
+  completeAdvisorFollowup, getContactById, getJobEvent, getSession, hasRecentDuplicateIncoming, isAdvisorFollowupEligible,
+  markOutgoingFailed, markOutgoingSent, prepareOutgoingMessage, recordAiQuery, recordBotInteractionEvent, recordSupportTicketQuestion,
+  retryAdvisorFollowup, retryJob, scheduleAdvisorFollowup, updateSession,
+  ensureAiAnswerLabelDraft, findAiAnswerRule, getAiSettings, loadActiveAiLabelExamples, promoteAiLabelCandidateQueries,
+  enqueueAiQueryPreview, recordAiLabelCandidateObservation, saveAiAnswerRule,
+} from '../db/repository';
+import {
+  advisorReply, BUSINESS_ADDRESS, BUSINESS_SCHEDULE, EMPTY_ORDER_MESSAGE, FAQ_GENERAL, FAQ_OTHER_NO_ID, FAQ_OTHER_PROMPT,
+  FAQ_OTHER_YES_ID, FOLLOW_UP_MENU_HEADER_TEXT, FOLLOW_UP_MENU_PROMPT, MAIN_MENU_OPTIONS, MENU_BUTTON_LABEL, MENU_HEADER_TEXT, MENU_PROMPT, ORDER_INSTRUCTIONS,
+  SUPPORT_TICKET_PROMPT, buildGreetingIntro, buildMenuListSections, formatPriceListMessage, isMenuCommandText, normalizeText, resolveOptionIdFromText, type MenuOptionId,
+} from '../messageCatalog';
+import { buildOrderForwardLink } from './orderTicket';
+import { assistantEnabled, hasPendingQuestion, isLearningQueueNoise, shouldUseAssistant, type Turn } from '../ai/assistant';
+import { readCatalog } from '../ai/catalog';
+import { createOpenRouterClient } from '../ai/openRouter';
+import { resolveCustomerAiResponse } from '../ai/queryResolver';
+import { aiReviewStatus, deriveSuggestedAiTopic, learningConfidence } from '../ai/runtimePolicy';
+import { isUnintelligibleQuestion } from '../ai/inputQuality';
+import {
+  AI_UNCLEAR_LABEL_ANSWER, AI_UNCLEAR_LABEL_NAME, canonicalAutoLabelAnswer, decideAiLabelPromotion, normalizeAiTopic,
+} from '../ai/labelPolicy';
+import { listMessages } from '../db/repository';
+
+type Incoming = { from: string; profileName?: string; text?: string; selectedOptionId?: MenuOptionId; buttonReplyId?: string; type: string; sourceTimestamp?: number };
+const DUPLICATE_AUTO_RESPONSE_WINDOW_SECONDS = Math.max(0, Number.parseInt(process.env.DUPLICATE_AUTO_RESPONSE_WINDOW_SECONDS ?? '90', 10) || 90);
+const AUTO_RESPONSE_MAX_DELAY_SECONDS = Math.max(0, Number.parseInt(process.env.AUTO_RESPONSE_MAX_DELAY_SECONDS ?? '120', 10) || 120);
+export const ADVISOR_FOLLOWUP_DELAY_MS = 10 * 60 * 1000;
+
+async function productionAiEnabled() {
+  if (process.env.NODE_ENV !== 'production') return assistantEnabled();
+  try { return (await getAiSettings()).enabled; }
+  catch (error) { console.error('[worker] No se pudo leer el interruptor global de IA:', error); return false; }
+}
+
+export function shouldIgnoreIncomingForAutomaticResponse(type: string) {
+  return type === 'reaction';
+}
+
+export function automaticResponseAgeMs(sourceTimestamp: number | undefined, receivedAt: string, now = Date.now()) {
+  const source = Number(sourceTimestamp);
+  const sourceAt = Number.isFinite(source) && source > 0 ? source : Date.parse(receivedAt);
+  return Number.isFinite(sourceAt) ? Math.max(0, now - sourceAt) : Number.POSITIVE_INFINITY;
+}
+
+export function shouldSkipAutomaticResponse(sourceTimestamp: number | undefined, receivedAt: string, now = Date.now(), maxDelaySeconds = AUTO_RESPONSE_MAX_DELAY_SECONDS) {
+  return automaticResponseAgeMs(sourceTimestamp, receivedAt, now) > maxDelaySeconds * 1000;
+}
+
+function advisorLink() {
+  const number = (process.env.FORWARD_ORDER_NUMBER ?? '+54 9 351 756-5641').replace(/\D/g, '');
+  return `https://wa.me/${number}?text=${encodeURIComponent('Hola, tengo una consulta')}`;
+}
+
+export function buildAdvisorFollowupMessage(link: string, name = '', now = new Date()) {
+  const hour = Number(new Intl.DateTimeFormat('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', hour: 'numeric', hourCycle: 'h23' }).format(now));
+  const greeting = hour < 12 ? 'Buenos días' : hour < 20 ? 'Buenas tardes' : 'Buenas noches';
+  const firstName = name.trim().split(/\s+/)[0]?.replace(/[*_~`]/g, '').slice(0, 60);
+  const number = new URL(link).pathname.replace(/\D/g, '');
+  const phone = number.startsWith('549') ? number.slice(3) : number;
+  return `${greeting}${firstName ? `, ${firstName}` : ''}. Si su consulta aún no fue resuelta, puede comunicarse con Mauricio, nuestro encargado comercial, al ${phone}.\n\nTambién puede contactar a nuestro asesor humano por WhatsApp a través del siguiente enlace:\n${link}\n\nQuedamos a su disposición.`;
+}
+
+async function outgoing(contactId: string, to: string, key: string, body: string, payload?: Record<string, unknown>) {
+  const stored = await prepareOutgoingMessage(contactId, key, body, payload ? 'interactive' : 'text');
+  if (stored.delivery_status === 'sent') return;
+  if (stored.delivery_status === 'sending') return;
+  if (!(await claimOutgoingMessage(stored.id))) return;
+  try {
+    const providerId = payload ? await sendCloudMessage(payload) : await sendCloudTextMessage(to, body);
+    await markOutgoingSent(stored.id, providerId);
+  } catch (error) {
+    await markOutgoingFailed(stored.id, error);
+    throw error;
+  }
+}
+
+async function sendMenu(contactId: string, to: string, key: string) {
+  // The source event is the idempotency boundary: retries reuse this row, but
+  // two different AI answers always receive their own menu afterward.
+  await outgoing(contactId, to, `${key}:menu`, MENU_PROMPT, {
+    messaging_product: 'whatsapp', to, type: 'interactive', interactive: {
+      type: 'list', header: { type: 'text', text: MENU_HEADER_TEXT }, body: { text: MENU_PROMPT },
+      action: { button: MENU_BUTTON_LABEL, sections: buildMenuListSections() },
+    },
+  });
+}
+
+async function sendFollowUpMenu(contactId: string, to: string, key: string) {
+  const cooldownBucket = Math.floor(Date.now() / 3000);
+  await outgoing(contactId, to, `follow-up-menu-cooldown:${contactId}:${cooldownBucket}`, FOLLOW_UP_MENU_PROMPT, {
+    messaging_product: 'whatsapp', to, type: 'interactive', interactive: {
+      type: 'list', header: { type: 'text', text: FOLLOW_UP_MENU_HEADER_TEXT }, body: { text: FOLLOW_UP_MENU_PROMPT },
+      action: { button: MENU_BUTTON_LABEL, sections: buildMenuListSections() },
+    },
+  });
+}
+
+export function isMenuCommand(text: string | undefined) {
+  return isMenuCommandText(text);
+}
+
+export function resolveIncomingMenuOption(incoming: Pick<Incoming, 'text' | 'selectedOptionId' | 'buttonReplyId'>): MenuOptionId | undefined {
+  const structuredOption = incoming.selectedOptionId ?? incoming.buttonReplyId;
+  if (structuredOption && MAIN_MENU_OPTIONS.some(item => item.id === structuredOption)) return structuredOption as MenuOptionId;
+  const normalizedText = normalizeText(incoming.text);
+  if (/^[1-6]\s+/.test(normalizedText)) return undefined;
+
+  return resolveOptionIdFromText(incoming.text);
+}
+
+/** A learning candidate is text that no real menu/flow resolver already owns. */
+export function shouldQueueAiLearning(
+  incoming: Pick<Incoming, 'text' | 'selectedOptionId' | 'buttonReplyId' | 'type'>,
+  awaitingOrderDetail = false,
+  pendingAssistantQuestion = false,
+) {
+  return !isMenuCommand(incoming.text)
+    && !resolveIncomingMenuOption(incoming)
+    && !isLearningQueueNoise(incoming.text, pendingAssistantQuestion)
+    && shouldUseAssistant(incoming, awaitingOrderDetail);
+}
+
+export function shouldIgnoreConversationNoise(
+  incoming: Pick<Incoming, 'text' | 'type'>,
+  awaitingOrderDetail = false,
+  pendingAssistantQuestion = false,
+) {
+  return !awaitingOrderDetail && incoming.type === 'text' && isLearningQueueNoise(incoming.text, pendingAssistantQuestion);
+}
+
+/** Every real first message is welcome/menu-only, including after a retry. */
+export function initialMenuRequired(greeted: boolean, isFirstIncoming = false) {
+  return !greeted || isFirstIncoming;
+}
+
+export async function processDueAdvisorFollowup(followup: { id: string; contact_id: string; attempts: number }) {
+  try {
+    const contact = await getContactById(followup.contact_id);
+    if (!contact || !(await isAdvisorFollowupEligible(followup.id))) {
+      await cancelAdvisorFollowup(followup.id);
+      return;
+    }
+    await outgoing(
+      followup.contact_id,
+      contact.phone,
+      `advisor-followup:${followup.id}`,
+      buildAdvisorFollowupMessage(advisorLink(), contact.name || contact.publicName),
+    );
+    await completeAdvisorFollowup(followup.id);
+  } catch (error) {
+    await retryAdvisorFollowup(followup.id, followup.attempts, error);
+    console.error('[worker] Error enviando seguimiento al asesor', followup.id, error);
+  }
+}
+
+function orderLinkMessage(detail: string, customerName: string, orderId: number) {
+  return [
+    '✅ Recibimos tu pedido.',
+    '',
+    'Para enviárselo al asesor, tocá este link:',
+    buildOrderForwardLink(detail, customerName, orderId),
+  ].join('\n');
+}
+
+function faqFollowUpPayload(to: string): Record<string, unknown> {
+  return {
+    messaging_product: 'whatsapp', to, type: 'interactive', interactive: {
+      type: 'button', body: { text: FAQ_OTHER_PROMPT },
+      action: { buttons: [
+        { type: 'reply', reply: { id: FAQ_OTHER_YES_ID, title: 'Sí, preguntar' } },
+        { type: 'reply', reply: { id: FAQ_OTHER_NO_ID, title: 'Volver al menú' } },
+      ] },
+    },
+  };
+}
+
+async function handleOption(contactId: string, incoming: Incoming, option: MenuOptionId, key: string) {
+  const to = incoming.from;
+  switch (option) {
+    case 'horarios': await outgoing(contactId, to, `${key}:schedule`, BUSINESS_SCHEDULE); break;
+    case 'direccion': await outgoing(contactId, to, `${key}:address`, BUSINESS_ADDRESS); break;
+    case 'lista_precio': await outgoing(contactId, to, `${key}:prices`, formatPriceListMessage()); break;
+    case 'preguntas_frecuentes':
+      await outgoing(contactId, to, `${key}:faq`, FAQ_GENERAL);
+      await outgoing(contactId, to, `${key}:faq-follow-up`, FAQ_OTHER_PROMPT, faqFollowUpPayload(to));
+      break;
+    case 'asesor': await outgoing(contactId, to, `${key}:advisor`, advisorReply(advisorLink())); break;
+    case 'hacer_pedido':
+      await updateSession(contactId, { awaitingOrderDetail: true });
+      await outgoing(contactId, to, `${key}:order-instructions`, ORDER_INSTRUCTIONS);
+      return;
+  }
+  await updateSession(contactId, { awaitingOrderDetail: false });
+  if (option !== 'preguntas_frecuentes') await sendFollowUpMenu(contactId, to, key);
+}
+
+export async function processIncomingJob(job: { id: string; contact_id: string; attempts: number }) {
+  const event = await getJobEvent(job.id);
+  if (!event) { await completeJob(job.id); return; }
+  try {
+    const incoming = (event.payload as { incoming?: Incoming }).incoming as Incoming;
+    if (!incoming) throw new Error('Evento sin mensaje entrante');
+    const sourceTimestamp = Number(incoming.sourceTimestamp ?? (event.source_timestamp ? Date.parse(event.source_timestamp) : NaN));
+    const ageMs = automaticResponseAgeMs(sourceTimestamp, event.received_at);
+    const stale = shouldSkipAutomaticResponse(sourceTimestamp, event.received_at);
+    if (stale) {
+      await audit('bot', 'auto_response_skipped_stale', job.contact_id, undefined, {
+        jobId: job.id,
+        providerMessageId: event.provider_message_id,
+        ageSeconds: Number.isFinite(ageMs) ? Math.round(ageMs / 1000) : null,
+        maxDelaySeconds: AUTO_RESPONSE_MAX_DELAY_SECONDS,
+      });
+    }
+    if (stale) {
+      console.warn(`[worker] Job ${job.id} descartado: evento entrante demasiado antiguo para responder automáticamente.`);
+      await completeJob(job.id); return;
+    }
+    const contact = await getContactById(job.contact_id);
+    if (!contact) throw new Error('Contacto inexistente');
+    console.info(`[worker] Evento recibido para ${job.contact_id}: tipo=${incoming.type}, botPaused=${contact.botPaused}.`);
+
+    if (shouldIgnoreIncomingForAutomaticResponse(incoming.type)) {
+      console.info(`[worker] Reacción registrada para ${job.contact_id}; no genera respuesta ni seguimiento automático.`);
+      await completeJob(job.id);
+      return;
+    }
+
+    const rawText = incoming.text?.trim() || '';
+    const normText = normalizeText(rawText);
+    const eventTime = event.source_timestamp ? new Date(event.source_timestamp) : new Date(event.received_at);
+
+    if (contact.botPaused) {
+      const question = incoming.text?.trim() || `[Mensaje ${incoming.type} recibido]`;
+      const ticket = await recordSupportTicketQuestion(job.contact_id, event.provider_message_id, question);
+      if (ticket) console.info(`[worker] Pregunta agregada al ticket ${ticket.id} del contacto ${job.contact_id}.`);
+      else console.info(`[worker] Mensaje retenido para ${job.contact_id}: ticket abierto sin pregunta inicial disponible.`);
+
+      await recordBotInteractionEvent({
+        contactId: job.contact_id,
+        providerMessageId: event.provider_message_id,
+        eventType: 'bot_paused_message',
+        rawText,
+        normalizedText: normText,
+        messageType: incoming.type,
+        metadata: { botPaused: true, ticketId: ticket?.id ?? null },
+        createdAt: eventTime,
+      });
+      if (incoming.type === 'text' && rawText) {
+        const logged = await recordAiQuery({ contactId: job.contact_id, providerMessageId: event.provider_message_id, question: rawText, outcome: 'paused', source: 'production', aiEnabled: false });
+        if (logged?.id) await enqueueAiQueryPreview(logged.id);
+      }
+
+      await completeJob(job.id);
+      return;
+    }
+
+    const incomingSignature = incoming.text?.trim() || incoming.selectedOptionId || incoming.buttonReplyId || '';
+    const menuCommand = isMenuCommand(incoming.text);
+    const resolvedMenuOption = resolveIncomingMenuOption(incoming);
+    if (!menuCommand && !resolvedMenuOption && await hasRecentDuplicateIncoming(job.contact_id, event.provider_message_id, incomingSignature, DUPLICATE_AUTO_RESPONSE_WINDOW_SECONDS)) {
+      console.info(`[worker] Respuesta automática omitida para ${job.contact_id}: mensaje repetido dentro de ${DUPLICATE_AUTO_RESPONSE_WINDOW_SECONDS}s.`);
+      await completeJob(job.id);
+      return;
+    }
+    const session = await getSession(job.contact_id);
+    const key = `event:${event.provider_message_id}`;
+
+    // The first customer message always receives the normal welcome and menu.
+    // We deliberately stop here even if the text already resembles a menu
+    // option or an approved AI label. A meaningful free-text question is still
+    // queued for a private admin preview so the knowledge base can learn from
+    // it without answering the customer on this first turn.
+    const initialName = incoming.profileName?.trim() || session.display_name || '¡hola!';
+    const initialMenuPending = initialMenuRequired(session.greeted, event.isFirstIncoming);
+    const firstInteraction = initialMenuPending
+      && (session.greeted || await claimInitialGreeting(job.contact_id, initialName));
+    if (firstInteraction) {
+      try {
+        const latestContact = await getContactById(job.contact_id);
+        if (latestContact?.botPaused) {
+          await updateSession(job.contact_id, { greeted: false });
+          await completeJob(job.id);
+          return;
+        }
+        await outgoing(job.contact_id, incoming.from, `${key}:greeting`, buildGreetingIntro(initialName));
+        if (!resolvedMenuOption && !menuCommand) {
+          await recordBotInteractionEvent({
+            contactId: job.contact_id,
+            providerMessageId: event.provider_message_id,
+            eventType: 'unrecognized_message',
+            rawText,
+            normalizedText: normText,
+            messageType: incoming.type,
+            metadata: { reason: 'first_interaction_unrecognized_text' },
+            createdAt: eventTime,
+          });
+        }
+        await recordBotInteractionEvent({
+          contactId: job.contact_id,
+          providerMessageId: event.provider_message_id,
+          eventType: 'menu_requested',
+          rawText,
+          normalizedText: normText,
+          messageType: incoming.type,
+          metadata: { source: 'first_greeting' },
+          createdAt: eventTime,
+        });
+        await sendMenu(job.contact_id, incoming.from, key);
+        console.info(`[worker] Primera interacción de ${job.contact_id}: saludo y menú enviados.`);
+      } catch (error) {
+        // The outgoing rows are idempotent by event. Releasing the greeting
+        // claim lets the retry finish whichever of greeting/menu did not send.
+        await updateSession(job.contact_id, { greeted: false }).catch(() => undefined);
+        throw error;
+      }
+
+      if (shouldQueueAiLearning(incoming, session.awaiting_order_detail, false)) {
+        const aiEnabled = await productionAiEnabled();
+        const logged = await recordAiQuery({
+          contactId: job.contact_id,
+          providerMessageId: event.provider_message_id,
+          question: rawText,
+          answer: '',
+          outcome: 'disabled',
+          source: 'production',
+          aiEnabled,
+          reviewStatus: 'pending',
+        });
+        if (logged?.id) await enqueueAiQueryPreview(logged.id);
+      }
+
+      await completeJob(job.id);
+      return;
+    }
+
+    // Read recent turns before classifying acknowledgements: "sí", "ok" and
+    // "dale" may answer a question that the assistant just asked.
+    const assistantCandidate = shouldUseAssistant(incoming, session.awaiting_order_detail);
+    let history: Turn[] = [];
+    if (assistantCandidate) {
+      const previous = await listMessages(job.contact_id, undefined, 10);
+      history = previous.items
+        .filter(m => m.providerMessageId !== event.provider_message_id && m.messageType === 'text')
+        .map(m => ({ role: m.direction === 'incoming' ? 'user' as const : 'assistant' as const, content: m.body }));
+    }
+    const pendingAssistantQuestion = hasPendingQuestion(history);
+    if (shouldIgnoreConversationNoise(incoming, session.awaiting_order_detail, pendingAssistantQuestion)) {
+      await recordBotInteractionEvent({
+        contactId: job.contact_id,
+        providerMessageId: event.provider_message_id,
+        eventType: 'flow_command',
+        rawText,
+        normalizedText: normText,
+        messageType: incoming.type,
+        createdAt: eventTime,
+        metadata: { source: 'acknowledgement', outcome: 'silence' },
+      });
+      await completeJob(job.id);
+      return;
+    }
+
+    // The real menu resolver is authoritative. Previously this block ran first,
+    // which polluted the learning queue with address/catalog questions that the
+    // bot went on to answer correctly.
+    const aiCandidate = shouldQueueAiLearning(incoming, session.awaiting_order_detail, pendingAssistantQuestion);
+    if (aiCandidate) {
+      const aiEnabled = await productionAiEnabled();
+      const complete = createOpenRouterClient({ key: process.env.OPENROUTER_API_KEY ?? '', model: process.env.OPENROUTER_MODEL ?? 'google/gemini-3.5-flash-lite' });
+      const labelCandidates = await loadActiveAiLabelExamples();
+      const savedRule = await findAiAnswerRule(rawText, { persistSemantic: false });
+      const resolution = await resolveCustomerAiResponse({
+        question: rawText,
+        history,
+        catalog: await readCatalog(),
+        complete,
+        allowCustomerResponse: aiEnabled,
+        savedRule,
+        labels: labelCandidates,
+      });
+      const classification = resolution.classification;
+      const unintelligible = classification.method === 'unintelligible' || isUnintelligibleQuestion(rawText);
+      let suggestedName = deriveSuggestedAiTopic(classification, resolution.answer);
+      let suggestedLabelId = resolution.matchedLabel?.id ?? savedRule?.labelId ?? null;
+      let matchedRuleId = resolution.matchedRuleId;
+      let matchedLabelId = resolution.matchedLabel?.id ?? savedRule?.labelId ?? null;
+      let classificationMethod: string = classification.method;
+      let confidence = learningConfidence(classification, resolution.answer);
+
+      if (unintelligible) {
+        const fallbackLabel = await ensureAiAnswerLabelDraft(AI_UNCLEAR_LABEL_NAME, 'ai-system', AI_UNCLEAR_LABEL_ANSWER);
+        suggestedName = fallbackLabel?.name ?? AI_UNCLEAR_LABEL_NAME;
+        suggestedLabelId = fallbackLabel?.id ?? null;
+        classificationMethod = 'unintelligible';
+        confidence = Math.max(confidence, 0.96);
+      }
+
+      if (!resolution.answer) {
+        const logged = await recordAiQuery({
+          contactId: job.contact_id, providerMessageId: event.provider_message_id, question: rawText,
+          answer: '', outcome: 'disabled', source: 'production', aiEnabled,
+          reviewStatus: unintelligible ? 'ignored' : 'pending',
+          suggestedLabelId, suggestedLabelName: suggestedName,
+          classificationMethod, classificationConfidence: confidence,
+        });
+        if (logged?.id) await enqueueAiQueryPreview(logged.id);
+        if (unintelligible) {
+          await recordBotInteractionEvent({ contactId: job.contact_id, providerMessageId: event.provider_message_id,
+            eventType: 'unrecognized_message', rawText, normalizedText: normText, messageType: incoming.type, createdAt: eventTime,
+            metadata: { source: 'unintelligible', outcome: 'disabled' } });
+          await completeJob(job.id);
+          return;
+        }
+        // The generative switch is off. Continue through the deterministic bot
+        // so its menu, greeting and advisor fallback remain available.
+      } else {
+        const answer = resolution.answer;
+
+        // A reviewable response must arrive with the topic already selected.
+        // New topics remain inactive drafts until the operator approves them.
+        if (!suggestedLabelId && suggestedName && normalizeAiTopic(suggestedName) !== AI_UNCLEAR_LABEL_NAME
+          && confidence >= 0.8 && answer.text.trim() && !['silence', 'unavailable'].includes(answer.outcome)) {
+          const draftAnswer = canonicalAutoLabelAnswer(suggestedName) || answer.text;
+          const draftLabel = await ensureAiAnswerLabelDraft(suggestedName, 'ai-auto-preview', draftAnswer, false);
+          suggestedLabelId = draftLabel?.id ?? null;
+          suggestedName = draftLabel?.name ?? suggestedName;
+        }
+
+        // A human can take the chat, the switch can turn off, or the message can
+        // become stale while the provider is working. Re-check before sending.
+        const latestContact = await getContactById(job.contact_id);
+        const responseStillEnabled = await productionAiEnabled();
+        const becameStale = shouldSkipAutomaticResponse(sourceTimestamp, event.received_at);
+        if (!responseStillEnabled || latestContact?.botPaused || becameStale) {
+          const withheldOutcome = latestContact?.botPaused || becameStale ? 'paused' : 'disabled';
+          await recordAiQuery({ contactId: job.contact_id, providerMessageId: event.provider_message_id, question: rawText,
+            answer: '', outcome: withheldOutcome, source: 'production', aiEnabled: responseStillEnabled,
+            reviewStatus: withheldOutcome === 'disabled' ? 'pending' : 'resolved',
+            suggestedLabelId, suggestedLabelName: suggestedName, classificationMethod,
+            classificationConfidence: confidence, model: answer.model, tokens: answer.tokens,
+            elapsedMs: answer.elapsedMs, errorCode: becameStale ? 'stale-before-send' : null,
+            previewAnswer: answer.text, previewOutcome: answer.outcome, previewSource: resolution.source,
+            previewModel: answer.model, previewTokens: answer.tokens, previewElapsedMs: answer.elapsedMs,
+            previewErrorCode: answer.errorCode ?? null });
+          await completeJob(job.id);
+          return;
+        }
+
+        const responseSent = Boolean(answer.text.trim());
+        if (responseSent) await outgoing(job.contact_id, incoming.from, `${key}:ai-${resolution.source}`, answer.text.trim());
+        if (resolution.sendMenuAfter) await sendMenu(job.contact_id, incoming.from, `${key}:ai-menu`);
+
+        // Reusing an approved label may learn this wording as an alias. Manual
+        // tests never call this branch, so testing remains read-only.
+        if (resolution.source === 'approved-label' && resolution.matchedLabel) {
+          const learnedRule = await saveAiAnswerRule({ question: rawText, answer: resolution.matchedLabel.answer,
+            label: resolution.matchedLabel.name, labelId: resolution.matchedLabel.id, actor: 'ai-auto' });
+          matchedRuleId = learnedRule?.id ?? null;
+          matchedLabelId = resolution.matchedLabel.id;
+        }
+
+        let stats = { events30d: 0, contacts30d: 0, contacts7d: 0 };
+        if (suggestedName && normalizeAiTopic(suggestedName) !== AI_UNCLEAR_LABEL_NAME && confidence >= 0.8) {
+          stats = await recordAiLabelCandidateObservation({
+            name: suggestedName, question: rawText, confidence,
+            contactId: job.contact_id, providerMessageId: event.provider_message_id, observedAt: eventTime,
+          });
+          const promotion = decideAiLabelPromotion({ suggestedName, confidence, stats });
+          const canonicalAnswer = promotion.answer || canonicalAutoLabelAnswer(promotion.labelName);
+          if (promotion.promoted && canonicalAnswer) {
+            const promotedLabel = await ensureAiAnswerLabelDraft(promotion.labelName, 'ai-auto-frequency', canonicalAnswer);
+            if (promotedLabel) {
+              await promoteAiLabelCandidateQueries(promotion.labelName, promotedLabel.id, promotedLabel.name);
+              await saveAiAnswerRule({ question: rawText, answer: promotedLabel.answer,
+                label: promotedLabel.name, labelId: promotedLabel.id, actor: 'ai-auto-frequency' });
+              suggestedName = promotedLabel.name;
+              suggestedLabelId = promotedLabel.id;
+              classificationMethod = 'frequency';
+            }
+          }
+        }
+
+        const reviewStatus = aiReviewStatus({ source: 'production', aiEnabled, outcome: answer.outcome, responseSent, unintelligible });
+        await recordAiQuery({ contactId: job.contact_id, providerMessageId: event.provider_message_id, question: rawText,
+          answer: answer.text, outcome: answer.outcome, source: 'production', aiEnabled, reviewStatus,
+          matchedAnswerRuleId: matchedRuleId, matchedAnswerLabelId: matchedLabelId,
+          suggestedLabelId, suggestedLabelName: suggestedName,
+          classificationMethod, classificationConfidence: confidence,
+          model: answer.model, tokens: answer.tokens, elapsedMs: answer.elapsedMs, errorCode: answer.errorCode ?? null,
+          previewAnswer: answer.text, previewOutcome: answer.outcome, previewSource: resolution.source,
+          previewModel: answer.model, previewTokens: answer.tokens, previewElapsedMs: answer.elapsedMs,
+          previewErrorCode: answer.errorCode ?? null });
+        await recordBotInteractionEvent({ contactId: job.contact_id, providerMessageId: event.provider_message_id,
+          eventType: unintelligible ? 'unrecognized_message' : 'flow_command', rawText, normalizedText: normText,
+          messageType: incoming.type, createdAt: eventTime,
+          metadata: { source: resolution.source, outcome: answer.outcome, proposedLabel: suggestedName,
+            confidence, stats, responseSent } });
+        if (!session.greeted && responseSent) await claimInitialGreeting(job.contact_id, incoming.profileName?.trim() || 'Cliente');
+        await completeJob(job.id);
+        return;
+      }
+    }
+
+    if (incoming.buttonReplyId === FAQ_OTHER_YES_ID) {
+      const result = await createSupportTicket(job.contact_id, 'bot');
+      console.info(`[worker] Solicitud de atención humana para ${job.contact_id}: ticket=${result.ticket?.id ?? 'existente'}, creado=${result.created}.`);
+      await updateSession(job.contact_id, { awaitingOrderDetail: false });
+
+      await recordBotInteractionEvent({
+        contactId: job.contact_id,
+        providerMessageId: event.provider_message_id,
+        eventType: 'human_advisor_requested',
+        rawText,
+        normalizedText: normText,
+        messageType: incoming.type,
+        metadata: { source: 'faq_followup_button', ticketCreated: result.created },
+        createdAt: eventTime,
+      });
+
+      if (result.created) await outgoing(job.contact_id, incoming.from, `${key}:support-ticket-prompt`, SUPPORT_TICKET_PROMPT);
+      await completeJob(job.id);
+      return;
+    }
+    if (incoming.buttonReplyId === FAQ_OTHER_NO_ID) {
+      console.info(`[worker] Cliente volvió al menú: ${job.contact_id}.`);
+
+      await recordBotInteractionEvent({
+        contactId: job.contact_id,
+        providerMessageId: event.provider_message_id,
+        eventType: 'menu_requested',
+        rawText,
+        normalizedText: normText,
+        messageType: incoming.type,
+        metadata: { source: 'faq_followup_button' },
+        createdAt: eventTime,
+      });
+
+      await sendFollowUpMenu(job.contact_id, incoming.from, key);
+      await completeJob(job.id);
+      return;
+    }
+    let option = resolvedMenuOption;
+
+    // A human may take the conversation while deterministic classification is
+    // running. Re-check before any normal bot flow sends another message.
+    const latestContactBeforeBotFlow = await getContactById(job.contact_id);
+    if (latestContactBeforeBotFlow?.botPaused) {
+      await completeJob(job.id);
+      return;
+    }
+
+    if (session.awaiting_order_detail && (isMenuCommand(incoming.text) || normalizeText(incoming.text) === 'cancelar')) {
+      await updateSession(job.contact_id, { awaitingOrderDetail: false });
+      await recordBotInteractionEvent({
+        contactId: job.contact_id,
+        providerMessageId: event.provider_message_id,
+        eventType: 'flow_command',
+        rawText,
+        normalizedText: normText,
+        messageType: incoming.type,
+        metadata: { action: 'cancel_order_mode', command: normText },
+        createdAt: eventTime,
+      });
+      await recordBotInteractionEvent({
+        contactId: job.contact_id,
+        providerMessageId: event.provider_message_id,
+        eventType: 'menu_requested',
+        rawText,
+        normalizedText: normText,
+        messageType: incoming.type,
+        metadata: { source: 'order_cancel' },
+        createdAt: eventTime,
+      });
+      await sendMenu(job.contact_id, incoming.from, key);
+      await completeJob(job.id);
+      return;
+    }
+
+    if (session.awaiting_order_detail) {
+      if (option) {
+        await updateSession(job.contact_id, { awaitingOrderDetail: false });
+        console.info(`[worker] Modo pedido cancelado por ${job.contact_id}; eligió la opción ${option}.`);
+        await recordBotInteractionEvent({
+          contactId: job.contact_id,
+          providerMessageId: event.provider_message_id,
+          eventType: 'menu_option',
+          selectedOption: option,
+          rawText,
+          normalizedText: normText,
+          messageType: incoming.type,
+          metadata: { interruptedOrderMode: true },
+          createdAt: eventTime,
+        });
+        if (option === 'asesor') {
+          await recordBotInteractionEvent({
+            contactId: job.contact_id,
+            providerMessageId: event.provider_message_id,
+            eventType: 'human_advisor_requested',
+            selectedOption: option,
+            rawText,
+            normalizedText: normText,
+            messageType: incoming.type,
+            metadata: { source: 'menu_option' },
+            createdAt: eventTime,
+          });
+        }
+        if (option === 'hacer_pedido') {
+          await recordBotInteractionEvent({
+            contactId: job.contact_id,
+            providerMessageId: event.provider_message_id,
+            eventType: 'order_started',
+            selectedOption: option,
+            rawText,
+            normalizedText: normText,
+            messageType: incoming.type,
+            metadata: { source: 'menu_option' },
+            createdAt: eventTime,
+          });
+        }
+        await handleOption(job.contact_id, incoming, option, key);
+        await completeJob(job.id);
+        return;
+      }
+      const text = incoming.text?.trim() ?? '';
+      if (!text) {
+        await recordBotInteractionEvent({
+          contactId: job.contact_id,
+          providerMessageId: event.provider_message_id,
+          eventType: 'flow_command',
+          rawText,
+          normalizedText: normText,
+          messageType: incoming.type,
+          metadata: { action: 'empty_order_text' },
+          createdAt: eventTime,
+        });
+        await outgoing(job.contact_id, incoming.from, `${key}:empty-order`, EMPTY_ORDER_MESSAGE);
+        await completeJob(job.id);
+        return;
+      }
+      if (['menu', 'cancelar'].includes(text.toLowerCase()) || /\bhola\b/i.test(text)) {
+        await updateSession(job.contact_id, { awaitingOrderDetail: false });
+        console.info(`[worker] Modo pedido cancelado por ${job.contact_id}; menú solicitado.`);
+        await recordBotInteractionEvent({
+          contactId: job.contact_id,
+          providerMessageId: event.provider_message_id,
+          eventType: 'flow_command',
+          rawText,
+          normalizedText: normText,
+          messageType: incoming.type,
+          metadata: { action: 'cancel_order_mode' },
+          createdAt: eventTime,
+        });
+        await recordBotInteractionEvent({
+          contactId: job.contact_id,
+          providerMessageId: event.provider_message_id,
+          eventType: 'menu_requested',
+          rawText,
+          normalizedText: normText,
+          messageType: incoming.type,
+          metadata: { source: 'order_cancel_keyword' },
+          createdAt: eventTime,
+        });
+        await sendMenu(job.contact_id, incoming.from, key);
+        await completeJob(job.id);
+        return;
+      }
+      const orderId = await createOrder(job.contact_id, contact.name || contact.publicName, text);
+      await updateSession(job.contact_id, { awaitingOrderDetail: false });
+
+      await recordBotInteractionEvent({
+        contactId: job.contact_id,
+        providerMessageId: event.provider_message_id,
+        eventType: 'order_submitted',
+        rawText: text,
+        normalizedText: normText,
+        messageType: incoming.type,
+        metadata: { orderId },
+        createdAt: eventTime,
+      });
+
+      await outgoing(job.contact_id, incoming.from, `${key}:order-link`, orderLinkMessage(text, contact.name || contact.publicName, orderId));
+      await sendFollowUpMenu(job.contact_id, incoming.from, key);
+      console.info(`[worker] Pedido ${orderId} creado para ${job.contact_id}; link enviado sin ticket automático.`);
+      await completeJob(job.id);
+      return;
+    }
+
+    if (!option) {
+      if (menuCommand) {
+        console.info(`[worker] Menú solicitado por ${job.contact_id}.`);
+        await recordBotInteractionEvent({
+          contactId: job.contact_id,
+          providerMessageId: event.provider_message_id,
+          eventType: 'menu_requested',
+          rawText,
+          normalizedText: normText,
+          messageType: incoming.type,
+          metadata: { source: 'keyword_command' },
+          createdAt: eventTime,
+        });
+        await sendMenu(job.contact_id, incoming.from, key);
+      } else {
+        console.info(`[worker] Mensaje no entendido de ${job.contact_id}: "${rawText}".`);
+        await recordBotInteractionEvent({
+          contactId: job.contact_id,
+          providerMessageId: event.provider_message_id,
+          eventType: 'unrecognized_message',
+          rawText,
+          normalizedText: normText,
+          messageType: incoming.type,
+          metadata: { type: incoming.type },
+          createdAt: eventTime,
+        });
+        await scheduleAdvisorFollowup(
+          job.contact_id,
+          event.provider_message_id,
+          new Date(Date.now() + ADVISOR_FOLLOWUP_DELAY_MS),
+        );
+      }
+      await completeJob(job.id);
+      return;
+    }
+
+    await recordBotInteractionEvent({
+      contactId: job.contact_id,
+      providerMessageId: event.provider_message_id,
+      eventType: 'menu_option',
+      selectedOption: option,
+      rawText,
+      normalizedText: normText,
+      messageType: incoming.type,
+      metadata: { structured: Boolean(incoming.selectedOptionId || incoming.buttonReplyId) },
+      createdAt: eventTime,
+    });
+    if (option === 'asesor') {
+      await recordBotInteractionEvent({
+        contactId: job.contact_id,
+        providerMessageId: event.provider_message_id,
+        eventType: 'human_advisor_requested',
+        selectedOption: option,
+        rawText,
+        normalizedText: normText,
+        messageType: incoming.type,
+        metadata: { source: 'menu_option' },
+        createdAt: eventTime,
+      });
+    }
+    if (option === 'hacer_pedido') {
+      await recordBotInteractionEvent({
+        contactId: job.contact_id,
+        providerMessageId: event.provider_message_id,
+        eventType: 'order_started',
+        selectedOption: option,
+        rawText,
+        normalizedText: normText,
+        messageType: incoming.type,
+        metadata: { source: 'menu_option' },
+        createdAt: eventTime,
+      });
+    }
+
+    await handleOption(job.contact_id, incoming, option, key);
+    await completeJob(job.id);
+  } catch (error) {
+    await retryJob(job.id, job.attempts, error);
+    console.error('[worker] Error procesando job', job.id, error);
+  }
+}

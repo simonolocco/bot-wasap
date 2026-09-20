@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AbastoBot · Prueba de IA</title><link rel="stylesheet" href="/styles.css"><script src="/app.js" defer></script></head>
+<body>
+<header><a class="brand" href="/">abasto<span>bot</span><small>ATENCIÓN COMERCIAL</small></a><span class="environment">Prueba local · sin envíos a WhatsApp</span></header>
+<main>
+  <div class="heading"><div><p class="eyebrow">DISTRIBUIDORA ABASTO DEL CAMPO</p><h1>Probá una conversación.</h1><p>Preguntá como tus clientes. Revisá de dónde sale cada respuesta.</p></div><button id="reset" class="secondary">Nueva conversación</button></div>
+  <div class="workspace">
+    <section class="conversation" aria-label="Conversación de prueba">
+      <div class="chat-header"><div class="avatar">a</div><div><strong>AbastoBot</strong><small id="model">Conectando…</small></div><label class="pause"><input id="pause" type="checkbox"> Asesor atendiendo</label></div>
+      <div id="messages" role="log" aria-live="polite" aria-relevant="additions"><div class="welcome"><h2>Una pregunta, sin buscar la opción.</h2><p>Probá envíos, ubicación o precios. También podés escribir un número del menú.</p></div></div>
+      <div class="suggestions" aria-label="Preguntas de ejemplo"><button>¿Hacen envíos a Moreno?</button><button>¿De dónde son?</button><button>¿Cuánto sale el cremoso?</button><button>¿Hay compra mínima?</button><button>Ver más info</button><button>Menú</button></div>
+      <form id="chat-form"><label class="sr-only" for="message">Tu mensaje</label><textarea id="message" maxlength="2500" rows="2" placeholder="Escribí una consulta…" required></textarea><button id="send" type="submit">Enviar <span aria-hidden="true">↗</span></button></form>
+      <p id="chat-status" class="status" role="status"></p>
+    </section>
+    <aside>
+      <section class="panel"><p class="eyebrow">DETRÁS DE LA RESPUESTA</p><h2>Información consultada</h2><div id="evidence"><p class="muted">Al enviar una consulta vas a ver las fuentes utilizadas, el resultado y el tiempo de respuesta.</p></div></section>
+      <section class="panel"><div class="panel-title"><h2>Catálogo de precios</h2><span id="catalog-badge" class="badge">Cargando</span></div><p id="catalog-summary"></p><button id="review-open" class="secondary full">Revisar o cargar catálogo</button><p class="caption">Los precios se habilitan después de revisar la lista y su vigencia.</p></section>
+      <section class="panel saved-panel"><div class="panel-title"><h2>Respuestas guardadas</h2><span id="answers-badge" class="badge">0</span></div><p class="caption">Cada consulta respondida queda acá. Podés corregir el texto y activarlo; cuando vuelva a aparecer la misma pregunta, se usará esta respuesta sin llamar al modelo.</p><div id="saved-answers"><p id="answers-empty" class="muted">Todavía no hay respuestas guardadas.</p></div></section>
+      <details class="panel"><summary>Qué sabe sobre el negocio</summary><div id="knowledge"></div></details>
+    </aside>
+  </div>
+</main>
+<dialog id="catalog-dialog" aria-labelledby="catalog-title"><div class="dialog-header"><div><p class="eyebrow">PRECIOS PARA ESTA PRUEBA</p><h2 id="catalog-title">Revisar catálogo</h2></div><button id="review-close" class="secondary">Cerrar</button></div>
+  <p>Importá un PDF o Excel. Compará las filas con el original antes de activar los precios. Importar prepara un borrador; no cambia el catálogo activo.</p>
+  <form id="upload-form"><label class="file-label">PDF o Excel (hasta 8 MB)<input id="catalog-file" type="file" accept=".pdf,.xlsx" required></label><button id="import-button">Importar para revisar</button></form>
+  <p class="caption">La extracción de PDF usa OpenRouter. El Excel se procesa localmente.</p>
+  <div class="catalog-controls"><label>Desde<input id="valid-from" type="date"></label><label>Hasta<input id="valid-until" type="date"></label><label>Buscar producto<input id="product-filter" type="search" placeholder="Nombre o marca"></label><label>Asignar lista a todas las filas<select id="bulk-tier"><option value="">Elegir…</option value="mayorista">Mayorista</option><option value="minorista">Minorista</option></select></label><button id="apply-tier" class="secondary">Aplicar lista</button></div>
+  <p id="review-count" class="caption"></p><div class="table-scroll"><table><thead><tr><th>Producto y marca</th><th>Precio ARS</th><th>Por</th><th>Lista</th><th>Presentación y condición</th><th>Fuente</th></tr></thead><tbody id="catalog-rows"></tbody></table></div>
+  <div class="pagination"><button id="prev" class="secondary">Anterior</button><span id="page-number"></span><button id="next" class="secondary">Siguiente</button></div>
+  <p id="catalog-status" role="status"></p><label class="confirm"><input id="review-confirm" type="checkbox"> Revisé precios, unidades, condiciones y vigencia contra el documento original.</label>
+  <div class="dialog-actions"><button id="save-draft" class="secondary">Guardar sin habilitar precios</button><button id="activate">Activar catálogo revisado</button></div>
+</dialog>
+</body></html>

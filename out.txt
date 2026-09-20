@@ -1,0 +1,606 @@
+function fmtMoney(n) {
+  const v = Number(n || 0);
+  return 'AR$ ' + v.toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+}
+
+function fmtDate(d) {
+  if (!d) return '-';
+  try { return new Date(d).toLocaleString('es-AR'); } catch { return String(d); }
+}
+
+async function getJSON(path) {
+  const res = await fetch(path);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+async function loadSummary() {
+  const s = await getJSON('/api/summary');
+  document.getElementById('c-totalOrders').textContent = s.totalOrders;
+  const cco = document.getElementById('c-confirmedOrders'); if (cco) cco.textContent = s.confirmedOrders ?? '-';
+  const avg = document.getElementById('c-avgOrder'); if (avg) avg.textContent = fmtMoney(s.avgOrderAmount);
+  const tp = document.getElementById('c-totalProducts'); if (tp) tp.textContent = s.totalProducts ?? 0;
+  document.getElementById('c-uniqueCustomers').textContent = s.uniqueCustomers;
+  document.getElementById('c-totalRevenue').textContent = fmtMoney(s.totalRevenue);
+  document.getElementById('c-lastOrderAt').textContent = fmtDate(s.lastOrderAt);
+  const br = s.ordersByStatus || [];
+  const txt = br.map(r => `${r.status}: ${r.c}`).join('\n');
+  const box = document.getElementById('c-statusBreakdown'); if (box) box.textContent = txt || '-';
+}
+
+let ordersChart;
+// Mapas de alias y sucursales (se cargan desde el backend)
+let aliasMap = {};
+let branchMap = {};
+async function refreshMaps() {
+  try { aliasMap = await getJSON('/api/config/clients-map'); } catch {}
+  try { branchMap = await getJSON('/api/config/branches-map'); } catch {}
+}
+async function loadOrdersByGroup(group, from, to) {
+  const params = new URLSearchParams();
+  if (group) params.set('group', group);
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  const d = await getJSON(`/api/orders-aggregate?${params.toString()}`);
+  const labels = d.data.map(r => r.bucket);
+  const orders = d.data.map(r => r.orders);
+  const revenue = d.data.map(r => r.revenue);
+  const ctx = document.getElementById('ordersChart').getContext('2d');
+  if (ordersChart) ordersChart.destroy();
+  ordersChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Pedidos', data: orders, backgroundColor: 'rgba(37,99,235,0.7)', yAxisID: 'y1' },
+        { label: 'Ingresos (AR$)', data: revenue, backgroundColor: 'rgba(22,163,74,0.7)', yAxisID: 'y2' },
+      ]
+    },
+    options: {
+      responsive: true,
+      interaction: { mode: 'index', intersect: false },
+      stacked: false,
+      scales: {
+        y1: { type: 'linear', position: 'left' },
+        y2: { type: 'linear', position: 'right', grid: { drawOnChartArea: false }, ticks: { callback: (v) => 'AR$ ' + Number(v).toLocaleString('es-AR') } }
+      }
+    }
+  });
+}
+
+async function loadTopCustomers(limit = 10) {
+  const d = await getJSON(`/api/top-customers?limit=${encodeURIComponent(limit)}`);
+  const tbody = document.querySelector('#t-customers tbody');
+  tbody.innerHTML = '';
+  d.data.forEach((r, i) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td class="px-3 py-2 text-right">${i + 1}</td><td class="px-3 py-2 font-mono">${r.chat_id}</td><td class="px-3 py-2 text-right">${r.orders}</td><td class="px-3 py-2 text-right">${fmtMoney(r.revenue)}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+async function loadTopProducts(limit = 10) {
+  const d = await getJSON(`/api/top-products?limit=${encodeURIComponent(limit)}`);
+  const tbody = document.querySelector('#t-products tbody');
+  tbody.innerHTML = '';
+  d.data.forEach((r, i) => {
+    const tr = document.createElement('tr');
+    const code = r.codigo || '';
+    tr.innerHTML = `<td class="px-3 py-2 text-right">${i + 1}</td><td class="px-3 py-2">${r.producto}</td><td class="px-3 py-2">${r.marca || ''}</td><td class="px-3 py-2 font-mono">${code}</td><td class="px-3 py-2">${r.gate || ''}</td><td class="px-3 py-2 text-right">${r.qty}</td><td class="px-3 py-2 text-right">${fmtMoney(r.revenue)}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+async function loadOrders(limit = 100) {
+  const status = document.getElementById('f-status').value;
+  const from = document.getElementById('f-from').value;
+  const to = document.getElementById('f-to').value;
+  const chat = document.getElementById('f-chat').value.trim();
+  const params = new URLSearchParams({ limit: String(limit), status });
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  if (chat) params.set('chat_id', chat);
+  const d = await getJSON(`/api/orders?${params.toString()}`);
+  const tbody = document.querySelector('#t-orders tbody');
+  tbody.innerHTML = '';
+  d.data.forEach((r) => {
+    const tr = document.createElement('tr');
+    const chatCell = `<span class=\"font-mono truncate inline-block max-w-[13rem]\" title=\"${r.chat_id}\">${r.chat_id}</span>`;
+    tr.innerHTML = `<td class="px-2 py-1 text-right font-mono">${r.id}</td><td class="px-2 py-1">${chatCell}</td><td class="px-2 py-1 whitespace-nowrap">${fmtDate(r.created_at)}</td><td class="px-2 py-1">${r.status}</td><td class="px-2 py-1 text-right font-mono">${fmtMoney(r.total)}</td>`;
+    tr.style.cursor = 'pointer';
+    tr.addEventListener('click', () => loadOrderDetail(r.id));
+    tbody.appendChild(tr);
+  });
+}
+
+async function loadOrderDetail(id) {
+  const d = await getJSON(`/api/orders/${id}`);
+  const box = document.getElementById('order-detail');
+  const lines = d.items.map(it => `${it.qty} ${it.gate} · ${it.producto} (${it.marca || ''}) — ${fmtMoney(it.subtotal)} [${it.codigo || ''}]`).join('\n');
+  box.textContent = `Pedido #${d.order.id}
+}
+
+let ordersOffset = 0;
+async function fetchAndRenderOrders(limit = 50) {
+  const status = document.getElementById('f-status')?.value || 'all';
+  const from = document.getElementById('f-from')?.value || '';
+  const to = document.getElementById('f-to')?.value || '';
+  const chat = document.getElementById('f-chat')?.value.trim() || '';
+  const minT = document.getElementById('f-min-total')?.value || '';
+  const maxT = document.getElementById('f-max-total')?.value || '';
+  const hasText = document.getElementById('f-has-text')?.value.trim() || '';
+  const hasCode = document.getElementById('f-has-code')?.value.trim() || '';
+  const params = new URLSearchParams({ limit: String(limit), status, offset: String(ordersOffset) });
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  if (chat) params.set('chat_id', chat);
+  if (minT) params.set('min_total', minT);
+  if (maxT) params.set('max_total', maxT);
+  if (hasText) params.set('has_text', hasText);
+  if (hasCode) params.set('has_code', hasCode);
+  const d = await getJSON(`/api/orders?${params.toString()}`);
+  const tbody = document.querySelector('#t-orders tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  d.data.forEach((r) => {
+    const tr = document.createElement('tr');
+    const alias = aliasMap[r.chat_id]?.name ? ` (${aliasMap[r.chat_id].name})` : '';
+const chatCell = `<span class=\"font-mono truncate inline-block max-w-[11rem]\" title=\"${r.chat_id}\">${r.chat_id}</span>${alias}`;
+    const sucCell = `<span class=\"truncate inline-block max-w-[9rem]\" title=\"${r.sucursal || ''}\">${r.sucursal || ''}</span>`;
+    tr.innerHTML = `<td class=\"px-2 py-1 text-right font-mono\">${r.id}</td><td class=\"px-2 py-1\">${chatCell}</td><td class=\"px-2 py-1\">${sucCell}</td><td class=\"px-2 py-1 whitespace-nowrap\">${fmtDate(r.created_at)}</td><td class=\"px-2 py-1\">${r.status}</td><td class=\"px-2 py-1 text-right font-mono\">${fmtMoney(r.total)}</td>`;
+    tr.style.cursor = 'pointer';
+    tr.addEventListener('click', () => loadOrderDetail(r.id));
+    tbody.appendChild(tr);
+  });
+  const pageInfo = document.getElementById('page-info');
+  if (pageInfo) pageInfo.textContent = `Mostrando ${d.data.length} desde ${ordersOffset}`;
+}
+
+let catOffset = 0;
+async function loadCatalog(limit = 50) {
+  const q = document.getElementById('p-search').value.trim();
+  const params = new URLSearchParams({ limit: String(limit), offset: String(catOffset) });
+  if (q) params.set('search', q);
+  const d = await getJSON(`/api/products/catalog?${params.toString()}`);
+  const tbody = document.querySelector('#t-catalog tbody');
+  tbody.innerHTML = '';
+  d.rows.forEach((r) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td class="px-3 py-2 font-mono">${r.codigo}</td><td class="px-3 py-2">${r.producto}</td><td class="px-3 py-2">${r.marca || ''}</td><td class="px-3 py-2 text-right">${r.uxb ?? ''}</td><td class="px-3 py-2 text-right">${r.kg_prom ?? ''}</td><td class="px-3 py-2 text-right">${fmtMoney(r.lista2)}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+async function loadCustomers() {
+  const min = document.getElementById('c-min').value;
+  const ina = document.getElementById('c-inactive').value;
+  const params = new URLSearchParams({ min_orders: String(min || 0), inactive_days: String(ina || 0) });
+  const d = await getJSON(`/api/customers/list?${params.toString()}`);
+  const tbody = document.querySelector('#t-clients tbody');
+  tbody.innerHTML = '';
+  d.rows.forEach((r) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td class="px-3 py-2 font-mono">${r.chat_id}</td><td class="px-3 py-2 text-right">${r.orders}</td><td class="px-3 py-2 text-right">${fmtMoney(r.revenue)}</td><td class="px-3 py-2">${fmtDate(r.first_order)}</td><td class="px-3 py-2">${fmtDate(r.last_order)}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+function daysAgoISO(days){
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return d.toISOString().slice(0,10);
+}
+
+async function boot() {
+  await loadSummary();
+  const dfltDays = Number(document.getElementById('days').value || 30);
+  await loadOrdersByGroup('day', daysAgoISO(dfltDays));
+  await loadTopCustomers(10);
+  await loadTopProducts(10);
+  const defaultPage = Number(document.getElementById('page-size')?.value || 50);
+  await fetchAndRenderOrders(defaultPage);
+  await loadCatalog();
+  await loadCustomers();
+
+  document.getElementById('reload-days').addEventListener('click', async () => {
+    const g = document.getElementById('group').value;
+    const days = Number(document.getElementById('days').value || 30);
+    await loadOrdersByGroup(g, daysAgoISO(days));
+  });
+  const reloadOrders = document.getElementById('reload-orders');
+  if (reloadOrders) reloadOrders.addEventListener('click', () => { ordersOffset = 0; const ps = Number(document.getElementById('page-size')?.value||50); fetchAndRenderOrders(ps); });
+  const pageSizeEl = document.getElementById('page-size');
+  if (pageSizeEl) pageSizeEl.addEventListener('change', () => { ordersOffset = 0; const ps = Number(document.getElementById('page-size')?.value||50); fetchAndRenderOrders(ps); });
+  const prevBtn = document.getElementById('prev-page');
+  const nextBtn = document.getElementById('next-page');
+  if (prevBtn) prevBtn.addEventListener('click', () => { const ps = Number(document.getElementById('page-size')?.value||50); ordersOffset = Math.max(0, ordersOffset - ps); fetchAndRenderOrders(ps); });
+  if (nextBtn) nextBtn.addEventListener('click', () => { const ps = Number(document.getElementById('page-size')?.value||50); ordersOffset += ps; fetchAndRenderOrders(ps); });
+  const exportBtn = document.getElementById('export-csv');
+  if (exportBtn) exportBtn.addEventListener('click', () => {
+    const status = document.getElementById('f-status')?.value || 'all';
+    const from = document.getElementById('f-from')?.value || '';
+    const to = document.getElementById('f-to')?.value || '';
+    const chat = document.getElementById('f-chat')?.value.trim() || '';
+    const minT = document.getElementById('f-min-total')?.value || '';
+    const maxT = document.getElementById('f-max-total')?.value || '';
+    const hasText = document.getElementById('f-has-text')?.value.trim() || '';
+    const hasCode = document.getElementById('f-has-code')?.value.trim() || '';
+    const params = new URLSearchParams({ limit: String(1000), offset: String(ordersOffset), status });
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    if (chat) params.set('chat_id', chat);
+    if (minT) params.set('min_total', minT);
+    if (maxT) params.set('max_total', maxT);
+    if (hasText) params.set('has_text', hasText);
+    if (hasCode) params.set('has_code', hasCode);
+    window.open(`/api/orders.csv?${params.toString()}`, '_blank');
+  });
+  document.getElementById('reload-catalog').addEventListener('click', () => loadCatalog());
+  document.getElementById('reload-customers').addEventListener('click', () => loadCustomers());
+}
+
+boot().then(async () => {
+  await refreshMaps();
+  await loadTopCustomers(10);
+  const ps = Number(document.getElementById('page-size')?.value||50);
+  await fetchAndRenderOrders(ps);
+  const catSize = document.getElementById('cat-page-size');
+  const catPrev = document.getElementById('cat-prev');
+  const catNext = document.getElementById('cat-next');
+  const catDefault = Number(catSize?.value || 50);
+  await loadCatalog(catDefault);
+  if (catSize) catSize.addEventListener('change', () => { catOffset = 0; const sz = Number(catSize.value||50); loadCatalog(sz); });
+  if (catPrev) catPrev.addEventListener('click', () => { const sz = Number(catSize?.value||50); catOffset = Math.max(0, catOffset - sz); loadCatalog(sz); });
+  if (catNext) catNext.addEventListener('click', () => { const sz = Number(catSize?.value||50); catOffset += sz; loadCatalog(sz); });
+  const cliSize = document.getElementById('cli-page-size');
+  const cliPrev = document.getElementById('cli-prev');
+  const cliNext = document.getElementById('cli-next');
+  const cliDefault = Number(cliSize?.value || 50);
+  await loadCustomers(cliDefault);
+  if (cliSize) cliSize.addEventListener('change', () => { cliOffset = 0; const sz = Number(cliSize.value||50); loadCustomers(sz); });
+  if (cliPrev) cliPrev.addEventListener('click', () => { const sz = Number(cliSize?.value||50); cliOffset = Math.max(0, cliOffset - sz); loadCustomers(sz); });
+  if (cliNext) cliNext.addEventListener('click', () => { const sz = Number(cliSize?.value||50); cliOffset += sz; loadCustomers(sz); });
+  const aliasBtn = document.getElementById('alias-save');
+  if (aliasBtn) aliasBtn.addEventListener('click', async () => {
+    const chat = document.getElementById('alias-chat').value.trim();
+    const name = document.getElementById('alias-name').value.trim();
+    const notes = document.getElementById('alias-notes').value.trim();
+    if (!chat) return alert('Falta chat_id');
+    await fetch('/api/config/clients-map', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chat, name, notes }) });
+    await refreshMaps();
+    await loadTopCustomers(10);
+    await fetchAndRenderOrders(ps);
+  });
+  const branchBtn = document.getElementById('branch-save');
+  if (branchBtn) branchBtn.addEventListener('click', async () => {
+    const chat = document.getElementById('branch-chat').value.trim();
+    const branch = document.getElementById('branch-name').value.trim();
+    if (!chat) return alert('Falta chat_id');
+    await fetch('/api/config/branches-map', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chat, branch }) });
+    await refreshMaps();
+    await fetchAndRenderOrders(ps);
+  });
+}).catch(err => {
+  console.error(err);
+  alert('Error cargando dashboard: ' + err.message);
+});
+// Dashboard client script — limpio y consistente
+
+function fmtMoney(n) {
+  const v = Number(n || 0);
+  return 'AR$ ' + v.toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+}
+
+function fmtDate(d) {
+  if (!d) return '-';
+  try { return new Date(d).toLocaleString('es-AR'); } catch { return String(d); }
+}
+
+async function getJSON(path) {
+  const res = await fetch(path);
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return res.json();
+}
+
+async function postJSON(path, body) {
+  const res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return res.json();
+}
+
+function daysAgoISO(days) {
+  const d = new Date();
+  d.setDate(d.getDate() - Number(days || 0));
+  return d.toISOString().slice(0, 10);
+}
+
+let aliasMap = {};
+let branchMap = {};
+async function refreshMaps() {
+  try { aliasMap = await getJSON('/api/config/clients-map'); } catch {}
+  try { branchMap = await getJSON('/api/config/branches-map'); } catch {}
+}
+
+async function loadSummary() {
+  const s = await getJSON('/api/summary');
+  const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  setTxt('c-totalOrders', s.totalOrders);
+  setTxt('c-confirmedOrders', s.confirmedOrders ?? '-');
+  setTxt('c-avgOrder', fmtMoney(s.avgOrderAmount));
+  setTxt('c-totalProducts', s.totalProducts ?? 0);
+  setTxt('c-uniqueCustomers', s.uniqueCustomers);
+  setTxt('c-totalRevenue', fmtMoney(s.totalRevenue));
+  setTxt('c-lastOrderAt', fmtDate(s.lastOrderAt));
+  const br = s.ordersByStatus || [];
+  setTxt('c-statusBreakdown', br.map(r => `${r.status}: ${r.c}`).join('\n') || '-');
+}
+
+let ordersChart;
+async function loadOrdersByGroup(group, from) {
+  const params = new URLSearchParams();
+  if (group) params.set('group', group);
+  if (from) params.set('from', from);
+  const d = await getJSON('/api/orders-aggregate?' + params.toString());
+  const labels = d.data.map(r => r.bucket);
+  const orders = d.data.map(r => r.orders);
+  const revenue = d.data.map(r => r.revenue);
+  const ctx = document.getElementById('ordersChart').getContext('2d');
+  if (ordersChart) ordersChart.destroy();
+  ordersChart = new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets: [
+      { label: 'Pedidos', data: orders, backgroundColor: 'rgba(37,99,235,0.7)', yAxisID: 'y1' },
+      { label: 'Ingresos (AR$)', data: revenue, backgroundColor: 'rgba(22,163,74,0.7)', yAxisID: 'y2' }
+    ]},
+    options: {
+      responsive: true,
+      interaction: { mode: 'index', intersect: false },
+      stacked: false,
+      scales: {
+        y1: { type: 'linear', position: 'left' },
+        y2: { type: 'linear', position: 'right', grid: { drawOnChartArea: false }, ticks: { callback: (v) => 'AR$ ' + Number(v).toLocaleString('es-AR') } }
+      }
+    }
+  });
+}
+
+// Top listas con paginación
+let tcOffset = 0, tpOffset = 0;
+async function loadTopCustomers(limit) {
+  const d = await getJSON(`/api/top-customers?limit=${encodeURIComponent(limit)}&offset=${encodeURIComponent(tcOffset)}`);
+  const tbody = document.querySelector('#t-customers tbody'); if (!tbody) return; tbody.innerHTML = '';
+  d.data.forEach((r, i) => {
+    const tr = document.createElement('tr');
+    const alias = aliasMap[r.chat_id]?.name ? ` (${aliasMap[r.chat_id].name})` : '';
+    tr.innerHTML = `<td class="px-3 py-2 text-right">${i + 1 + tcOffset}</td><td class="px-3 py-2"><span class="font-mono">${r.chat_id}</span>${alias}</td><td class="px-3 py-2 text-right">${r.orders}</td><td class="px-3 py-2 text-right">${fmtMoney(r.revenue)}</td>`;
+    tbody.appendChild(tr);
+  });
+  const info = document.getElementById('tc-page-info'); if (info) info.textContent = `Mostrando ${d.data.length} desde ${tcOffset}`;
+}
+
+async function loadTopProducts(limit) {
+  const d = await getJSON(`/api/top-products?limit=${encodeURIComponent(limit)}&offset=${encodeURIComponent(tpOffset)}`);
+  const tbody = document.querySelector('#t-products tbody'); if (!tbody) return; tbody.innerHTML = '';
+  d.data.forEach((r, i) => {
+    const tr = document.createElement('tr');
+    const code = r.codigo || '';
+    tr.innerHTML = `<td class="px-3 py-2 text-right">${i + 1 + tpOffset}</td><td class="px-3 py-2">${r.producto}</td><td class="px-3 py-2">${r.marca || ''}</td><td class="px-3 py-2 font-mono">${code}</td><td class="px-3 py-2">${r.gate || ''}</td><td class="px-3 py-2 text-right">${r.qty}</td><td class="px-3 py-2 text-right">${fmtMoney(r.revenue)}</td>`;
+    tbody.appendChild(tr);
+  });
+  const info = document.getElementById('tp-page-info'); if (info) info.textContent = `Mostrando ${d.data.length} desde ${tpOffset}`;
+}
+
+// Pedidos con paginación
+let ordersOffset = 0;
+async function loadOrders(limit) {
+  var elStatus = document.getElementById('f-status');
+  var elFrom = document.getElementById('f-from');
+  var elTo = document.getElementById('f-to');
+  var elChat = document.getElementById('f-chat');
+  var elMin = document.getElementById('f-min-total');
+  var elMax = document.getElementById('f-max-total');
+  var elTxt = document.getElementById('f-has-text');
+  var elCode = document.getElementById('f-has-code');
+  const status = (elStatus && elStatus.value) ? elStatus.value : 'all';
+  const from = (elFrom && elFrom.value) ? elFrom.value : '';
+  const to = (elTo && elTo.value) ? elTo.value : '';
+  const chat = (elChat && elChat.value) ? elChat.value.trim() : '';
+  const minT = (elMin && elMin.value) ? elMin.value : '';
+  const maxT = (elMax && elMax.value) ? elMax.value : '';
+  const hasText = (elTxt && elTxt.value) ? elTxt.value.trim() : '';
+  const hasCode = (elCode && elCode.value) ? elCode.value.trim() : '';
+  const params = new URLSearchParams({ limit: String(limit), status, offset: String(ordersOffset) });
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  if (chat) params.set('chat_id', chat);
+  if (minT) params.set('min_total', minT);
+  if (maxT) params.set('max_total', maxT);
+  if (hasText) params.set('has_text', hasText);
+  if (hasCode) params.set('has_code', hasCode);
+  const d = await getJSON('/api/orders?' + params.toString());
+  const tbody = document.querySelector('#t-orders tbody'); if (!tbody) return; tbody.innerHTML = '';
+  d.data.forEach((r) => {
+    const tr = document.createElement('tr');
+    const alias = aliasMap[r.chat_id]?.name ? ` (${aliasMap[r.chat_id].name})` : '';
+    const chatCell = `<span class="font-mono truncate inline-block max-w-[11rem]" title="${r.chat_id}">${r.chat_id}</span>${alias}`;
+    const sucCell = `<span class="truncate inline-block max-w-[9rem]" title="${r.sucursal || ''}">${r.sucursal || ''}</span>`;
+    tr.innerHTML = `<td class="px-2 py-1 text-right font-mono">${r.id}</td><td class="px-2 py-1">${chatCell}</td><td class="px-2 py-1">${sucCell}</td><td class="px-2 py-1 whitespace-nowrap">${fmtDate(r.created_at)}</td><td class="px-2 py-1">${r.status}</td><td class="px-2 py-1 text-right font-mono">${fmtMoney(r.total)}</td>`;
+    tr.style.cursor = 'pointer';
+    tr.addEventListener('click', () => loadOrderDetail(r.id));
+    tbody.appendChild(tr);
+  });
+  const info = document.getElementById('page-info'); if (info) info.textContent = `Mostrando ${d.data.length} desde ${ordersOffset}`;
+}
+
+async function loadOrderDetail(id) {
+  const d = await getJSON(`/api/orders/${id}`);
+  const box = document.getElementById('order-detail'); if (!box) return;
+  const totals = (d.gateTotals || []).map(g => `${g.qty} ${g.gate}`).join(', ');
+  const lines = d.items.map(it => `${it.qty} ${it.gate} · ${it.producto} (${it.marca || ''}) — ${fmtMoney(it.subtotal)} [${it.codigo || ''}]`).join('\n');
+  box.textContent = `Pedido #${d.order.id} — ${fmtDate(d.order.created_at)} — ${d.order.status} — ${fmtMoney(d.order.total)}\nCliente: ${d.order.chat_id}${d.order.sucursal ? ' — ' + d.order.sucursal : ''}\nUnidades: ${totals || '-'}\n\nProductos:\n${lines}`;
+}
+
+// Catálogo y Clientes con paginación
+let catOffset = 0;
+async function loadCatalog(limit) {
+  var elSearch = document.getElementById('p-search');
+  const q = (elSearch && elSearch.value) ? elSearch.value.trim() : '';
+  const params = new URLSearchParams({ limit: String(limit), offset: String(catOffset) });
+  if (q) params.set('search', q);
+  const d = await getJSON('/api/products/catalog?' + params.toString());
+  const tbody = document.querySelector('#t-catalog tbody'); if (!tbody) return; tbody.innerHTML = '';
+  d.rows.forEach((r) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td class="px-3 py-2 font-mono">${r.codigo}</td><td class="px-3 py-2">${r.producto}</td><td class="px-3 py-2">${r.marca || ''}</td><td class="px-3 py-2 text-right">${(r.uxb || '')}</td><td class="px-3 py-2 text-right">${(r.kg_prom || '')}</td><td class="px-3 py-2 text-right">${fmtMoney(r.lista2)}</td>`;
+    tbody.appendChild(tr);
+  });
+  const info = document.getElementById('cat-page-info'); if (info) info.textContent = `Mostrando ${d.rows.length} desde ${catOffset}`;
+}
+
+// Compat: versiones anteriores usaban fetchAndRenderOrders
+async function fetchAndRenderOrders(limit) {
+  const el = document.getElementById('page-size');
+  const ps = limit || (el && el.value ? Number(el.value) : 50);
+  return loadOrders(ps);
+}
+
+let cliOffset = 0;
+async function loadCustomers(limit) {
+  const min = document.getElementById('c-min')?.value || '0';
+  const ina = document.getElementById('c-inactive')?.value || '0';
+  const params = new URLSearchParams({ min_orders: String(min || 0), inactive_days: String(ina || 0), limit: String(limit), offset: String(cliOffset) });
+  const d = await getJSON('/api/customers/list?' + params.toString());
+  const tbody = document.querySelector('#t-clients tbody'); if (!tbody) return; tbody.innerHTML = '';
+  d.rows.forEach((r) => {
+    const tr = document.createElement('tr');
+    const alias = aliasMap[r.chat_id]?.name ? ` (${aliasMap[r.chat_id].name})` : '';
+    tr.innerHTML = `<td class="px-3 py-2"><span class="font-mono">${r.chat_id}</span>${alias}</td><td class="px-3 py-2 text-right">${r.orders}</td><td class="px-3 py-2 text-right">${fmtMoney(r.revenue)}</td><td class="px-3 py-2">${fmtDate(r.first_order)}</td><td class="px-3 py-2">${fmtDate(r.last_order)}</td>`;
+    tbody.appendChild(tr);
+  });
+  const info = document.getElementById('cli-page-info'); if (info) info.textContent = `Mostrando ${d.rows.length} desde ${cliOffset}`;
+}
+
+// Heatmap y Calidad de datos
+async function loadHeatmap() {
+  const from = document.getElementById('hm-from')?.value || '';
+  const to = document.getElementById('hm-to')?.value || '';
+  const params = new URLSearchParams(); if (from) params.set('from', from); if (to) params.set('to', to);
+  const d = await getJSON('/api/stats/heatmap?' + params.toString());
+  const grid = Array.from({ length: 7 }, () => Array(24).fill(0));
+  d.data.forEach(r => { const w = Number(r.wday); const h = Number(r.hour); grid[w][h] = Number(r.orders || 0); });
+  const max = Math.max(1, ...grid.flat());
+  const host = document.getElementById('heatmap'); if (!host) return; host.innerHTML = '';
+  for (let w = 0; w < 7; w++) {
+    for (let h = 0; h < 24; h++) {
+      const v = grid[w][h]; const ratio = v / max; const shade = 255 - Math.floor(ratio * 180);
+      const cell = document.createElement('div'); cell.className = 'w-6 h-6';
+      cell.style.backgroundColor = `rgb(${shade}, ${255}, ${shade})`;
+      cell.title = `Día ${w} - ${h}:00 => ${v} pedidos`;
+      host.appendChild(cell);
+    }
+  }
+}
+
+async function loadDataQuality() {
+  const d = await getJSON('/api/stats/data-quality');
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  set('dq-missingDate', d.missingDate);
+  set('dq-zeroTotal', d.zeroTotal);
+  set('dq-zeroUnit', d.zeroUnit);
+}
+
+async function boot() {
+  await loadSummary();
+  await refreshMaps();
+
+  const dfltDays = Number(document.getElementById('days')?.value || 30);
+  await loadOrdersByGroup('day', daysAgoISO(dfltDays));
+
+  const psOrders = Number(document.getElementById('page-size')?.value || 50);
+  await loadOrders(psOrders);
+  const psTopC = Number(document.getElementById('tc-page-size')?.value || 50);
+  await loadTopCustomers(psTopC);
+  const psTopP = Number(document.getElementById('tp-page-size')?.value || 50);
+  await loadTopProducts(psTopP);
+  const psCat = Number(document.getElementById('cat-page-size')?.value || 50);
+  await loadCatalog(psCat);
+  const psCli = Number(document.getElementById('cli-page-size')?.value || 50);
+  await loadCustomers(psCli);
+  await loadHeatmap();
+  await loadDataQuality();
+
+  // Ventas por período
+  document.getElementById('reload-days')?.addEventListener('click', async () => {
+    const g = document.getElementById('group').value; const days = Number(document.getElementById('days').value || 30);
+    await loadOrdersByGroup(g, daysAgoISO(days));
+  });
+
+  // Pedidos: filtros y paginación
+  var elReload = document.getElementById('reload-orders'); if (elReload) elReload.addEventListener('click', () => { ordersOffset = 0; var psEl = document.getElementById('page-size'); var ps = psEl && psEl.value ? Number(psEl.value) : 50; loadOrders(ps); });
+  var elPgSize = document.getElementById('page-size'); if (elPgSize) elPgSize.addEventListener('change', () => { ordersOffset = 0; var psEl = document.getElementById('page-size'); var ps = psEl && psEl.value ? Number(psEl.value) : 50; loadOrders(ps); });
+  var elPrev = document.getElementById('prev-page'); if (elPrev) elPrev.addEventListener('click', () => { var psEl = document.getElementById('page-size'); var ps = psEl && psEl.value ? Number(psEl.value) : 50; ordersOffset = Math.max(0, ordersOffset - ps); loadOrders(ps); });
+  var elNext = document.getElementById('next-page'); if (elNext) elNext.addEventListener('click', () => { var psEl = document.getElementById('page-size'); var ps = psEl && psEl.value ? Number(psEl.value) : 50; ordersOffset += ps; loadOrders(ps); });
+  document.getElementById('export-csv')?.addEventListener('click', () => {
+    const status = document.getElementById('f-status')?.value || 'all';
+    const from = document.getElementById('f-from')?.value || '';
+    const to = document.getElementById('f-to')?.value || '';
+    const chat = document.getElementById('f-chat')?.value.trim() || '';
+    const minT = document.getElementById('f-min-total')?.value || '';
+    const maxT = document.getElementById('f-max-total')?.value || '';
+    const hasText = document.getElementById('f-has-text')?.value.trim() || '';
+    const hasCode = document.getElementById('f-has-code')?.value.trim() || '';
+    const params = new URLSearchParams({ limit: String(1000), offset: String(ordersOffset), status });
+    if (from) params.set('from', from); if (to) params.set('to', to); if (chat) params.set('chat_id', chat);
+    if (minT) params.set('min_total', minT); if (maxT) params.set('max_total', maxT);
+    if (hasText) params.set('has_text', hasText); if (hasCode) params.set('has_code', hasCode);
+    window.open('/api/orders.csv?' + params.toString(), '_blank');
+  });
+
+  // Top clientes
+  document.getElementById('tc-page-size')?.addEventListener('change', () => { tcOffset = 0; loadTopCustomers(Number(document.getElementById('tc-page-size')?.value || 50)); });
+  document.getElementById('tc-prev')?.addEventListener('click', () => { const ps = Number(document.getElementById('tc-page-size')?.value || 50); tcOffset = Math.max(0, tcOffset - ps); loadTopCustomers(ps); });
+  document.getElementById('tc-next')?.addEventListener('click', () => { const ps = Number(document.getElementById('tc-page-size')?.value || 50); tcOffset += ps; loadTopCustomers(ps); });
+
+  // Top productos
+  document.getElementById('tp-page-size')?.addEventListener('change', () => { tpOffset = 0; loadTopProducts(Number(document.getElementById('tp-page-size')?.value || 50)); });
+  document.getElementById('tp-prev')?.addEventListener('click', () => { const ps = Number(document.getElementById('tp-page-size')?.value || 50); tpOffset = Math.max(0, tpOffset - ps); loadTopProducts(ps); });
+  document.getElementById('tp-next')?.addEventListener('click', () => { const ps = Number(document.getElementById('tp-page-size')?.value || 50); tpOffset += ps; loadTopProducts(ps); });
+
+  // Catálogo
+  document.getElementById('reload-catalog')?.addEventListener('click', () => { catOffset = 0; loadCatalog(Number(document.getElementById('cat-page-size')?.value || 50)); });
+  document.getElementById('cat-page-size')?.addEventListener('change', () => { catOffset = 0; loadCatalog(Number(document.getElementById('cat-page-size')?.value || 50)); });
+  document.getElementById('cat-prev')?.addEventListener('click', () => { const ps = Number(document.getElementById('cat-page-size')?.value || 50); catOffset = Math.max(0, catOffset - ps); loadCatalog(ps); });
+  document.getElementById('cat-next')?.addEventListener('click', () => { const ps = Number(document.getElementById('cat-page-size')?.value || 50); catOffset += ps; loadCatalog(ps); });
+
+  // Clientes
+  document.getElementById('reload-customers')?.addEventListener('click', () => { cliOffset = 0; loadCustomers(Number(document.getElementById('cli-page-size')?.value || 50)); });
+  document.getElementById('cli-page-size')?.addEventListener('change', () => { cliOffset = 0; loadCustomers(Number(document.getElementById('cli-page-size')?.value || 50)); });
+  document.getElementById('cli-prev')?.addEventListener('click', () => { const ps = Number(document.getElementById('cli-page-size')?.value || 50); cliOffset = Math.max(0, cliOffset - ps); loadCustomers(ps); });
+  document.getElementById('cli-next')?.addEventListener('click', () => { const ps = Number(document.getElementById('cli-page-size')?.value || 50); cliOffset += ps; loadCustomers(ps); });
+
+  // Configuración rápida
+  document.getElementById('alias-save')?.addEventListener('click', async () => {
+    const chat = document.getElementById('alias-chat')?.value.trim();
+    const name = document.getElementById('alias-name')?.value.trim();
+    const notes = document.getElementById('alias-notes')?.value.trim();
+    if (!chat) return alert('Falta chat_id');
+    await postJSON('/api/config/clients-map', { chat_id: chat, name, notes });
+    await refreshMaps();
+    await loadTopCustomers(Number(document.getElementById('tc-page-size')?.value || 50));
+    await loadOrders(Number(document.getElementById('page-size')?.value || 50));
+  });
+  document.getElementById('branch-save')?.addEventListener('click', async () => {
+    const chat = document.getElementById('branch-chat')?.value.trim();
+    const branch = document.getElementById('branch-name')?.value.trim();
+    if (!chat) return alert('Falta chat_id');
+    await postJSON('/api/config/branches-map', { chat_id: chat, branch });
+    await refreshMaps();
+    await loadOrders(Number(document.getElementById('page-size')?.value || 50));
+  });
+
+  // Heatmap
+  document.getElementById('hm-reload')?.addEventListener('click', () => loadHeatmap());
+}
+
+boot().catch(err => { console.error(err); alert('Error cargando dashboard: ' + err.message); });
+
