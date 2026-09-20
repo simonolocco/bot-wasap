@@ -123,20 +123,21 @@ h1, h2, h3, h4, p { margin: 0; }
 .login-card input:focus { outline: none; border-color: #087f69; box-shadow: 0 0 0 3px rgba(8, 127, 105, .15); }
 .brand-kicker, .eyebrow, .section-kicker { color: var(--primary); font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
 .form-error { border-radius: 9px; padding: 10px 14px; background: #fff0f2; color: #a82e43; font-size: 12px; border: 1px solid #fecdd3; }
-.login-card .button.primary,
-.login-card button {
+.login-card .button.primary {
   border-color: #c53030;
   background: #c53030;
   color: #fff;
   box-shadow: 0 1px 4px rgba(197, 48, 48, .25);
 }
-.login-card .button.primary:hover,
-.login-card .button.primary:hover:not(:disabled),
-.login-card button:hover,
-.login-card button:hover:not(:disabled) {
+.login-card .button.primary:hover:not(:disabled) {
   border-color: #9b2c2c;
   background: #9b2c2c;
   box-shadow: 0 2px 8px rgba(155, 44, 44, .35);
+}
+.login-card .button.primary:focus-visible {
+  outline: 2px solid #9b2c2c;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 3px rgba(197, 48, 48, .25);
 }
 
 /* ═══════════════════════════════════════════════════════
