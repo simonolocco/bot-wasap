@@ -10,6 +10,7 @@ const viewports = [
 
 const views = [
   ['Resumen', 'Resumen'],
+  ['Simulador Jev', 'Simulador Jev'],
   ['Conversaciones', 'Conversaciones'],
   ['Tickets', 'Tickets'],
   ['Contactos', 'Contactos'],

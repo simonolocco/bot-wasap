@@ -2,6 +2,7 @@ import { useSheetFocus } from './useSheetFocus';
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { api, cachedApi, formatDate, formatDateOnly, initials, invalidateApi } from './api';
 import AnalyticsView from './AnalyticsView';
+import JevSimulatorView from './JevSimulatorView';
 import type {
   AnalyticsPeriodKey,
   AiAnswerLabel,
@@ -17,7 +18,7 @@ import type {
   UnrecognizedPattern,
 } from './types';
 
-type SecondaryView = 'dashboard' | 'analytics' | 'contacts' | 'orders' | 'tickets' | 'templates' | 'ia';
+type SecondaryView = 'dashboard' | 'analytics' | 'jev' | 'contacts' | 'orders' | 'tickets' | 'templates' | 'ia';
 type Paged<T> = { items: T[]; total: number; page: number; limit: number };
 
 const stages: Record<string, { label: string; tone: string }> = {
@@ -1623,6 +1624,7 @@ export default function SecondaryViews({
 }) {
   if (view === 'dashboard') return <Dashboard onNavigate={onNavigate} />;
   if (view === 'analytics') return <Analytics onOpenContact={onOpenContact} onNavigate={onNavigate} />;
+  if (view === 'jev') return <JevSimulatorView />;
   if (view === 'tickets') return <Tickets onOpen={onOpenContact} />;
   if (view === 'contacts') return <Contacts onOpen={onOpenContact} />;
   if (view === 'orders') return <Orders onOpenContact={onOpenContact} />;

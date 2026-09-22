@@ -20,6 +20,7 @@ import { resolveCustomerAiResponse } from './ai/queryResolver';
 import { deriveSuggestedAiTopic, learningConfidence } from './ai/runtimePolicy';
 import { generateAndStoreAiQueryPreview } from './services/aiPreviewProcessor';
 import { analyticsExcelFilename, buildAnalyticsExcel } from './services/analyticsExcel';
+import { evaluateJevMessage, JevServiceError, JevSimulationLimiter } from './services/jevSimulator';
 import { checkMediaStorage, ensureMediaCached, ensureMediaThumbnail, isSafeUpload, markMediaUploadFailed, storeMedia } from './services/mediaStorage';
 import { parseIncoming } from './whatsappIncoming';
 
@@ -224,6 +225,31 @@ function openStream(req: Request, res: Response, contactId: string | null) {
   req.on('close', () => { clearInterval(heartbeat); streams.delete(res); });
 }
 app.get('/api/dashboard', async (_req, res) => res.json({ ...(await dashboard()), cloudReady: hasCloudCredentials(), transport: getWhatsAppTransport(), mediaStorage: await checkMediaStorage() }));
+const jevSimulationSchema = z.object({ message: z.string().trim().min(3).max(4000) });
+const jevSimulationLimiter = new JevSimulationLimiter();
+const jevLimiterCleanup = setInterval(() => jevSimulationLimiter.cleanup(), 5 * 60_000);
+jevLimiterCleanup.unref();
+app.post('/api/jev/simulate', async (req, res) => {
+  const parsed = jevSimulationSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'Escribí un mensaje de entre 3 y 4.000 caracteres.' });
+  const claim = jevSimulationLimiter.acquire(req.sessionID || req.ip || 'unknown');
+  if (!claim.allowed) {
+    res.setHeader('Retry-After', String(claim.retryAfterSeconds));
+    return res.status(429).json({
+      error: claim.reason === 'busy'
+        ? 'Ya hay una simulación de Jev en curso para esta sesión.'
+        : 'Llegaste al límite de simulaciones por minuto. Esperá un momento.',
+    });
+  }
+  try {
+    return res.json(await evaluateJevMessage(parsed.data.message));
+  } catch (error) {
+    if (error instanceof JevServiceError) return res.status(error.status).json({ error: error.message });
+    throw error;
+  } finally {
+    claim.release();
+  }
+});
 app.get('/api/ai', async (req, res) => {
   const status = qs(req.query.status);
   const source = qs(req.query.source);

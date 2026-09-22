@@ -7,6 +7,8 @@ test('las APIs privadas rechazan sesiones anónimas', async ({ request }) => {
   expect(response.status()).toBe(401);
   const upload = await request.post('/api/media', { multipart: { file: { name: 'malware.exe', mimeType: 'application/octet-stream', buffer: Buffer.from('MZ') } } });
   expect(upload.status()).toBe(401);
+  const jev = await request.post('/api/jev/simulate', { data: { message: 'Mensaje privado' } });
+  expect(jev.status()).toBe(401);
 });
 
 test('webhook exige firma válida', async ({ request }) => {
@@ -32,6 +34,7 @@ test('login, navegación principal, salud y logout', async ({ page }) => {
   await login(page);
   for (const [nav, heading] of [
     ['Resumen', 'Resumen'],
+    ['Simulador Jev', 'Simulador Jev'],
     ['Conversaciones', 'Conversaciones'],
     ['Tickets', 'Tickets'],
     ['Contactos', 'Contactos'],
