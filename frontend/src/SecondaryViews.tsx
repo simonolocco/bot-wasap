@@ -1352,8 +1352,8 @@ const aiQueueViews: Array<{ id: AiQueueView; label: string }> = [
 ];
 const aiQueueCopy: Record<AiQueueView, { title: string; description: string; empty: string }> = {
   attention: { title: 'Preguntas de clientes', description: 'Revisá la etiqueta elegida por la IA y corregí la respuesta sólo si hace falta.', empty: 'No hay consultas esperando revisión.' },
-  answered: { title: 'Respuestas a clientes', description: 'Historial real de lo que contestó una regla aprobada, una etiqueta o la IA generativa.', empty: 'Todavía no hay respuestas registradas.' },
-  errors: { title: 'Contingencias de IA', description: 'La consulta era entendible, pero el proveedor no estuvo disponible. El cliente recibió una respuesta de contingencia.', empty: 'No hay errores del proveedor.' },
+  answered: { title: 'Respuestas a clientes', description: 'Historial real de las plantillas que Jev eligió para responder.', empty: 'Todavía no hay respuestas registradas.' },
+  errors: { title: 'Contingencias de IA', description: 'Jev no estuvo disponible o no pudo decidir una respuesta segura.', empty: 'No hay errores del proveedor.' },
   noise: { title: 'Ruido', description: 'Sólo mensajes sin una consulta recuperable, como signos sueltos, números aislados o texto aleatorio.', empty: 'No hay mensajes clasificados como ruido.' },
   tests: { title: 'Pruebas manuales', description: 'Resultados del probador. Nunca crean etiquetas ni cambian respuestas usadas con clientes.', empty: 'Todavía no hiciste pruebas manuales.' },
 };
@@ -1454,8 +1454,11 @@ function AiView() {
 
   async function toggle() {
     if (!data) return;
+    const switchingLegacyToJev = data.settings.enabled && data.settings.engine !== 'jev';
+    const enabling = switchingLegacyToJev || !data.settings.enabled;
+    if (enabling && !window.confirm('¿Activar Jev para responder mensajes reales de clientes? El simulador seguirá disponible para probarlo.')) return;
     setBusy(true); setNotice('');
-    try { await api('/api/ai/status', { method: 'PATCH', body: JSON.stringify({ enabled: !data.settings.enabled }) }); setNotice(data.settings.enabled ? 'Respuestas de IA apagadas. Las vistas previas privadas siguen preparándose.' : 'Respuestas de IA activadas.'); await load(); }
+    try { await api('/api/ai/status', { method: 'PATCH', body: JSON.stringify({ enabled: enabling, ...(enabling ? { engine: 'jev' } : {}) }) }); setNotice(enabling ? 'Jev quedó activo para responder a clientes.' : 'Jev quedó apagado. El simulador y las vistas previas siguen disponibles.'); await load(); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'No se pudo cambiar el estado.'); }
     finally { setBusy(false); }
   }
@@ -1554,14 +1557,16 @@ function AiView() {
 
   if (!data) return <div className="secondary-view"><AiLoadingState label="Cargando control de IA…" />{error && <div className="form-error-banner">{error}</div>}</div>;
   const queueCopy = aiQueueCopy[filter];
-  const testSourceLabel = ({ 'saved-rule': 'Respuesta aprobada', 'approved-label': 'Etiqueta aprobada', generated: 'IA generativa' } as Record<string, string>)[testSource] ?? '';
+  const testSourceLabel = ({ 'saved-rule': 'Respuesta aprobada', 'approved-label': 'Etiqueta aprobada', generated: 'IA anterior', 'jev-template': 'Jev + plantilla aprobada' } as Record<string, string>)[testSource] ?? '';
+  const jevActive = data.settings.enabled && data.settings.engine === 'jev';
+  const legacyActive = data.settings.enabled && data.settings.engine !== 'jev';
   return (
     <div className="secondary-view ai-view">
       <section className={`ai-control-card ${data.settings.enabled ? 'is-enabled' : 'is-disabled'}`}>
-        <div className="ai-control-copy"><div className="ai-control-title"><span className="ai-live-dot" aria-hidden="true" /><h2>Respuestas automáticas a clientes</h2><span className={`ai-status ${data.settings.enabled ? 'answered' : 'disabled'}`}>{data.settings.enabled ? 'Activas' : 'Apagadas'}</span></div><p>{data.settings.enabled ? 'El menú mantiene la prioridad. Sólo las consultas que quedan fuera del flujo reciben una respuesta aprobada o generada por IA.' : 'La IA no envía mensajes a clientes. Igual analiza las consultas y prepara vistas previas privadas para que puedas revisarlas antes de activarla.'}</p></div>
-        <button type="button" className={`button ${data.settings.enabled ? 'danger' : 'primary'}`} aria-pressed={data.settings.enabled} disabled={busy} onClick={() => void toggle()}>{data.settings.enabled ? 'Apagar respuestas de IA' : 'Activar respuestas de IA'}</button>
+        <div className="ai-control-copy"><div className="ai-control-title"><span className="ai-live-dot" aria-hidden="true" /><h2>Respuestas automáticas a clientes</h2><span className={`ai-status ${data.settings.enabled ? 'answered' : 'disabled'}`}>{jevActive ? 'Jev activo' : legacyActive ? 'IA anterior activa' : 'Apagadas'}</span></div><p>{jevActive ? 'Jev clasifica cada consulta y elige una respuesta aprobada. Las consultas sobre productos siempre pasan al asesor.' : legacyActive ? 'Hay una configuración anterior respondiendo a clientes. Podés cambiarla a Jev con el botón.' : 'Jev no envía mensajes a clientes. Podés probar conversaciones completas en el simulador y activarlo recién cuando estés conforme.'}</p></div>
+        <button type="button" className={`button ${jevActive ? 'danger' : 'primary'}`} aria-pressed={jevActive} disabled={busy} onClick={() => void toggle()}>{jevActive ? 'Apagar Jev' : legacyActive ? 'Cambiar a Jev en producción' : 'Activar Jev en producción'}</button>
       </section>
-      <section className="ai-response-contract" aria-label="Cómo responde la IA"><strong>Cómo se decide cada respuesta</strong><ol><li>El primer mensaje siempre muestra el menú.</li><li>El bot resuelve primero las opciones conocidas.</li><li>La IA interviene sólo en lo que queda afuera.</li></ol></section>
+      <section className="ai-response-contract" aria-label="Cómo responde Jev"><strong>Cómo se decide cada respuesta</strong><ol><li>El primer mensaje siempre muestra el menú.</li><li>Jev identifica el tipo de consulta.</li><li>El sistema envía la plantilla aprobada; productos, precios y stock van a Mauricio.</li></ol></section>
       {notice && <div className="ai-notice" role="status">{notice}</div>}{error && <div className="form-error-banner" role="alert">{error}</div>}
       <nav className="ai-workspace-tabs" aria-label="Secciones de IA">
         <button type="button" className={workspaceView === 'queries' ? 'active' : ''} aria-current={workspaceView === 'queries' ? 'page' : undefined} onClick={() => setWorkspaceView('queries')}>Preguntas y respuestas</button>
@@ -1569,7 +1574,7 @@ function AiView() {
       </nav>
       {workspaceView === 'queries' && <>
       <section className="ai-test-card">
-        <div><h2>Probar una pregunta</h2><p className="ai-section-description">Usa el mismo recorrido que WhatsApp, pero no crea reglas ni altera el conocimiento aprobado.</p></div>
+        <div><h2>Probar una pregunta con Jev</h2><p className="ai-section-description">Usa el mismo recorrido de decisión y respuesta que WhatsApp sin enviar mensajes. La prueba queda guardada en la vista Pruebas.</p></div>
         <form onSubmit={runTest} className="ai-test-form"><textarea aria-label="Pregunta de prueba" value={question} onChange={event => setQuestion(event.target.value)} placeholder="Ej.: ¿Hacen envíos a Villa María?" rows={3} /><button className="button primary" disabled={busy || !question.trim()}>{busy ? 'Consultando…' : 'Probar respuesta'}</button></form>
         {testAnswer && <div className="ai-test-result"><div className="ai-result-heading"><strong>Respuesta que recibiría el cliente</strong>{testSourceLabel && <span className="ai-label-badge">{testSourceLabel}{testLabel ? ` · ${testLabel}` : ''}</span>}</div><p>{testAnswer}</p><small className="ai-editor-hint">Después se envía el menú automático.</small></div>}
       </section>
@@ -1602,7 +1607,7 @@ function AiView() {
         })}</div>}
       </section>
       </>}
-      {workspaceView === 'labels' && <section className="ai-section-card"><div className="ai-section-heading"><div><h2>Etiquetas</h2><p className="ai-section-description">La IA crea borradores para los temas nuevos. Acá podés corregir el nombre y la respuesta que compartirán todas sus preguntas.</p></div><button type="button" className="button primary" onClick={() => setShowNewLabel(value => !value)}>{showNewLabel ? 'Cerrar formulario' : 'Nueva etiqueta'}</button></div>
+      {workspaceView === 'labels' && <section className="ai-section-card"><div className="ai-section-heading"><div><h2>Respuestas de Jev</h2><p className="ai-section-description">Jev elige el tipo de consulta y usa estas respuestas aprobadas. Acá podés ajustar el texto exacto que recibirá el cliente.</p></div><button type="button" className="button primary" onClick={() => setShowNewLabel(value => !value)}>{showNewLabel ? 'Cerrar formulario' : 'Nueva etiqueta'}</button></div>
         {showNewLabel && <form className="ai-new-label-form" onSubmit={createLabel}><div className="ai-new-label-intro"><strong>Crear etiqueta</strong><span>Usala sólo cuando el tema todavía no aparezca en la lista.</span></div><label className="ai-field-label">Nombre de la etiqueta<input className="ai-label-input" value={newLabel.name} onChange={event => setNewLabel(current => ({ ...current, name: event.target.value }))} placeholder="Ej.: facturacion" autoFocus /></label><label className="ai-field-label">Respuesta compartida<textarea value={newLabel.answer} onChange={event => setNewLabel(current => ({ ...current, answer: event.target.value }))} placeholder="Escribí la respuesta que recibirán las preguntas con esta etiqueta" rows={5} /></label><small className="ai-editor-hint">El menú se envía automáticamente después de cada respuesta.</small><div className="ai-query-actions"><span className="ai-rule-date">Después vas a poder elegirla desde Preguntas y respuestas.</span><button className="button secondary" type="submit" disabled={busy || !newLabel.name.trim() || !newLabel.answer.trim()}>Crear etiqueta</button></div></form>}
         {!labels.length ? <AiEmptyState title="Todavía no hay etiquetas" description="Cuando la IA detecte un tema nuevo, su borrador aparecerá acá." /> : <div className="ai-rules-list">{labels.map(label => { const draft = labelDrafts[label.id] ?? { name: label.name, answer: label.answer }; const createdByAi = label.createdBy?.startsWith('ai-auto'); return <article className="ai-rule-item ai-label-card" key={label.id}><div className="ai-label-card-heading"><div><span className="ai-label-badge">{createdByAi && !label.active ? 'Nueva · creada por IA' : 'Etiqueta'}</span><strong>{label.aliasCount ?? label.aliases.length} preguntas asociadas</strong></div><span className="ai-rule-date">Actualizada {formatDate(label.updatedAt)}</span></div><label className="ai-field-label">Nombre<input className="ai-label-input" value={draft.name} onChange={event => setLabelDrafts(current => ({ ...current, [label.id]: { ...draft, name: event.target.value } }))} /></label>{label.aliases.length > 0 && <div className="ai-aliases"><small>Preguntas asociadas:</small>{label.aliases.map((alias, index) => <span key={`${label.id}-${index}`}>{alias}</span>)}</div>}<label className="ai-field-label">Respuesta compartida<textarea value={draft.answer} onChange={event => setLabelDrafts(current => ({ ...current, [label.id]: { ...draft, answer: event.target.value } }))} rows={4} /></label><small className="ai-editor-hint">Todas las preguntas con esta etiqueta reciben esta respuesta. El menú se agrega automáticamente después.</small><div className="ai-query-actions"><span /><div><button className="button secondary" disabled={busy || !draft.name.trim() || !draft.answer.trim()} onClick={() => void saveLabel(label)}>Guardar etiqueta</button><button className="button ghost" disabled={busy} onClick={() => void deleteLabel(label)}>Eliminar</button></div></div></article>; })}</div>}
       </section>}

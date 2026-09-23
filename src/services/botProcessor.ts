@@ -6,6 +6,7 @@ import {
   retryAdvisorFollowup, retryJob, scheduleAdvisorFollowup, updateSession,
   ensureAiAnswerLabelDraft, findAiAnswerRule, getAiSettings, loadActiveAiLabelExamples, promoteAiLabelCandidateQueries,
   enqueueAiQueryPreview, recordAiLabelCandidateObservation, saveAiAnswerRule,
+  type AiSettings,
 } from '../db/repository';
 import {
   advisorReply, BUSINESS_ADDRESS, BUSINESS_SCHEDULE, EMPTY_ORDER_MESSAGE, FAQ_GENERAL, FAQ_OTHER_NO_ID, FAQ_OTHER_PROMPT,
@@ -17,6 +18,7 @@ import { assistantEnabled, hasPendingQuestion, isLearningQueueNoise, shouldUseAs
 import { readCatalog } from '../ai/catalog';
 import { createOpenRouterClient } from '../ai/openRouter';
 import { resolveCustomerAiResponse } from '../ai/queryResolver';
+import { resolveJevCustomerResponse } from '../ai/jevResponse';
 import { aiReviewStatus, deriveSuggestedAiTopic, learningConfidence } from '../ai/runtimePolicy';
 import { isUnintelligibleQuestion } from '../ai/inputQuality';
 import {
@@ -29,10 +31,19 @@ const DUPLICATE_AUTO_RESPONSE_WINDOW_SECONDS = Math.max(0, Number.parseInt(proce
 const AUTO_RESPONSE_MAX_DELAY_SECONDS = Math.max(0, Number.parseInt(process.env.AUTO_RESPONSE_MAX_DELAY_SECONDS ?? '120', 10) || 120);
 export const ADVISOR_FOLLOWUP_DELAY_MS = 10 * 60 * 1000;
 
+async function productionAiSettings(): Promise<AiSettings> {
+  if (process.env.NODE_ENV !== 'production') {
+    return { enabled: assistantEnabled(), engine: 'jev', updatedAt: null, updatedBy: 'development' };
+  }
+  try { return await getAiSettings(); }
+  catch (error) {
+    console.error('[worker] No se pudo leer el interruptor global de IA:', error);
+    return { enabled: false, engine: 'legacy', updatedAt: null, updatedBy: null };
+  }
+}
+
 async function productionAiEnabled() {
-  if (process.env.NODE_ENV !== 'production') return assistantEnabled();
-  try { return (await getAiSettings()).enabled; }
-  catch (error) { console.error('[worker] No se pudo leer el interruptor global de IA:', error); return false; }
+  return (await productionAiSettings()).enabled;
 }
 
 export function shouldIgnoreIncomingForAutomaticResponse(type: string) {
@@ -367,19 +378,28 @@ export async function processIncomingJob(job: { id: string; contact_id: string; 
     // bot went on to answer correctly.
     const aiCandidate = shouldQueueAiLearning(incoming, session.awaiting_order_detail, pendingAssistantQuestion);
     if (aiCandidate) {
-      const aiEnabled = await productionAiEnabled();
-      const complete = createOpenRouterClient({ key: process.env.OPENROUTER_API_KEY ?? '', model: process.env.OPENROUTER_MODEL ?? 'google/gemini-3.5-flash-lite' });
+      const aiSettings = await productionAiSettings();
+      const aiEnabled = aiSettings.enabled;
       const labelCandidates = await loadActiveAiLabelExamples();
-      const savedRule = await findAiAnswerRule(rawText, { persistSemantic: false });
-      const resolution = await resolveCustomerAiResponse({
-        question: rawText,
-        history,
-        catalog: await readCatalog(),
-        complete,
-        allowCustomerResponse: aiEnabled,
-        savedRule,
-        labels: labelCandidates,
-      });
+      const savedRule = aiEnabled && aiSettings.engine === 'jev'
+        ? null
+        : await findAiAnswerRule(rawText, { persistSemantic: false });
+      const resolution = aiEnabled && aiSettings.engine === 'jev'
+        ? await resolveJevCustomerResponse({
+            question: rawText,
+            history,
+            labels: labelCandidates,
+            failSafe: true,
+          })
+        : await resolveCustomerAiResponse({
+            question: rawText,
+            history,
+            catalog: await readCatalog(),
+            complete: createOpenRouterClient({ key: process.env.OPENROUTER_API_KEY ?? '', model: process.env.OPENROUTER_MODEL ?? 'google/gemini-3.5-flash-lite' }),
+            allowCustomerResponse: aiEnabled,
+            savedRule,
+            labels: labelCandidates,
+          });
       const classification = resolution.classification;
       const unintelligible = classification.method === 'unintelligible' || isUnintelligibleQuestion(rawText);
       let suggestedName = deriveSuggestedAiTopic(classification, resolution.answer);
@@ -431,7 +451,11 @@ export async function processIncomingJob(job: { id: string; contact_id: string; 
         // A human can take the chat, the switch can turn off, or the message can
         // become stale while the provider is working. Re-check before sending.
         const latestContact = await getContactById(job.contact_id);
-        const responseStillEnabled = await productionAiEnabled();
+        const latestAiSettings = await productionAiSettings();
+        const sameRevision = String(latestAiSettings.updatedAt ?? '') === String(aiSettings.updatedAt ?? '');
+        const responseStillEnabled = latestAiSettings.enabled
+          && latestAiSettings.engine === aiSettings.engine
+          && sameRevision;
         const becameStale = shouldSkipAutomaticResponse(sourceTimestamp, event.received_at);
         if (!responseStillEnabled || latestContact?.botPaused || becameStale) {
           const withheldOutcome = latestContact?.botPaused || becameStale ? 'paused' : 'disabled';

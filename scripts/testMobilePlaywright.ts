@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as assert from 'assert';
 
-export async function startServer(): Promise<http.Server> {
+export async function startServer(port = 0): Promise<http.Server> {
   return new Promise((resolve) => {
     let allRead = false;
     const server = http.createServer((req, res) => {
@@ -26,6 +26,17 @@ export async function startServer(): Promise<http.Server> {
 
       if (pathname === '/api/dashboard') return sendJson({ work: { unread: 0, overdueFollowUps: 0, newOrders: 0, openTickets: 0 }, stats: { total: 0 }, transport: 'mock', cloudReady: true, worker: { healthy: true } });
       if (pathname === '/api/dashboard/work') return sendJson({ unread: 0, overdueFollowUps: 0, newOrders: 0, openTickets: 0 });
+      if (pathname === '/api/ai' && req.method === 'GET') return sendJson({
+        settings: { enabled: false, engine: 'legacy', updatedAt: null, updatedBy: null },
+        model: 'typesafe/jev-1.13',
+        rules: [],
+        labels: [
+          { id: 'qa-product', name: 'consultas-productos', normalizedName: 'consultas-productos', answer: 'Para consultas de productos, escribile a Mauricio.', active: true, aliases: [], aliasCount: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+          { id: 'qa-hours', name: 'horarios', normalizedName: 'horarios', answer: 'Lunes a viernes de 8:15 a 16:00.', active: true, aliases: [], aliasCount: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+        ],
+        queries: { items: [], total: 0, page: 0, limit: 50 },
+        totals: { attention: 0, answered: 0, noise: 0, errors: 0, tests: 0 },
+      });
       if (pathname === '/api/analytics') return sendJson({
         period: { label: 'Últimos 30 días', from: new Date().toISOString(), to: new Date().toISOString() },
         coverage: { earliestEventAt: null, totalEventsTracked: 0 },
@@ -55,6 +66,35 @@ export async function startServer(): Promise<http.Server> {
       if (pathname === '/api/contacts') return sendJson({ items: [], total: 0 });
       if (pathname === '/api/templates') return sendJson({ items: [] });
       if (pathname === '/api/tickets') return sendJson({ items: [{ id: 'tick-mob-1', contactId: 'conv-mob-1', ticketType: 'question', status: 'open', openedAt: new Date().toISOString(), openedBy: 'user', createdAt: new Date().toISOString(), contactName: 'Cliente' }], total: 1 });
+      if (pathname === '/api/jev/simulate' && req.method === 'POST') {
+        let raw = '';
+        req.on('data', chunk => { raw += chunk.toString(); });
+        req.on('end', () => {
+          let message = '';
+          try { message = String(JSON.parse(raw).message ?? ''); } catch { /* invalid bodies stay empty */ }
+          const normalized = message.toLocaleLowerCase('es-AR');
+          const isProduct = /queso|cremoso|precio|stock|producto/.test(normalized);
+          const isThanks = /gracias|perfecto|genial/.test(normalized);
+          const responseType = isProduct ? 'product_advisor' : isThanks ? 'thanks' : 'unclear';
+          const reply = isProduct
+            ? 'Para confirmar productos, marcas, presentaciones, precios, promociones, unidades por caja o stock actualizado, escribile directamente a Mauricio, nuestro asesor comercial: https://wa.me/5493517565641'
+            : isThanks
+              ? '¡Gracias por escribirnos! Estamos a tu disposición.'
+              : 'No llegué a comprender bien tu consulta. ¿Podés escribirla de otra forma?';
+          return sendJson({
+            model: 'typesafe/jev-1.13-qa',
+            elapsedMs: 84,
+            answers: {
+              response_type: { type: 'choice', choice: responseType, probabilities: { [responseType]: .96 }, confidence: .93 },
+              urgency: { type: 'score', score: isProduct ? 1 : 0, probabilities: { 0: isProduct ? 0 : 1, 1: isProduct ? 1 : 0, 2: 0 }, confidence: .9, legend: { 0: 'Puede esperar', 1: 'Atender pronto', 2: 'Atención inmediata' } },
+              human_attention: { type: 'noul', noul: isProduct ? 1 : 0 },
+            },
+            usage: { input_tokens: 36, output_tokens: 5, cost: .000002 },
+            reply: { text: reply, outcome: isProduct ? 'handoff' : 'answered', label: isProduct ? 'consultas-productos' : isThanks ? 'agradecimientos' : 'pregunta-no-entendible', responseType, sendMenuAfter: true },
+          });
+        });
+        return;
+      }
       if (pathname === '/api/conversations') {
         const cursor = url.searchParams.get('cursor');
         if (cursor === 'page-2') return sendJson({
@@ -117,7 +157,7 @@ export async function startServer(): Promise<http.Server> {
         fs.createReadStream(filePath).pipe(res);
       });
     });
-    server.listen(0, '127.0.0.1', () => resolve(server));
+    server.listen(port, '127.0.0.1', () => resolve(server));
   });
 }
 

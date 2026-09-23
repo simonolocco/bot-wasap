@@ -15,7 +15,7 @@ export type AiLabelClassification = {
   existingLabelId: string | null;
   suggestedName: string | null;
   confidence: number;
-  method: 'exact' | 'fuzzy' | 'semantic' | 'fallback' | 'ambiguous' | 'unintelligible' | 'none';
+  method: 'exact' | 'fuzzy' | 'semantic' | 'jev' | 'fallback' | 'ambiguous' | 'unintelligible' | 'none';
 };
 
 const resultSchema = z.object({
@@ -76,16 +76,12 @@ const semanticFamilies: SemanticFamily[] = [
     ],
   },
   {
-    name: 'stock',
+    name: 'consultas-productos',
     patterns: [
       /\b(stock|disponibilidad|disponible)\b/i,
       /\b(hay|tenes|tienen)\b.{0,25}\b(cremoso|manteca|queso|fiambre|sardo|tybo|muzzarella|jamon|salame|panceta|ricota|cheddar)\b/i,
       /\b(consulta|busco|necesito|venden)\b.{0,35}\b(cremoso|manteca|queso|fiambre|sardo|tybo|muzzarella|jamon|salame|panceta|ricota|cheddar)\b/i,
-    ],
-  },
-  {
-    name: 'unidades-por-caja',
-    patterns: [
+      /\b(precio|cuanto (?:sale|cuesta)|promocion|oferta)\b.{0,35}\b(producto|cremoso|manteca|queso|fiambre|sardo|tybo|muzzarella|jamon|salame|panceta|ricota|cheddar)\b/i,
       /\b(cuantas?|cantidad)\b.{0,30}\b(unidades?|piezas?|hormas?|kilos?|kg|bultos?)\b/i,
       /\b(cuant[oa]s?|cantas?)\b.{0,25}\b(trae|tre|viene|entran?)\b.{0,25}\b(caja|bulto)\b/i,
       /\b(unidades?|piezas?|hormas?|kilos?|kg|bultos?)\b.{0,30}\b(caja|cajas|bulto|trae|viene|contiene)\b/i,

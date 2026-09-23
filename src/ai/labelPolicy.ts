@@ -7,6 +7,10 @@ export const AUTO_LABEL_MIN_30D_CONTACTS = 5;
 export const AUTO_LABEL_MIN_7D_CONTACTS = 3;
 
 const MAURICIO_URL = 'https://wa.me/5493517565641';
+const PRODUCT_ADVISOR_ANSWER = [
+  'Para confirmar productos, marcas, presentaciones, precios, promociones, unidades por caja o stock actualizado,',
+  `escribile directamente a Mauricio, nuestro asesor comercial: ${MAURICIO_URL}`,
+].join(' ');
 
 export const AI_UNCLEAR_LABEL_ANSWER = [
   'No llegué a reconocer una consulta en ese mensaje. ¿Podés escribirla de otra forma?',
@@ -29,19 +33,15 @@ const CANONICAL_ANSWERS: Record<string, string> = {
   ].join(' '),
   'compra-minima': [
     'La compra mínima es de 1/2 horma en adelante.',
-    'Podés indicarnos qué producto buscás para ayudarte con la presentación disponible.',
+    `Para confirmar una presentación o cantidad, podés consultarle a Mauricio: ${MAURICIO_URL}`,
   ].join(' '),
   saludos: '¡Hola! Bienvenido/a a Distribuidora Abasto del Campo 👋 ¿En qué podemos ayudarte hoy?',
   agradecimientos: '¡Gracias por escribirnos! Estamos a tu disposición.',
-  'consulta-general': '¿En qué podemos ayudarte? Podés consultar precios, catálogo, horarios, envíos o contactar a un asesor.',
-  stock: [
-    'El stock cambia durante el día y no puedo confirmarlo en tiempo real.',
-    `Mauricio te confirma disponibilidad y presentación del producto: ${MAURICIO_URL}`,
-  ].join(' '),
-  'unidades-por-caja': [
-    'La cantidad de unidades, kilos o piezas por caja cambia según el producto y la marca.',
-    `Mauricio te confirma la presentación exacta: ${MAURICIO_URL}`,
-  ].join(' '),
+  'consulta-general': 'Este canal atiende consultas de Distribuidora Abasto del Campo. Puedo ayudarte con horarios, ubicación, envíos, catálogo, pedidos o derivarte con un asesor comercial.',
+  'consultas-productos': PRODUCT_ADVISOR_ANSWER,
+  productos: PRODUCT_ADVISOR_ANSWER,
+  stock: PRODUCT_ADVISOR_ANSWER,
+  'unidades-por-caja': PRODUCT_ADVISOR_ANSWER,
   proveedores: [
     'Este canal está destinado a consultas de clientes y ventas.',
     `Para propuestas de proveedores, comunicate con Mauricio, nuestro asesor comercial: ${MAURICIO_URL}`,

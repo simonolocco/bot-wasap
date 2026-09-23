@@ -40,10 +40,10 @@ async function main() {
 
   assert.equal((await classifyQuestionLabel('pregunta es por mayor menor no se puede comprar', [])).suggestedName, 'minorista');
   assert.equal((await classifyQuestionLabel('Hay que comprar 24 hormas para que quede el precio?', [])).suggestedName, 'compra-minima');
-  assert.equal((await classifyQuestionLabel('tenés cremoso?', [])).suggestedName, 'stock');
-  assert.equal((await classifyQuestionLabel('¿Cuántos trae la caja?', [])).suggestedName, 'unidades-por-caja');
+  assert.equal((await classifyQuestionLabel('tenés cremoso?', [])).suggestedName, 'consultas-productos');
+  assert.equal((await classifyQuestionLabel('¿Cuántos trae la caja?', [])).suggestedName, 'consultas-productos');
   assert.equal((await classifyQuestionLabel('Te interesa trabajar los lácteos de Arroyo Cabral?', [])).suggestedName, 'proveedores');
-  assert.equal((await classifyQuestionLabel('Te hago una consulta: queso sardo?', [])).suggestedName, 'stock');
+  assert.equal((await classifyQuestionLabel('Te hago una consulta: queso sardo?', [])).suggestedName, 'consultas-productos');
   for (const unclear of ['iaHWSASD', 'Perdón...7108', 'asdjkahsd', '???']) {
     const result = await classifyQuestionLabel(unclear, []);
     assert.equal(result.suggestedName, 'pregunta-no-entendible');

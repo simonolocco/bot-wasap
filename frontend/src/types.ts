@@ -252,7 +252,7 @@ export type BotAnalyticsData = {
   };
 };
 
-export type AiSettings = { enabled: boolean; updatedAt: string | null; updatedBy: string | null };
+export type AiSettings = { enabled: boolean; engine: 'legacy' | 'jev'; updatedAt: string | null; updatedBy: string | null };
 export type AiAnswerLabel = {
   id: string;
   name: string;

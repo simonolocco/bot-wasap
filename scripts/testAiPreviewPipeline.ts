@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { emptyCatalog } from '../src/ai/catalog';
 import { closePool, query } from '../src/db/pool';
 import { listAiQueryLogs, recordAiQuery } from '../src/db/repository';
 import { generateAndStoreAiQueryPreview } from '../src/services/aiPreviewProcessor';
@@ -22,14 +21,29 @@ async function main() {
     const result = await generateAndStoreAiQueryPreview(log.id, {
       force: true,
       dependencies: {
-        catalog: emptyCatalog(),
         labels: [],
-        complete: async () => ({
-          content: JSON.stringify({ topics: ['address'], productQuery: '', tier: 'unknown', catalog: false,
-            human: false, order: false, stock: false, social: 'none', unknown: false }),
-          model: 'qa-preview-model',
-          tokens: 7,
-        }),
+        clientOptions: {
+          apiKey: 'qa-preview-key',
+          fetchImpl: async () => new Response(JSON.stringify({
+            model: 'typesafe/jev-1.13-qa',
+            answers: {
+              response_type: {
+                type: 'choice',
+                choice: 'address',
+                probabilities: { address: 0.96, business_info: 0.04 },
+                confidence: 0.92,
+              },
+              urgency: {
+                type: 'score',
+                score: 0,
+                probabilities: { 0: 1, 1: 0, 2: 0 },
+                confidence: 1,
+              },
+              human_attention: { type: 'noul', noul: 0 },
+            },
+            usage: { inputTokens: 18, outputTokens: 3, cost: 0.000001 },
+          }), { status: 200, headers: { 'content-type': 'application/json' } }),
+        },
       },
     });
     assert.equal(result.status, 'processed');
@@ -37,7 +51,7 @@ async function main() {
     assert.equal(stored.answer, '', 'La simulación privada no puede convertirse en un mensaje enviado.');
     assert.match(stored.previewAnswer ?? '', /Av\. Juan B\. Justo 5048|Córdoba Capital/);
     assert.equal(stored.previewOutcome, 'answered');
-    assert.equal(stored.previewSource, 'generated');
+    assert.equal(stored.previewSource, 'jev-template');
     assert.equal(stored.suggestedLabelName, 'direccion');
     assert.ok(stored.suggestedLabelId, 'La IA debe crear y seleccionar un borrador de etiqueta para el tema nuevo.');
     const draft = (await query<{ id: string; active: boolean; createdBy: string | null }>(

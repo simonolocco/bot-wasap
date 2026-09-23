@@ -39,7 +39,8 @@ export type SupportTicket = {
   fallbackClaimedAt: string | null; fallbackSentAt: string | null; fallbackError: string | null;
 };
 
-export type AiSettings = { enabled: boolean; updatedAt: string | null; updatedBy: string | null };
+export type AiEngine = 'legacy' | 'jev';
+export type AiSettings = { enabled: boolean; engine: AiEngine; updatedAt: string | null; updatedBy: string | null };
 export type AiAnswerRule = {
   id: string; question: string; normalizedQuestion: string; label: string | null; labelId: string | null; labelAnswer: string | null; aliases: string[]; answer: string; active: boolean; manual: boolean;
   createdBy: string | null; updatedBy: string | null; createdAt: string; updatedAt: string;
@@ -1899,16 +1900,18 @@ export async function getBotAnalytics(options: {
 
 
 export async function getAiSettings(): Promise<AiSettings> {
-  const result = await query<AiSettings>('SELECT enabled, updated_at AS "updatedAt", updated_by AS "updatedBy" FROM ai_settings WHERE id = 1');
-  return result.rows[0] ?? { enabled: false, updatedAt: null, updatedBy: null };
+  const result = await query<AiSettings>('SELECT enabled, engine, updated_at AS "updatedAt", updated_by AS "updatedBy" FROM ai_settings WHERE id = 1');
+  return result.rows[0] ?? { enabled: false, engine: 'legacy', updatedAt: null, updatedBy: null };
 }
 
-export async function setAiEnabled(enabled: boolean, actor: string | null): Promise<AiSettings> {
+export async function setAiEnabled(enabled: boolean, actor: string | null, engine: AiEngine = 'jev'): Promise<AiSettings> {
   const result = await query<AiSettings>(`
-    INSERT INTO ai_settings (id, enabled, updated_by, updated_at)
-    VALUES (1, $1, $2, now())
-    ON CONFLICT (id) DO UPDATE SET enabled = EXCLUDED.enabled, updated_by = EXCLUDED.updated_by, updated_at = now()
-    RETURNING enabled, updated_at AS "updatedAt", updated_by AS "updatedBy"`, [enabled, actor]);
+    INSERT INTO ai_settings (id, enabled, engine, updated_by, updated_at)
+    VALUES (1, $1, $3, $2, now())
+    ON CONFLICT (id) DO UPDATE SET enabled = EXCLUDED.enabled,
+      engine = CASE WHEN EXCLUDED.enabled THEN EXCLUDED.engine ELSE ai_settings.engine END,
+      updated_by = EXCLUDED.updated_by, updated_at = now()
+    RETURNING enabled, engine, updated_at AS "updatedAt", updated_by AS "updatedBy"`, [enabled, actor, engine]);
   return result.rows[0];
 }
 

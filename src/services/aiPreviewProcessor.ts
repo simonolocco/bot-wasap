@@ -1,12 +1,10 @@
-import { readCatalog, type Catalog } from '../ai/catalog';
-import { createOpenRouterClient, type Complete } from '../ai/openRouter';
-import { resolveCustomerAiResponse } from '../ai/queryResolver';
+import { resolveJevCustomerResponse } from '../ai/jevResponse';
+import type { JevClientOptions } from './jevSimulator';
 import { deriveSuggestedAiTopic, learningConfidence } from '../ai/runtimePolicy';
 import {
   claimAiQueryPreviewGeneration,
   completeJob,
   ensureAiAnswerLabelDraft,
-  findAiAnswerRule,
   listAiQueryPreviewCandidates,
   loadActiveAiLabelExamples,
   retryJob,
@@ -18,21 +16,12 @@ import {
 import { canonicalAutoLabelAnswer } from '../ai/labelPolicy';
 
 type PreviewDependencies = {
-  catalog: Catalog;
-  complete: Complete;
   labels: AiLabelMatchRow[];
+  clientOptions?: JevClientOptions;
 };
 
-function defaultComplete() {
-  return createOpenRouterClient({
-    key: process.env.OPENROUTER_API_KEY ?? '',
-    model: process.env.OPENROUTER_MODEL ?? 'google/gemini-3.5-flash-lite',
-  });
-}
-
 async function loadDependencies(): Promise<PreviewDependencies> {
-  const [catalog, labels] = await Promise.all([readCatalog(), loadActiveAiLabelExamples()]);
-  return { catalog, labels, complete: defaultComplete() };
+  return { labels: await loadActiveAiLabelExamples() };
 }
 
 export async function generateAndStoreAiQueryPreview(
@@ -44,15 +33,11 @@ export async function generateAndStoreAiQueryPreview(
   const context = claim.context;
 
   const dependencies = options.dependencies ?? await loadDependencies();
-  const savedRule = await findAiAnswerRule(context.question, { persistSemantic: false });
-  const resolution = await resolveCustomerAiResponse({
+  const resolution = await resolveJevCustomerResponse({
     question: context.question,
     history: context.history,
-    catalog: dependencies.catalog,
-    complete: dependencies.complete,
-    allowCustomerResponse: true,
-    savedRule,
     labels: dependencies.labels,
+    clientOptions: dependencies.clientOptions,
   });
   if (!resolution.answer) throw new Error('La simulación de IA terminó sin una respuesta evaluable.');
 
@@ -60,8 +45,8 @@ export async function generateAndStoreAiQueryPreview(
   const classification = resolution.classification;
   const suggestedName = deriveSuggestedAiTopic(classification, answer);
   const confidence = learningConfidence(classification, answer);
-  let suggestedLabelId = resolution.matchedLabel?.id ?? savedRule?.labelId ?? null;
-  let suggestedLabelName = suggestedName ?? resolution.matchedLabel?.name ?? savedRule?.label ?? null;
+  let suggestedLabelId = resolution.matchedLabel?.id ?? null;
+  let suggestedLabelName = suggestedName ?? resolution.matchedLabel?.name ?? resolution.responseLabel;
   if (!suggestedLabelId && suggestedLabelName && confidence >= 0.8
     && answer.text.trim() && !['silence', 'unavailable'].includes(answer.outcome)) {
     const draftAnswer = canonicalAutoLabelAnswer(suggestedLabelName) || answer.text;

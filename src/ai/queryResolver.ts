@@ -18,7 +18,7 @@ export type ResolvableSavedRule = {
 };
 
 export type CustomerAiResolution = {
-  source: 'saved-rule' | 'approved-label' | 'generated' | 'disabled';
+  source: 'saved-rule' | 'approved-label' | 'jev-template' | 'generated' | 'disabled';
   answer: Answer | null;
   sendMenuAfter: boolean;
   classification: AiLabelClassification;

@@ -11,16 +11,14 @@ import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { buildMediaPayload, getWhatsAppTransport, hasCloudCredentials, sendCloudMessage, sendCloudTextMessage, uploadCloudMedia } from './cloudClient';
 import { pool, query } from './db/pool';
-import { assignAiAnswerRuleLabel, audit, claimOrderTicketFallback, claimOrderTicketFallbackById, closeSupportTicket, createAiAnswerLabel, createContact, dashboard, deleteAiAnswerLabel, deleteAiAnswerRule, deleteContact, deleteTemplate, exportContacts, findAiAnswerRule, getAiSettings, getBotAnalytics, getConversation, getConversationStats, getContactById, getMediaAssetById, getMediaAssetByMessageId, getMessageById, getTicketById, isValidAnalyticsDateOnly, listAiAnswerLabels, listAiAnswerRules, listAiQueryLogs, listAudit, listContacts, listConversations, listMessages, listOrders, listTemplates, listTickets, loadActiveAiLabelExamples, markAiQueryAsNoise, markAllConversationsRead, markConversationRead, markOutgoingFailed, markOutgoingSent, prepareManualMessage, prepareOutgoingMessage, previewCampaignSegment, recordAiQuery, recordMessageStatus, reopenAiQuery, resolveAiQuery, resolveAnalyticsPeriod, retryOutgoingMessage, saveAiAnswerRule, saveTemplate, setAiEnabled, setBotPaused, storeIncomingEvent, updateAiAnswerLabel, updateAiAnswerRule, updateAiQueryAnswer, updateContact, updateMediaAsset, updateOrder, type AiQueryView, type SupportTicket } from './db/repository';
+import { assignAiAnswerRuleLabel, audit, claimOrderTicketFallback, claimOrderTicketFallbackById, closeSupportTicket, createAiAnswerLabel, createContact, dashboard, deleteAiAnswerLabel, deleteAiAnswerRule, deleteContact, deleteTemplate, exportContacts, getAiSettings, getBotAnalytics, getConversation, getConversationStats, getContactById, getMediaAssetById, getMediaAssetByMessageId, getMessageById, getTicketById, isValidAnalyticsDateOnly, listAiAnswerLabels, listAiAnswerRules, listAiQueryLogs, listAudit, listContacts, listConversations, listMessages, listOrders, listTemplates, listTickets, loadActiveAiLabelExamples, markAiQueryAsNoise, markAllConversationsRead, markConversationRead, markOutgoingFailed, markOutgoingSent, prepareManualMessage, prepareOutgoingMessage, previewCampaignSegment, recordAiQuery, recordMessageStatus, reopenAiQuery, resolveAiQuery, resolveAnalyticsPeriod, retryOutgoingMessage, saveAiAnswerRule, saveTemplate, setAiEnabled, setBotPaused, storeIncomingEvent, updateAiAnswerLabel, updateAiAnswerRule, updateAiQueryAnswer, updateContact, updateMediaAsset, updateOrder, type AiQueryView, type SupportTicket } from './db/repository';
 import { orderWindowExpired, sendOrderTicketFallback } from './services/orderTicketFallback';
 import { MENU_BUTTON_LABEL, MENU_HEADER_TEXT, MENU_PROMPT, buildMenuListSections, ticketClosureMessage } from './messageCatalog';
-import { createOpenRouterClient } from './ai/openRouter';
-import { readCatalog } from './ai/catalog';
-import { resolveCustomerAiResponse } from './ai/queryResolver';
+import { resolveJevCustomerResponse } from './ai/jevResponse';
 import { deriveSuggestedAiTopic, learningConfidence } from './ai/runtimePolicy';
 import { generateAndStoreAiQueryPreview } from './services/aiPreviewProcessor';
 import { analyticsExcelFilename, buildAnalyticsExcel } from './services/analyticsExcel';
-import { evaluateJevMessage, JevServiceError, JevSimulationLimiter } from './services/jevSimulator';
+import { JEV_HISTORY_MAX_MESSAGES, JEV_HISTORY_MAX_TOTAL_CHARS, JEV_MODEL, JevServiceError, JevSimulationLimiter } from './services/jevSimulator';
 import { checkMediaStorage, ensureMediaCached, ensureMediaThumbnail, isSafeUpload, markMediaUploadFailed, storeMedia } from './services/mediaStorage';
 import { parseIncoming } from './whatsappIncoming';
 
@@ -225,13 +223,26 @@ function openStream(req: Request, res: Response, contactId: string | null) {
   req.on('close', () => { clearInterval(heartbeat); streams.delete(res); });
 }
 app.get('/api/dashboard', async (_req, res) => res.json({ ...(await dashboard()), cloudReady: hasCloudCredentials(), transport: getWhatsAppTransport(), mediaStorage: await checkMediaStorage() }));
-const jevSimulationSchema = z.object({ message: z.string().trim().min(3).max(4000) });
+const jevSimulationSchema = z.object({
+  message: z.string().trim().min(1).max(4000),
+  history: z.array(z.object({
+    role: z.enum(['user', 'assistant']),
+    content: z.string().trim().min(1).max(2500),
+  })).max(JEV_HISTORY_MAX_MESSAGES).default([]),
+}).superRefine((value, context) => {
+  const total = value.history.reduce((sum, turn) => sum + turn.content.length, 0);
+  if (total > JEV_HISTORY_MAX_TOTAL_CHARS) context.addIssue({
+    code: z.ZodIssueCode.custom,
+    path: ['history'],
+    message: 'El historial de la simulación es demasiado largo.',
+  });
+});
 const jevSimulationLimiter = new JevSimulationLimiter();
 const jevLimiterCleanup = setInterval(() => jevSimulationLimiter.cleanup(), 5 * 60_000);
 jevLimiterCleanup.unref();
 app.post('/api/jev/simulate', async (req, res) => {
   const parsed = jevSimulationSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: 'Escribí un mensaje de entre 3 y 4.000 caracteres.' });
+  if (!parsed.success) return res.status(400).json({ error: 'Escribí un mensaje de hasta 4.000 caracteres.' });
   const claim = jevSimulationLimiter.acquire(req.sessionID || req.ip || 'unknown');
   if (!claim.allowed) {
     res.setHeader('Retry-After', String(claim.retryAfterSeconds));
@@ -242,7 +253,23 @@ app.post('/api/jev/simulate', async (req, res) => {
     });
   }
   try {
-    return res.json(await evaluateJevMessage(parsed.data.message));
+    const labels = await loadActiveAiLabelExamples();
+    const resolution = await resolveJevCustomerResponse({
+      question: parsed.data.message,
+      history: parsed.data.history,
+      labels,
+    });
+    if (!resolution.decision || !resolution.answer) throw new JevServiceError(502, 'Jev no devolvió una respuesta evaluable.');
+    return res.json({
+      ...resolution.decision,
+      reply: {
+        text: resolution.answer.text,
+        outcome: resolution.answer.outcome,
+        label: resolution.matchedLabel?.name ?? resolution.responseLabel ?? 'respuesta segura',
+        responseType: resolution.responseType,
+        sendMenuAfter: resolution.sendMenuAfter,
+      },
+    });
   } catch (error) {
     if (error instanceof JevServiceError) return res.status(error.status).json({ error: error.message });
     throw error;
@@ -267,48 +294,58 @@ app.get('/api/ai', async (req, res) => {
     listAiQueryLogs({ limit: 1, q: search, view: 'errors' }),
     listAiQueryLogs({ limit: 1, q: search, view: 'tests' }),
   ]);
-  return res.json({ settings, labels, rules, queries, model: process.env.OPENROUTER_MODEL ?? 'google/gemini-3.5-flash-lite',
+  return res.json({ settings, labels, rules, queries, model: JEV_MODEL,
     totals: { attention: attention.total, answered: answered.total, noise: noise.total, errors: errors.total, tests: tests.total } });
 });
 app.get('/api/ai/status', async (_req, res) => res.json(await getAiSettings()));
 app.patch('/api/ai/status', async (req, res) => {
-  const parsed = z.object({ enabled: z.boolean() }).safeParse(req.body);
+  const parsed = z.object({ enabled: z.boolean(), engine: z.literal('jev').optional() }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'El estado de IA es inválido.' });
   const actor = req.session.user ?? 'admin';
-  const settings = await setAiEnabled(parsed.data.enabled, actor);
-  await audit(actor, parsed.data.enabled ? 'ai_enabled' : 'ai_disabled', undefined, undefined, { enabled: parsed.data.enabled });
+  const settings = await setAiEnabled(parsed.data.enabled, actor, 'jev');
+  await audit(actor, parsed.data.enabled ? 'ai_enabled' : 'ai_disabled', undefined, undefined, { enabled: parsed.data.enabled, engine: settings.engine });
   return res.json(settings);
 });
 app.post('/api/ai/test', async (req, res) => {
   const parsed = z.object({ question: z.string().trim().min(1).max(2500) }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Escribí una pregunta válida.' });
-  const question = parsed.data.question;
-  const actor = req.session.user ?? 'admin';
-  const complete = createOpenRouterClient({ key: process.env.OPENROUTER_API_KEY ?? '', model: process.env.OPENROUTER_MODEL ?? 'google/gemini-3.5-flash-lite' });
-  const [savedRule, labels, settings, catalog] = await Promise.all([
-    findAiAnswerRule(question, { persistSemantic: false }),
-    loadActiveAiLabelExamples(),
-    getAiSettings(),
-    readCatalog(),
-  ]);
-  const resolution = await resolveCustomerAiResponse({ question, history: [], catalog, complete,
-    allowCustomerResponse: true, savedRule, labels });
-  const answer = resolution.answer!;
-  const suggestedName = deriveSuggestedAiTopic(resolution.classification, answer);
-  const log = await recordAiQuery({ question, answer: answer.text, outcome: answer.outcome, source: 'manual',
-    aiEnabled: settings.enabled, matchedAnswerRuleId: resolution.matchedRuleId,
-    matchedAnswerLabelId: resolution.matchedLabel?.id ?? savedRule?.labelId ?? null,
-    suggestedLabelId: resolution.matchedLabel?.id ?? savedRule?.labelId ?? null,
-    suggestedLabelName: suggestedName ?? resolution.matchedLabel?.name ?? savedRule?.label ?? null,
-    classificationMethod: resolution.classification.method,
-    classificationConfidence: learningConfidence(resolution.classification, answer),
-    model: answer.model, tokens: answer.tokens, elapsedMs: answer.elapsedMs, errorCode: answer.errorCode ?? null,
-    previewAnswer: answer.text, previewOutcome: answer.outcome, previewSource: resolution.source,
-    previewModel: answer.model, previewTokens: answer.tokens, previewElapsedMs: answer.elapsedMs,
-    previewErrorCode: answer.errorCode ?? null });
-  await audit(actor, 'ai_manual_test', undefined, undefined, { queryId: log?.id ?? null });
-  return res.json({ answer: { ...answer, sendMenuAfter: resolution.sendMenuAfter,
-    label: resolution.matchedLabel?.name ?? savedRule?.label ?? null, responseSource: resolution.source }, query: log });
+  const claim = jevSimulationLimiter.acquire(`ai-test:${req.sessionID || req.ip || 'unknown'}`);
+  if (!claim.allowed) {
+    res.setHeader('Retry-After', String(claim.retryAfterSeconds));
+    return res.status(429).json({ error: claim.reason === 'busy'
+      ? 'Ya hay una prueba de Jev en curso para esta sesión.'
+      : 'Llegaste al límite de pruebas por minuto. Esperá un momento.' });
+  }
+  try {
+    const question = parsed.data.question;
+    const actor = req.session.user ?? 'admin';
+    const [labels, settings] = await Promise.all([
+      loadActiveAiLabelExamples(),
+      getAiSettings(),
+    ]);
+    const resolution = await resolveJevCustomerResponse({ question, history: [], labels });
+    const answer = resolution.answer!;
+    const suggestedName = deriveSuggestedAiTopic(resolution.classification, answer);
+    const log = await recordAiQuery({ question, answer: answer.text, outcome: answer.outcome, source: 'manual',
+      aiEnabled: settings.enabled, matchedAnswerRuleId: resolution.matchedRuleId,
+      matchedAnswerLabelId: resolution.matchedLabel?.id ?? null,
+      suggestedLabelId: resolution.matchedLabel?.id ?? null,
+      suggestedLabelName: suggestedName ?? resolution.matchedLabel?.name ?? resolution.responseLabel,
+      classificationMethod: resolution.classification.method,
+      classificationConfidence: learningConfidence(resolution.classification, answer),
+      model: answer.model, tokens: answer.tokens, elapsedMs: answer.elapsedMs, errorCode: answer.errorCode ?? null,
+      previewAnswer: answer.text, previewOutcome: answer.outcome, previewSource: resolution.source,
+      previewModel: answer.model, previewTokens: answer.tokens, previewElapsedMs: answer.elapsedMs,
+      previewErrorCode: answer.errorCode ?? null });
+    await audit(actor, 'ai_manual_test', undefined, undefined, { queryId: log?.id ?? null });
+    return res.json({ answer: { ...answer, sendMenuAfter: resolution.sendMenuAfter,
+      label: resolution.matchedLabel?.name ?? resolution.responseLabel, responseSource: resolution.source }, query: log });
+  } catch (error) {
+    if (error instanceof JevServiceError) return res.status(error.status).json({ error: error.message });
+    throw error;
+  } finally {
+    claim.release();
+  }
 });
 app.post('/api/ai/labels', async (req, res) => {
   const parsed = z.object({ name: z.string().trim().min(1).max(120), answer: z.string().trim().min(1).max(5000), active: z.boolean().optional() }).safeParse(req.body);
@@ -357,14 +394,28 @@ app.patch('/api/ai/queries/:id/resolve', async (req, res) => {
   return item ? res.json(item) : res.status(404).json({ error: 'Consulta no encontrada.' });
 });
 app.post('/api/ai/queries/:id/preview', async (req, res) => {
-  const result = await generateAndStoreAiQueryPreview(req.params.id, { force: true });
-  if (result.status === 'missing') return res.status(404).json({ error: 'Consulta no encontrada.' });
-  if (result.status === 'superseded' || !result.item) {
-    return res.status(409).json({ error: 'Otra simulación más reciente reemplazó este resultado. Volvé a cargar para verla.' });
+  const claim = jevSimulationLimiter.acquire(`ai-preview:${req.sessionID || req.ip || 'unknown'}`);
+  if (!claim.allowed) {
+    res.setHeader('Retry-After', String(claim.retryAfterSeconds));
+    return res.status(429).json({ error: claim.reason === 'busy'
+      ? 'Ya hay una vista previa de Jev en curso para esta sesión.'
+      : 'Llegaste al límite de vistas previas por minuto. Esperá un momento.' });
   }
-  await audit(req.session.user ?? 'admin', 'ai_query_preview_regenerated', result.item.contactId ?? undefined, undefined,
-    { queryId: req.params.id, previewOutcome: result.item.previewOutcome });
-  return res.json(result.item);
+  try {
+    const result = await generateAndStoreAiQueryPreview(req.params.id, { force: true });
+    if (result.status === 'missing') return res.status(404).json({ error: 'Consulta no encontrada.' });
+    if (result.status === 'superseded' || !result.item) {
+      return res.status(409).json({ error: 'Otra simulación más reciente reemplazó este resultado. Volvé a cargar para verla.' });
+    }
+    await audit(req.session.user ?? 'admin', 'ai_query_preview_regenerated', result.item.contactId ?? undefined, undefined,
+      { queryId: req.params.id, previewOutcome: result.item.previewOutcome });
+    return res.json(result.item);
+  } catch (error) {
+    if (error instanceof JevServiceError) return res.status(error.status).json({ error: error.message });
+    throw error;
+  } finally {
+    claim.release();
+  }
 });
 app.patch('/api/ai/queries/:id/noise', async (req, res) => {
   const item = await markAiQueryAsNoise(req.params.id, req.session.user ?? 'admin');

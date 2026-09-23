@@ -175,7 +175,8 @@ async function runShippingTests() {
   const priceMsg = 'Cuál es el precio del queso cremoso mayorista';
   const priceResult = await answerQuestion({ message: priceMsg }, catalog, mockComplete);
   check(`"precio" no dispara el patrón de localidad distante`, () => {
-    assert.notEqual(priceResult.outcome, 'handoff', `"precio" should not be treated as distant location`);
+    assert.equal(priceResult.outcome, 'handoff', 'Las consultas de producto deben derivar al asesor.');
+    assert.match(priceResult.text, /Mauricio|asesor comercial/i);
     // Must not contain out-of-area message
     assert.doesNotMatch(priceResult.text, /No contamos con reparto directo propio/);
   });
@@ -357,7 +358,7 @@ async function runProviderFallbackTests() {
     { msg: '¿De dónde son?', pattern: /Córdoba Capital|Av\. Juan B\. Justo/ },
     { msg: '¿Qué horario hacen?', pattern: /8:15|12:45/ },
     { msg: '¿Hay compra mínima?', pattern: /1\/2 horma en adelante/i },
-    { msg: '¿Cuánto sale el cremoso?', pattern: /7\.099|8\.520|precio/i },
+    { msg: '¿Cuánto sale el cremoso?', pattern: /Mauricio|asesor comercial/i },
     { msg: 'Hola buenas tardes', pattern: /Bienvenido|ayudarte/i },
   ];
   for (const item of cases) {
@@ -498,11 +499,11 @@ async function runSpecificityRegressions() {
   let calls = 0;
   const unavailable = async () => { calls++; throw new Error('Provider unavailable'); };
   const cases = [
-    { message: 'Precio del cremoso Punta del Agua mayorista', include: /8\.520/, exclude: /7\.099/ },
-    { message: 'Precio del cremoso marca Inexistente mayorista', include: /nombre exacto/, exclude: /7\.099|8\.520/ },
-    { message: 'Precio de manteca 500g minorista', include: /nombre exacto/, exclude: /1\.850/ },
+    { message: 'Precio del cremoso Punta del Agua mayorista', include: /Mauricio|asesor comercial/i, exclude: /7\.099|8\.520/ },
+    { message: 'Precio del cremoso marca Inexistente mayorista', include: /Mauricio|asesor comercial/i, exclude: /7\.099|8\.520/ },
+    { message: 'Precio de manteca 500g minorista', include: /Mauricio|asesor comercial/i, exclude: /1\.850/ },
     { message: 'Dónde están y qué horario hacen?', include: /Juan B. Justo[\s\S]*8:15/ },
-    { message: 'Precio cremoso mayorista y hacen envíos a Rosario?', include: /comisionista[\s\S]*7\.099/ },
+    { message: 'Precio cremoso mayorista y hacen envíos a Rosario?', include: /comisionista[\s\S]*(Mauricio|asesor comercial)/i },
     { message: 'Necesito un asesor y qué horario hacen?', include: /8:15[\s\S]*wa\.me/ },
     { message: 'Necesito un asesor y donde están?', include: /Juan B. Justo[\s\S]*wa\.me/ },
     { message: 'No puedo abrir el catálogo y qué horario hacen?', include: /8:15[\s\S]*navegador/ },
@@ -522,9 +523,9 @@ async function runSpecificityRegressions() {
   const history = [{ role: 'user' as const, content: 'Cuánto sale el cremoso Punta del Agua?' },
     { role: 'assistant' as const, content: '¿La consulta es para compra mayorista o minorista?' }];
   const tier = await answerQuestion({ message: 'mayorista', history }, catalog, unavailable);
-  check('Respuesta de lista conserva marca del historial sin proveedor', () => {
-    assert.match(tier.text, /8\.520/);
-    assert.doesNotMatch(tier.text, /7\.099/);
+  check('Respuesta posterior a una consulta de producto mantiene la derivación', () => {
+    assert.match(tier.text, /Mauricio|asesor comercial/i);
+    assert.doesNotMatch(tier.text, /7\.099|8\.520/);
   });
   const optOut = await answerQuestion({ message: 'No gracias', history }, catalog, unavailable);
   check('Cierre explícito no depende de si quedaba una pregunta pendiente', () => assert.equal(optOut.outcome, 'silence'));
@@ -570,7 +571,10 @@ async function runIndependentConversationAudit() {
       assert.notEqual(response.outcome, 'unavailable');
       assert.ok(response.text.length > 0);
       if (scenario.forbid) assert.doesNotMatch(response.text, scenario.forbid);
-      if (scenario.intent.productQuery) assert.match(response.text, /1\.850/);
+      if (scenario.intent.productQuery) {
+        assert.match(response.text, /Mauricio|asesor comercial/i);
+        assert.doesNotMatch(response.text, /1\.850/);
+      }
       if (scenario.intent.topics?.includes('hours')) assert.match(response.text, /12:45/);
     });
   }

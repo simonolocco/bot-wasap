@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { BUSINESS_ADDRESS, BUSINESS_SCHEDULE, MAIN_MENU_OPTIONS, isMenuCommandText, normalizeText } from '../botMenu';
-import { catalogReady, searchCatalog, type Catalog, type Product } from './catalog';
+import { type Catalog, type Product } from './catalog';
 import { AiProviderError, type Complete, parseJson } from './openRouter';
 import { isTypoGreeting, isUnintelligibleQuestion } from './inputQuality';
 
@@ -97,7 +97,7 @@ export const facts: Record<typeof topics[number], { text: string; source: string
     source: 'Condición comercial · compra mínima',
   },
   retail: {
-    text: 'Sí, atendemos tanto a mayoristas como a particulares. La compra mínima es de 1/2 horma en adelante. Si me indicás qué producto buscás, te ayudo a encontrarlo.',
+    text: `Sí, atendemos tanto a mayoristas como a particulares. La compra mínima es de 1/2 horma en adelante. Para consultar un producto puntual, podés escribirle a Mauricio: ${advisorUrl()}`,
     source: 'Preguntas frecuentes · venta minorista',
   },
   payments: {
@@ -250,10 +250,10 @@ REGLAS DE NEGOCIO:
    - Si el cliente expresa molestia, enojo o problemas con un pedido: NUNCA envíes la dirección física. Mostrá empatía inmediata y derivalo a Mauricio. Marcar complaint=true y human=true.
 5. MENSAJES EXTERNOS Y FUERA DE LUGAR:
    - Si ofrecen productos (Snacks Buffalo, Fargo, publicidad), buscan trabajo (CV) o piden donaciones: aclará canal exclusivo para ventas. Marcar externalProposal=true y human=true.
-6. PRECIOS Y CATÁLOGO:
-   - NUNCA inventes precios, descuentos ni números.
-   - Si consultan precio de un producto puntual, extraé productQuery y tier (mayorista o minorista).
-   - Si piden el catálogo o la lista completa, marcar catalog=true.
+6. PRODUCTOS, PRECIOS Y CATÁLOGO:
+   - NUNCA busques ni informes productos, marcas, presentaciones, precios, promociones, unidades por caja o stock.
+   - Toda consulta puntual de producto debe marcar productQuery y human=true para derivarla al asesor comercial.
+   - Si piden el catálogo o la lista completa sin consultar un producto puntual, marcar catalog=true.
 7. SILENCIO DELIBERADO (silence=true):
    - Emoji-reactions, stickers, mensajes de audio/imagen sin texto, opt-out explícito ("no gracias", "no me interesa"), y saludos de cierre sin pregunta ("chau", "hasta luego"): marcar silence=true y NO generes reply.
    - "Sí", "Ok", "Dale" pueden ser respuesta a una pregunta anterior: si el turno anterior hacía una pregunta al cliente (ej: "¿es para mayorista o minorista?"), NO es silencio.
@@ -413,55 +413,9 @@ export function renderAnswer(
     needsHuman ||= !links;
   }
 
-  if (intent.productQuery) {
-    products = searchCatalog(catalog, intent.productQuery);
-    if (!products.length) {
-      pieces.push('No encontré ese producto con esa marca o presentación. ¿Podés indicarme el nombre exacto?');
-      outcome = 'clarify';
-    } else if (!catalogReady(catalog, now)) {
-      pieces.push(
-        'Encontré referencias de ese producto, pero la lista disponible está sin validar o fuera de vigencia. No puedo confirmarte un precio actualizado.'
-      );
-      sources.push(`${catalog.name} · precios sin habilitar`);
-      needsHuman = true;
-    } else if (intent.tier === 'unknown') {
-      pieces.push('¿La consulta es para compra mayorista o minorista? Así te indico el precio de la lista correspondiente.');
-      outcome = 'clarify';
-    } else {
-      products = products.filter(p => p.tier === intent.tier && p.unit !== 'sin_confirmar' && p.price !== null);
-      if (!products.length) {
-        pieces.push('No tengo un precio validado de ese producto para esa lista.');
-        needsHuman = true;
-      } else if (products.length > 8) {
-        pieces.push('Hay varias presentaciones. ¿Qué marca y tamaño buscás exactamente?');
-        outcome = 'clarify';
-      } else {
-        const money = new Intl.NumberFormat('es-AR', {
-          style: 'currency',
-          currency: 'ARS',
-          maximumFractionDigits: 2,
-        });
-        pieces.push(
-          `En la lista ${intent.tier}:\n` +
-            products
-              .map(
-                p =>
-                  `• ${p.name} ${p.brand}${p.presentation ? ` (${p.presentation})` : ''}: ${money.format(
-                    p.price!
-                  )} por ${p.unit}${p.conditions ? `. Condición: ${p.conditions}` : ''}.`
-              )
-              .join('\n')
-        );
-        pieces.push(
-          `Vigencia de la lista: ${catalog.validFrom} al ${catalog.validUntil}. La disponibilidad se confirma al realizar el pedido.`
-        );
-        sources.push(...products.map(p => p.source));
-      }
-    }
-  }
-
-  if (intent.stock) {
-    pieces.push('No tengo stock en tiempo real; el asesor debe confirmar disponibilidad.');
+  if (intent.productQuery || intent.stock) {
+    pieces.push(`Para confirmar productos, marcas, presentaciones, precios, promociones, unidades por caja o stock actualizado, escribile directamente a Mauricio, nuestro asesor comercial: ${advisorUrl()}`);
+    sources.push('Derivación obligatoria de consultas de producto');
     needsHuman = true;
   }
   if (intent.order) {
@@ -606,13 +560,13 @@ export async function answerQuestion(
       };
     }
     if (PRODUCT_RECOMMENDATION_PATTERN.test(norm)) {
-      const clarifyIntent = { ...intent, topics: [], productQuery: '', catalog: false, human: false, unknown: true };
+      const handoffIntent = { ...intent, topics: [], productQuery: 'recomendación de producto', catalog: false, human: true, unknown: false };
       return {
         ...base,
-        text: 'Puedo buscar un producto concreto en la lista, pero necesito el nombre o la marca y si la consulta es mayorista o minorista. No puedo confirmar una recomendación libre ni el stock actual.',
-        outcome: 'clarify',
-        sources: ['Aclaración de producto y lista'],
-        products: [], intent: clarifyIntent, model: result.model, tokens: result.tokens,
+        text: `Para recomendarte un producto y confirmar marca, presentación, precio o disponibilidad, escribile directamente a Mauricio, nuestro asesor comercial: ${advisorUrl()}`,
+        outcome: 'handoff',
+        sources: ['Derivación obligatoria de consultas de producto'],
+        products: [], intent: handoffIntent, model: result.model, tokens: result.tokens,
         elapsedMs: Date.now() - started,
       };
     }
@@ -653,7 +607,7 @@ export async function answerQuestion(
     }
     return {
       ...base,
-      text: 'El servicio de IA no pudo procesar tu mensaje en este momento. Podés reintentarlo. Mientras tanto, puedo responder consultas sobre catálogo, productos, horarios, ubicación y envíos.',
+      text: 'El servicio de IA no pudo procesar tu mensaje en este momento. Podés reintentarlo. Mientras tanto, el menú sigue disponible para consultar catálogo, horarios, ubicación, envíos o contactar a un asesor.',
       outcome: 'unavailable',
       errorCode: error instanceof AiProviderError ? error.code : 'provider',
       elapsedMs: Date.now() - started,

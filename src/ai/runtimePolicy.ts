@@ -23,9 +23,9 @@ export function deriveSuggestedAiTopic(classification: AiLabelClassification, an
   if (intent.complaint) return 'reclamos';
   if (intent.externalProposal) return 'proveedores';
   if (intent.order) return 'pedidos';
-  if (intent.stock) return 'stock';
+  if (intent.stock) return 'consultas-productos';
   if (intent.catalog) return 'catalogo';
-  if (intent.productQuery) return 'productos';
+  if (intent.productQuery) return 'consultas-productos';
   const topic = intent.topics.map(value => TOPIC_NAMES[value]).find(Boolean);
   if (topic) return topic;
   if (intent.human) return 'asesor';
