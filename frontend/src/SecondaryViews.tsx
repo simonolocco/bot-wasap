@@ -1651,6 +1651,7 @@ function LaboratorioView() {
         <span className="section-kicker">Sección interna</span>
         <h2 id="portal-laboratory-title">Laboratorio del portal</h2>
         <p className="portal-laboratory-notice">Prueba interna: no muestra datos ni estados reales</p>
+        <p className="portal-laboratory-description">Estos pasos ilustran el recorrido de un pedido de prueba.</p>
       </header>
       <ol className="portal-laboratory-steps">
         {steps.map((step) => (
