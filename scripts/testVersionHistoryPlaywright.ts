@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
+import { APP_VERSION } from '../frontend/src/appVersion';
+import { RELEASE_HISTORY } from '../frontend/src/releaseHistory';
 import { startServer } from './testMobilePlaywright';
 
 async function run() {
@@ -18,13 +20,15 @@ async function run() {
         await page.goto(`http://127.0.0.1:${address.port}/`);
         await page.getByRole('navigation', { name: viewport.width <= 768 ? 'Accesos principales' : 'Navegación principal' }).waitFor();
         if (viewport.width <= 768) await page.getByRole('button', { name: 'Más secciones' }).click();
+        assert.equal(await page.getByRole('button', { name: 'Laboratorio', exact: true }).count(), 0);
+        assert.equal(await page.getByRole('button', { name: 'Simulador Jev', exact: true }).count(), 0);
 
-        const trigger = page.getByRole('button', { name: /Ver historial de versiones\. Versión 2\.4\.0/ });
+        const trigger = page.getByRole('button', { name: `Ver historial de versiones. Versión ${APP_VERSION}` });
         await trigger.click();
         const dialog = page.getByRole('dialog', { name: 'Historial de versiones' });
         await dialog.waitFor();
-        assert.equal(await dialog.locator('.release-entry').count(), 9);
-        assert.match(await dialog.locator('.release-entry.current').innerText(), /v2\.4\.0/);
+        assert.equal(await dialog.locator('.release-entry').count(), RELEASE_HISTORY.length);
+        assert.match(await dialog.locator('.release-entry.current').innerText(), new RegExp(`v${APP_VERSION.replace(/\./g, '\\.')}`));
         assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Cerrar historial de versiones');
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
         const bounds = await dialog.boundingBox();
