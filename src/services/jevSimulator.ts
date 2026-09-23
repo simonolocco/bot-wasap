@@ -124,6 +124,7 @@ export type JevClientOptions = {
   apiKey?: string;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
+  beforeRequest?: (context: { attempt: number }) => Promise<void> | void;
 };
 
 type JevLimitState = {
@@ -414,22 +415,25 @@ export async function evaluateJevMessage(
   const startedAt = Date.now();
 
   try {
-    const request = () => (options.fetchImpl ?? fetch)(JEV_DECISIONS_URL, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://abasto-bot.cloud',
-        'X-OpenRouter-Title': 'AbastoBot · Simulador Jev',
-      },
-      body: JSON.stringify(buildJevSimulationRequest(message, history)),
-      signal: controller.signal,
-    });
+    const request = async (attempt: number) => {
+      await options.beforeRequest?.({ attempt });
+      return (options.fetchImpl ?? fetch)(JEV_DECISIONS_URL, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://abasto-bot.cloud',
+          'X-OpenRouter-Title': 'AbastoBot · Simulador Jev',
+        },
+        body: JSON.stringify(buildJevSimulationRequest(message, history)),
+        signal: controller.signal,
+      });
+    };
 
     let response: Response | undefined;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
-        response = await request();
+        response = await request(attempt + 1);
       } catch (error) {
         if (controller.signal.aborted || attempt === 1) throw error;
         continue;

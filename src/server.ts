@@ -258,16 +258,30 @@ app.post('/api/jev/simulate', async (req, res) => {
       question: parsed.data.message,
       history: parsed.data.history,
       labels,
+      budgetSubject: { type: 'admin', key: req.sessionID || req.ip || 'unknown' },
     });
-    if (!resolution.decision || !resolution.answer) throw new JevServiceError(502, 'Jev no devolvió una respuesta evaluable.');
+    if (!resolution.answer) throw new JevServiceError(502, 'Jev no devolvió una respuesta evaluable.');
+    const decision = resolution.decision ?? (resolution.answer.errorCode === 'jev-budget' ? {
+      model: JEV_MODEL,
+      answers: {
+        response_type: { type: 'choice' as const, choice: 'human_advisor' as const, probabilities: { human_advisor: 1 }, confidence: 1 },
+        urgency: { type: 'score' as const, score: 1, probabilities: { 0: 0, 1: 1, 2: 0 }, confidence: 1,
+          legend: { 0: 'Puede esperar', 1: 'Atender pronto', 2: 'Atención inmediata' } },
+        human_attention: { type: 'noul' as const, noul: 1 },
+      },
+      usage: { input_tokens: 0, output_tokens: 0, cost: 0 },
+      elapsedMs: 0,
+    } : null);
+    if (!decision) throw new JevServiceError(502, 'Jev no devolvió una respuesta evaluable.');
     return res.json({
-      ...resolution.decision,
+      ...decision,
       reply: {
         text: resolution.answer.text,
         outcome: resolution.answer.outcome,
         label: resolution.matchedLabel?.name ?? resolution.responseLabel ?? 'respuesta segura',
         responseType: resolution.responseType,
         sendMenuAfter: resolution.sendMenuAfter,
+        errorCode: resolution.answer.errorCode ?? null,
       },
     });
   } catch (error) {
@@ -323,7 +337,12 @@ app.post('/api/ai/test', async (req, res) => {
       loadActiveAiLabelExamples(),
       getAiSettings(),
     ]);
-    const resolution = await resolveJevCustomerResponse({ question, history: [], labels });
+    const resolution = await resolveJevCustomerResponse({
+      question,
+      history: [],
+      labels,
+      budgetSubject: { type: 'admin', key: req.sessionID || req.ip || 'unknown' },
+    });
     const answer = resolution.answer!;
     const suggestedName = deriveSuggestedAiTopic(resolution.classification, answer);
     const log = await recordAiQuery({ question, answer: answer.text, outcome: answer.outcome, source: 'manual',
@@ -402,7 +421,10 @@ app.post('/api/ai/queries/:id/preview', async (req, res) => {
       : 'Llegaste al límite de vistas previas por minuto. Esperá un momento.' });
   }
   try {
-    const result = await generateAndStoreAiQueryPreview(req.params.id, { force: true });
+    const result = await generateAndStoreAiQueryPreview(req.params.id, {
+      force: true,
+      budgetSubject: { type: 'admin', key: req.sessionID || req.ip || 'unknown' },
+    });
     if (result.status === 'missing') return res.status(404).json({ error: 'Consulta no encontrada.' });
     if (result.status === 'superseded' || !result.item) {
       return res.status(409).json({ error: 'Otra simulación más reciente reemplazó este resultado. Volvé a cargar para verla.' });

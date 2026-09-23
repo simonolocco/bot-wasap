@@ -390,6 +390,7 @@ export async function processIncomingJob(job: { id: string; contact_id: string; 
             history,
             labels: labelCandidates,
             failSafe: true,
+            budgetSubject: { type: 'contact', key: job.contact_id },
           })
         : await resolveCustomerAiResponse({
             question: rawText,

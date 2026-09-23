@@ -41,6 +41,12 @@ export type SupportTicket = {
 
 export type AiEngine = 'legacy' | 'jev';
 export type AiSettings = { enabled: boolean; engine: AiEngine; updatedAt: string | null; updatedBy: string | null };
+export type JevBudgetSubjectType = 'contact' | 'admin' | 'system';
+export type JevBudgetSubject = { type: JevBudgetSubjectType; key: string };
+export type JevBudgetLimits = { globalPerHour: number; contactPerHour: number; adminPerHour: number };
+export type JevBudgetClaim =
+  | { allowed: true; globalCount: number; subjectCount: number; globalRemaining: number; subjectRemaining: number }
+  | { allowed: false; reason: 'global' | 'subject'; retryAfterSeconds: number };
 export type AiAnswerRule = {
   id: string; question: string; normalizedQuestion: string; label: string | null; labelId: string | null; labelAnswer: string | null; aliases: string[]; answer: string; active: boolean; manual: boolean;
   createdBy: string | null; updatedBy: string | null; createdAt: string; updatedAt: string;
@@ -1915,6 +1921,92 @@ export async function setAiEnabled(enabled: boolean, actor: string | null, engin
   return result.rows[0];
 }
 
+function nonNegativeInteger(value: string | undefined, fallback: number) {
+  const parsed = Number.parseInt(value ?? '', 10);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+export function getJevBudgetLimits(env: Record<string, string | undefined> = process.env): JevBudgetLimits {
+  return {
+    globalPerHour: nonNegativeInteger(env.JEV_BUDGET_GLOBAL_PER_HOUR, 500),
+    contactPerHour: nonNegativeInteger(env.JEV_BUDGET_CONTACT_PER_HOUR, 30),
+    adminPerHour: nonNegativeInteger(env.JEV_BUDGET_ADMIN_PER_HOUR, 120),
+  };
+}
+
+class JevBudgetDenied extends Error {
+  constructor(public readonly reason: 'global' | 'subject') {
+    super(`Jev budget denied: ${reason}`);
+  }
+}
+
+let lastJevBudgetCleanupAt = 0;
+
+function secondsUntilNextHour(now = new Date()) {
+  const nextHour = new Date(now);
+  nextHour.setUTCMinutes(0, 0, 0);
+  nextHour.setUTCHours(nextHour.getUTCHours() + 1);
+  return Math.max(1, Math.ceil((nextHour.getTime() - now.getTime()) / 1000));
+}
+
+/**
+ * Reserves one paid Jev request atomically across the global breaker and the
+ * per-subject limit. Global is always locked first to keep lock ordering stable
+ * across app and worker processes. A rejected subject rolls back the global
+ * increment as part of the same transaction.
+ */
+export async function claimJevBudget(
+  subject: JevBudgetSubject,
+  limits: JevBudgetLimits = getJevBudgetLimits(),
+): Promise<JevBudgetClaim> {
+  const subjectKey = subject.key.trim().slice(0, 256);
+  if (!subjectKey) throw new Error('El sujeto de la cuota Jev es obligatorio.');
+  const subjectLimit = subject.type === 'contact' ? limits.contactPerHour : limits.adminPerHour;
+  if (limits.globalPerHour <= 0) return { allowed: false, reason: 'global', retryAfterSeconds: secondsUntilNextHour() };
+  if (subjectLimit <= 0) return { allowed: false, reason: 'subject', retryAfterSeconds: secondsUntilNextHour() };
+
+  type BudgetRow = { requestCount: number };
+  try {
+    const reserved = await transaction(async client => {
+      const reserve = async (scope: 'global' | JevBudgetSubjectType, key: string, limit: number) => {
+        const result = await client.query<BudgetRow>(`INSERT INTO jev_usage_buckets
+          (bucket_start, scope, subject_key, request_count)
+          VALUES (date_trunc('hour', now()), $1, $2, 1)
+          ON CONFLICT (bucket_start, scope, subject_key) DO UPDATE
+          SET request_count=jev_usage_buckets.request_count+1, updated_at=now()
+          WHERE jev_usage_buckets.request_count < $3
+          RETURNING request_count AS "requestCount"`, [scope, key, limit]);
+        return result.rows[0]?.requestCount ?? null;
+      };
+
+      const globalCount = await reserve('global', 'all', limits.globalPerHour);
+      if (globalCount === null) throw new JevBudgetDenied('global');
+      const subjectCount = await reserve(subject.type, subjectKey, subjectLimit);
+      if (subjectCount === null) throw new JevBudgetDenied('subject');
+      return { globalCount, subjectCount, subjectLimit };
+    });
+
+    const now = Date.now();
+    if (now - lastJevBudgetCleanupAt >= 60 * 60_000) {
+      lastJevBudgetCleanupAt = now;
+      await query(`DELETE FROM jev_usage_buckets WHERE bucket_start < date_trunc('hour', now()) - interval '7 days'`)
+        .catch(error => console.warn('[jev-budget] No se pudieron depurar buckets antiguos:', error));
+    }
+    return {
+      allowed: true,
+      globalCount: reserved.globalCount,
+      subjectCount: reserved.subjectCount,
+      globalRemaining: Math.max(0, limits.globalPerHour - reserved.globalCount),
+      subjectRemaining: Math.max(0, reserved.subjectLimit - reserved.subjectCount),
+    };
+  } catch (error) {
+    if (error instanceof JevBudgetDenied) {
+      return { allowed: false, reason: error.reason, retryAfterSeconds: secondsUntilNextHour() };
+    }
+    throw error;
+  }
+}
+
 type AiRuleDbRow = AiAnswerRule;
 
 const aiRuleSelect = `SELECT ${aiAnswerRuleColumns}
@@ -2416,9 +2508,19 @@ export async function listAiQueryPreviewCandidates(input: {
 }
 
 export async function enqueueAiQueryPreview(aiQueryLogId: string) {
+  const maxActivePerContact = Math.max(1, nonNegativeInteger(process.env.AI_PREVIEW_MAX_ACTIVE_PER_CONTACT, 3));
   const result = await query<{ id: string }>(`INSERT INTO jobs (type, ai_query_log_id)
-    SELECT 'ai_preview', q.id FROM ai_query_logs q WHERE q.id=$1
-    ON CONFLICT DO NOTHING RETURNING id`, [aiQueryLogId]);
+    SELECT 'ai_preview', q.id
+    FROM ai_query_logs q
+    WHERE q.id=$1
+      AND (q.contact_id IS NULL OR (
+        SELECT count(*) FROM jobs active_job
+        JOIN ai_query_logs active_query ON active_query.id=active_job.ai_query_log_id
+        WHERE active_query.contact_id=q.contact_id
+          AND active_job.type='ai_preview'
+          AND active_job.status IN ('queued', 'retrying', 'processing')
+      ) < $2)
+    ON CONFLICT DO NOTHING RETURNING id`, [aiQueryLogId, maxActivePerContact]);
   return result.rows[0] ?? null;
 }
 

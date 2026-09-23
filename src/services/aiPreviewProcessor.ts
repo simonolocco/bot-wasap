@@ -1,4 +1,4 @@
-import { resolveJevCustomerResponse } from '../ai/jevResponse';
+import { resolveJevCustomerResponse, type JevBudgetClaimFunction } from '../ai/jevResponse';
 import type { JevClientOptions } from './jevSimulator';
 import { deriveSuggestedAiTopic, learningConfidence } from '../ai/runtimePolicy';
 import {
@@ -12,21 +12,29 @@ import {
   type AiLabelMatchRow,
   type AiPreviewJob,
   type AiQueryPreviewCursor,
+  type JevBudgetSubject,
 } from '../db/repository';
 import { canonicalAutoLabelAnswer } from '../ai/labelPolicy';
 
 type PreviewDependencies = {
   labels: AiLabelMatchRow[];
   clientOptions?: JevClientOptions;
+  budgetClaim?: JevBudgetClaimFunction;
 };
 
 async function loadDependencies(): Promise<PreviewDependencies> {
   return { labels: await loadActiveAiLabelExamples() };
 }
 
+export function previewBudgetSubject(contactId: string | null, override?: JevBudgetSubject): JevBudgetSubject {
+  return override ?? (contactId
+    ? { type: 'contact', key: contactId }
+    : { type: 'system', key: 'ai-preview' });
+}
+
 export async function generateAndStoreAiQueryPreview(
   queryId: string,
-  options: { force?: boolean; dependencies?: PreviewDependencies } = {},
+  options: { force?: boolean; dependencies?: PreviewDependencies; budgetSubject?: JevBudgetSubject } = {},
 ) {
   const claim = await claimAiQueryPreviewGeneration(queryId, options.force);
   if (claim.status !== 'claimed') return { status: claim.status, item: null };
@@ -38,6 +46,8 @@ export async function generateAndStoreAiQueryPreview(
     history: context.history,
     labels: dependencies.labels,
     clientOptions: dependencies.clientOptions,
+    budgetSubject: previewBudgetSubject(context.contactId, options.budgetSubject),
+    budgetClaim: dependencies.budgetClaim,
   });
   if (!resolution.answer) throw new Error('La simulación de IA terminó sin una respuesta evaluable.');
 

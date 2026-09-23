@@ -304,6 +304,26 @@ async function main() {
   assert.equal(safeFailure.answer?.outcome, 'unavailable');
   assert.match(safeFailure.answer?.text ?? '', /Mauricio|asesor/i);
 
+  let blockedProviderCalls = 0;
+  const budgetFallback = await resolveJevCustomerResponse({
+    question: '¿Cuánto sale el queso cremoso?',
+    labels: [],
+    budgetSubject: { type: 'admin', key: 'test-session' },
+    budgetClaim: async () => ({ allowed: false, reason: 'subject', retryAfterSeconds: 60 }),
+    clientOptions: {
+      apiKey: 'test-key',
+      fetchImpl: async () => {
+        blockedProviderCalls += 1;
+        return jsonResponse(minimalOfficialResponse);
+      },
+    },
+  });
+  assert.equal(blockedProviderCalls, 0, 'Una cuota agotada no puede llamar a OpenRouter.');
+  assert.equal(budgetFallback.responseType, 'human_advisor');
+  assert.equal(budgetFallback.answer?.errorCode, 'jev-budget');
+  assert.equal(budgetFallback.answer?.outcome, 'unavailable');
+  assert.match(budgetFallback.answer?.text ?? '', /Mauricio|asesor/i);
+
   await assert.rejects(
     () => evaluateJevMessage('Mensaje de prueba', { apiKey: '   ', fetchImpl }),
     (error: unknown) => error instanceof JevServiceError && error.status === 503,
@@ -326,9 +346,14 @@ async function main() {
   }
 
   let transportAttempts = 0;
+  let budgetReservations = 0;
   await evaluateJevMessage('Mensaje de prueba', {
     apiKey: 'test-key',
     timeoutMs: 500,
+    beforeRequest: ({ attempt }) => {
+      budgetReservations += 1;
+      assert.equal(attempt, budgetReservations);
+    },
     fetchImpl: async () => {
       transportAttempts += 1;
       if (transportAttempts === 1) throw new TypeError('temporary connection failure');
@@ -336,6 +361,7 @@ async function main() {
     },
   });
   assert.equal(transportAttempts, 2);
+  assert.equal(budgetReservations, 2, 'Cada intento HTTP debe reservar su propio cupo persistente.');
 
   await assert.rejects(
     () => evaluateJevMessage('Mensaje de prueba', {

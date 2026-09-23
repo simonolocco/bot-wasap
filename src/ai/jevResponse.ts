@@ -13,6 +13,11 @@ import { renderSavedAnswer } from './answerTemplate';
 import type { AiLabelCandidate, AiLabelClassification } from './labelClassifier';
 import { normalizeAiTopic } from './labelPolicy';
 import type { CustomerAiResolution } from './queryResolver';
+import {
+  claimJevBudget,
+  type JevBudgetClaim,
+  type JevBudgetSubject,
+} from '../db/repository';
 
 const RESPONSE_LABELS: Record<JevResponseType, string | null> = {
   greeting: 'saludos',
@@ -104,16 +109,42 @@ export type JevCustomerResolution = CustomerAiResolution & {
   decision: JevSimulationResponse | null;
 };
 
+export type JevBudgetClaimFunction = (subject: JevBudgetSubject) => Promise<JevBudgetClaim>;
+
+export class JevBudgetError extends JevServiceError {
+  constructor(
+    public readonly reason: 'global' | 'subject',
+    public readonly retryAfterSeconds: number,
+  ) {
+    super(429, 'Se alcanzó la cuota segura de Jev. La consulta fue derivada a un asesor.');
+    this.name = 'JevBudgetError';
+  }
+}
+
 export async function resolveJevCustomerResponse(input: {
   question: string;
   history?: Turn[];
   labels?: AiLabelCandidate[];
   failSafe?: boolean;
   clientOptions?: JevClientOptions;
+  budgetSubject?: JevBudgetSubject;
+  budgetClaim?: JevBudgetClaimFunction;
 }): Promise<JevCustomerResolution> {
   const labels = input.labels ?? [];
   try {
-    const decision = await evaluateJevMessage(input.question, toJevHistory(input.history), input.clientOptions);
+    const callerBeforeRequest = input.clientOptions?.beforeRequest;
+    const budgetClaim = input.budgetClaim ?? claimJevBudget;
+    const clientOptions: JevClientOptions = input.budgetSubject
+      ? {
+          ...input.clientOptions,
+          beforeRequest: async context => {
+            const claim = await budgetClaim(input.budgetSubject!);
+            if (!claim.allowed) throw new JevBudgetError(claim.reason, claim.retryAfterSeconds);
+            await callerBeforeRequest?.(context);
+          },
+        }
+      : input.clientOptions ?? {};
+    const decision = await evaluateJevMessage(input.question, toJevHistory(input.history), clientOptions);
     const chosen = decision.answers.response_type.choice;
     const confidence = selectedConfidence(decision, chosen);
     const responseType: JevResponseType = confidence < 0.55
@@ -151,7 +182,8 @@ export async function resolveJevCustomerResponse(input: {
       decision,
     };
   } catch (error) {
-    if (!input.failSafe) throw error;
+    const budgetExceeded = error instanceof JevBudgetError;
+    if (!budgetExceeded && !input.failSafe) throw error;
     const responseType: JevResponseType = 'human_advisor';
     const matchedLabel = labelFor(responseType, labels);
     const rendered = renderSavedAnswer(matchedLabel?.answer?.trim() || fallbackTemplate(responseType));
@@ -166,7 +198,8 @@ export async function resolveJevCustomerResponse(input: {
         model: JEV_MODEL,
         tokens: 0,
         elapsedMs: 0,
-        errorCode: error instanceof JevServiceError ? `jev-${error.status}` : 'jev-provider',
+        errorCode: budgetExceeded ? 'jev-budget'
+          : error instanceof JevServiceError ? `jev-${error.status}` : 'jev-provider',
       },
       sendMenuAfter: true,
       classification: {

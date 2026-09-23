@@ -111,6 +111,10 @@ export function validateProductionEnv(env: Environment): ProductionConfigIssue[]
   };
   boundedInteger('WORKER_CONCURRENCY', 16, 4, 64);
   boundedInteger('DB_POOL_MAX', 20, 10, 100);
+  boundedInteger('JEV_BUDGET_GLOBAL_PER_HOUR', 500, 1, 100000);
+  boundedInteger('JEV_BUDGET_CONTACT_PER_HOUR', 30, 1, 10000);
+  boundedInteger('JEV_BUDGET_ADMIN_PER_HOUR', 120, 1, 10000);
+  boundedInteger('AI_PREVIEW_MAX_ACTIVE_PER_CONTACT', 3, 1, 100);
   boundedInteger('AUTO_RESPONSE_MAX_DELAY_SECONDS', 120, 30, 120);
   boundedInteger('POSTGRES_ARCHIVE_TIMEOUT', 300, 60, 300);
 
