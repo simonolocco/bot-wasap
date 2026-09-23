@@ -206,6 +206,7 @@ const ORDER_ACTION_PATTERN = /\b(?:(?:quiero|quisiera|necesito|voy\s+a)\s+(?:ped
 const PACKAGING_PATTERN = /\b(?:presentacion(?:es)?|envase(?:s)?|formato(?:s)?|tamano(?:s)?|peso|gramos?|kilogramos?|kilos?|kg|unidades?\s+(?:trae|viene)|pack(?:s)?|bulto(?:s)?|caja\s+cerrada|cuanto\s+trae|cuantos?\s+(?:trae|vienen)|como\s+viene|en\s+que\s+(?:envase|presentacion|formato)|viene\s+en)\b/;
 const PRODUCT_REFERENCE_PATTERN = /\b(?:quesos?|cremos[oa]|muzz?arell?a|mozzarella|sardo|reggianito|pategras|fontina|provolone|roquefort|tybo|dambo|gouda|cheddar|ricot[at]|fiambres?|jamones?|paleta|salame|mortadela|bondiola|panceta|lomos?|chorizos?|leche|manteca|margarina|crema|yogur|dulce\s+de\s+leche|mermelada|yerba|galletitas?|aceite|mayonesa|ketchup|mostaza|harina|arroz|fideos?|azucar|cafe|gaseosa|jugo)\b/;
 const PRODUCT_SIZE_PATTERN = /\b\d+(?:[.,]\d+)?\s*(?:g|gr|gramos?|kg|kilos?|ml|cc|l|litros?)\b/;
+const PRODUCT_DETAIL_PATTERN = /\b(?:informacion|info|detalles?|caracteristicas?|ficha\s+tecnica|fotos?|imagenes?)\b/;
 const STOCK_PATTERN = /\b(?:stock|disponib\w*|quedan?|les\s+queda|consegui[rs]|reposicion|reponer)\b/;
 const PRICE_PATTERN = /\b(?:precio(?:s)?|cuanto\s+(?:sale|cuesta|vale)|a\s+cuanto|que\s+valor|valor\s+de)\b/;
 const BARE_PRICE_FOLLOWUP_PATTERN = /^(?:(?:y|entonces)\s+)?(?:(?:cuanto\s+(?:sale|cuesta|vale))|(?:a\s+cuanto)|(?:que\s+(?:precio|valor))|precios?|valor)(?:\s+(?:es|seria|queda|esto|eso))?$/;
@@ -225,9 +226,6 @@ export function shouldRouteToProductAdvisor(message: string, history: readonly J
 
   if (FOOD_SAFETY_PATTERN.test(normalized)) return true;
   if (RECOMMENDATION_PATTERN.test(normalized)) return true;
-  if (ORDER_ACTION_PATTERN.test(normalized)) return false;
-  if (PACKAGING_PATTERN.test(normalized)) return true;
-  if (PRODUCT_REFERENCE_PATTERN.test(normalized) || PRODUCT_SIZE_PATTERN.test(normalized)) return true;
   if (STOCK_PATTERN.test(normalized)) return true;
   if (PRICE_PATTERN.test(normalized)) {
     if (NON_PRODUCT_PRICE_PATTERN.test(normalized)) return false;
@@ -242,6 +240,10 @@ export function shouldRouteToProductAdvisor(message: string, history: readonly J
     }
     return true;
   }
+  if (PRODUCT_DETAIL_PATTERN.test(normalized) && PRODUCT_REFERENCE_PATTERN.test(normalized)) return true;
+  if (ORDER_ACTION_PATTERN.test(normalized)) return false;
+  if (PACKAGING_PATTERN.test(normalized)) return true;
+  if (PRODUCT_REFERENCE_PATTERN.test(normalized) || PRODUCT_SIZE_PATTERN.test(normalized)) return true;
 
   return DIRECT_AVAILABILITY_PATTERN.test(normalized)
     && !NON_PRODUCT_AVAILABILITY_PATTERN.test(normalized);

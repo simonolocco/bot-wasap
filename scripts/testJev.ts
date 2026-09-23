@@ -96,6 +96,9 @@ async function main() {
     'Queso cremoso La Paulina',
     'La Serenísima 1 litro',
     'Muzzarella Barraza',
+    'Dame el precio del queso cremoso',
+    'Mandame el precio de la muzzarella',
+    'Enviame una foto del queso sardo',
   ]) {
     assert.equal(shouldRouteToProductAdvisor(productQuestion), true, productQuestion);
   }
@@ -109,6 +112,8 @@ async function main() {
     '¿Cuánto sale el envío?',
     '¿Cuál es la compra mínima?',
     'Quiero pedir 3 cajas de galletitas',
+    'Dame 2 kilos de queso cremoso',
+    'Quiero comprar una horma de sardo',
   ]) {
     assert.equal(shouldRouteToProductAdvisor(genericOrNonProductQuestion), false, genericOrNonProductQuestion);
   }
