@@ -447,7 +447,8 @@ export function renderAnswer(
   }
 
   if (needsHuman) {
-    pieces.push(handoff());
+    const advisorLink = advisorUrl();
+    if (!pieces.some(piece => piece.includes(advisorLink))) pieces.push(handoff());
     outcome = 'handoff';
   }
 

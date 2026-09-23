@@ -33,6 +33,7 @@ async function run() {
   check('productos y precios siempre derivan al asesor', () => {
     const response = renderAnswer({ ...base, productQuery: 'cremoso', tier: 'mayorista' }, catalog);
     assert.match(response.text, /Mauricio|asesor comercial/i); assert.doesNotMatch(response.text, /1\.234,56|por kg/); assert.equal(response.outcome, 'handoff');
+    assert.equal(response.text.match(/https:\/\/wa\.me\//g)?.length, 1);
   });
   check('lista vencida, futura o no revisada jamás cotiza', () => {
     for (const blocked of [{ ...catalog, approved: false }, { ...catalog, validUntil: '2025-10-11' }, { ...catalog, validFrom: '2099-12-31' }]) {
