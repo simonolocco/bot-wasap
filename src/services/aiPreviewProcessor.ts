@@ -52,6 +52,7 @@ export async function generateAndStoreAiQueryPreview(
   if (!resolution.answer) throw new Error('La simulación de IA terminó sin una respuesta evaluable.');
 
   const answer = resolution.answer;
+  const displayedAnswer = [answer.text, resolution.followUpText].filter(Boolean).join('\n\n');
   const classification = resolution.classification;
   const suggestedName = deriveSuggestedAiTopic(classification, answer);
   const confidence = learningConfidence(classification, answer);
@@ -66,7 +67,7 @@ export async function generateAndStoreAiQueryPreview(
   }
   const item = await updateAiQueryPreview(queryId, {
     generationId: context.generationId,
-    answer: answer.text,
+    answer: displayedAnswer,
     outcome: answer.outcome,
     source: resolution.source,
     model: answer.model || null,

@@ -8,9 +8,13 @@ export const AUTO_LABEL_MIN_7D_CONTACTS = 3;
 
 const MAURICIO_URL = 'https://wa.me/5493517565641';
 const PRODUCT_ADVISOR_ANSWER = [
-  'Para confirmar productos, marcas, presentaciones, precios, promociones, unidades por caja o stock actualizado,',
-  `escribile directamente a Mauricio, nuestro asesor comercial: ${MAURICIO_URL}`,
-].join(' ');
+  'Podés buscar el producto y consultar su precio en nuestros catálogos:',
+  '',
+  'Mayorista: https://drive.google.com/file/d/10ooMXAHcm1RL6aILFKq8rsNXsZHQy1CP/view?usp=sharing',
+  'Minorista: https://drive.google.com/file/d/1_mQxhP0oKDIJdBonfHSD2YudV3pqtHRQ/view?usp=sharing',
+  '',
+  `Si no encontrás el producto o el precio en los catálogos, escribile a Mauricio, nuestro asesor comercial: ${MAURICIO_URL}`,
+].join('\n');
 
 export const AI_UNCLEAR_LABEL_ANSWER = [
   'No llegué a reconocer una consulta en ese mensaje. ¿Podés escribirla de otra forma?',

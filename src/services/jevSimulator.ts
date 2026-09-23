@@ -216,9 +216,9 @@ const NON_PRODUCT_AVAILABILITY_PATTERN = /\b(?:envio|entrega|flete|reparto|deliv
 const NON_PRODUCT_PRICE_PATTERN = /\b(?:envios?|entregas?|fletes?|repartos?|delivery|compra\s+minima|pedido\s+minimo|minimo\s+de\s+compra|cuotas?|recargos?)\b/;
 
 /**
- * Hard business rule: a concrete product question must be answered by a person,
- * never by an invented product lookup. Generic catalog/list requests stay in the
- * deterministic catalog flow.
+ * Route concrete product questions to the catalog-first response. Generic
+ * catalog/list requests stay in the deterministic catalog flow. Jev never
+ * invents product details or prices.
  */
 export function shouldRouteToProductAdvisor(message: string, history: readonly JevHistoryMessage[] = []) {
   const normalized = normalizeForMatching(message);
@@ -294,7 +294,7 @@ export function buildJevSimulationRequest(message: string, history: readonly Jev
           payment: 'The customer asks about payment methods, transfers, invoices, balances, receipts, or reports a payment.',
           catalog: 'A generic request for the catalog, price list, product list, or what products are sold, without asking about a particular product or attribute.',
           catalog_problem: 'The customer cannot open, load, access, or use the catalog or price list.',
-          product_advisor: 'A question about a particular product, price, stock, availability, recommendation, comparison, packaging, presentation, ingredients, allergens, suitability, expiration, storage, or food safety. This flow hands the customer to a human and must not invent product data.',
+          product_advisor: 'A question about a particular product, price, stock, availability, recommendation, comparison, packaging, presentation, ingredients, allergens, suitability, expiration, storage, or food safety. Send both catalog links first; offer a human only if the customer cannot find the information there. Never invent product data.',
           order: 'The customer clearly wants to place, repeat, add to, change, confirm, cancel, or check a concrete order. A direct purchase instruction is an order, not merely a product question.',
           complaint: 'The customer reports damaged, missing, wrong, late, poor-quality goods or service, or asks for resolution of a problem with an order.',
           human_advisor: 'The customer explicitly asks to speak with a person, representative, seller, or human advisor, without a more specific complaint or product question.',
@@ -315,7 +315,7 @@ export function buildJevSimulationRequest(message: string, history: readonly Jev
       },
       human_attention: {
         type: 'noul',
-        instructions: 'Does current_message require a human advisor instead of a safe deterministic response? Product-specific questions, complaints, uncertain cases, payment cases needing verification, and explicit requests for a person should be yes. Greetings, known business facts, and generic catalog flows should be no.',
+        instructions: 'Does current_message require a human advisor after the safe catalog-first response? Complaints, uncertain cases, payment cases needing verification, food safety concerns, and explicit requests for a person should be yes. Ordinary product and price searches can start with both catalogs.',
         criteria: {
           true: 'A person must use judgment, verify changing information, inspect a specific case, or provide personalized attention.',
           false: 'A known static response or deterministic automated flow can resolve it safely without inventing information.',
@@ -465,7 +465,7 @@ export async function evaluateJevMessage(
           confidence: payload.answers.urgency.confidence ?? null,
           legend: URGENCY_LEGEND,
         },
-        human_attention: forceProductAdvisor ? { type: 'noul', noul: 1 } : payload.answers.human_attention,
+        human_attention: payload.answers.human_attention,
       },
       usage: {
         input_tokens: readTokenCount(payload.usage, 'inputTokens', 'input_tokens') ?? 0,

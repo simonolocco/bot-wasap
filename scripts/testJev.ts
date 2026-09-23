@@ -99,6 +99,8 @@ async function main() {
     'Dame el precio del queso cremoso',
     'Mandame el precio de la muzzarella',
     'Enviame una foto del queso sardo',
+    'Marca queso azul',
+    'Ver más info. ¿Tienen provoleta parrillera? ¿Cuál es su precio?',
   ]) {
     assert.equal(shouldRouteToProductAdvisor(productQuestion), true, productQuestion);
   }
@@ -199,8 +201,8 @@ async function main() {
   });
   assert.deepEqual(snakeCaseUsageResult.usage, { input_tokens: 8, output_tokens: 2, cost: 0 });
 
-  // Product questions are always routed to a human product advisor, even if a
-  // provider response is accidentally classified as catalog or order.
+  // Product questions use the catalog-first flow even if the provider
+  // accidentally classifies them as a generic catalog request or order.
   const forcedProductAdvisor = await evaluateJevMessage('¿Cuánto sale la caja de dulce de leche?', {
     apiKey: 'test-key',
     timeoutMs: 500,
@@ -218,7 +220,7 @@ async function main() {
     probabilities: { product_advisor: 1 },
     confidence: 1,
   });
-  assert.deepEqual(forcedProductAdvisor.answers.human_attention, { type: 'noul', noul: 1 });
+  assert.deepEqual(forcedProductAdvisor.answers.human_attention, { type: 'noul', noul: .35 });
 
   const forcedBareProductAdvisor = await evaluateJevMessage('Muzzarella Barraza', {
     apiKey: 'test-key',
@@ -267,10 +269,32 @@ async function main() {
     },
   });
   assert.equal(productResolution.responseType, 'product_advisor');
-  assert.equal(productResolution.answer?.text, 'CONSULTA PRODUCTO → MAURICIO');
-  assert.equal(productResolution.answer?.outcome, 'handoff');
+  assert.match(productResolution.answer?.text ?? '', /Mayorista: https:\/\/drive\.google\.com/);
+  assert.match(productResolution.answer?.text ?? '', /Minorista: https:\/\/drive\.google\.com/);
+  assert.doesNotMatch(productResolution.answer?.text ?? '', /Mauricio/);
+  assert.match(productResolution.followUpText ?? '', /Si no encontrás el producto o el precio.*Mauricio/);
+  assert.equal(productResolution.answer?.outcome, 'answered');
+  assert.equal(productResolution.sendMenuAfter, false);
   assert.equal(productResolution.source, 'jev-template');
   assert.equal(productResolution.classification.method, 'jev');
+
+  const genericCatalogResolution = await resolveJevCustomerResponse({
+    question: 'Pasame la lista de precios',
+    labels: [{ id: 'catalog-label', name: 'catalogo', answer: 'Escribile a Mauricio', examples: [] }],
+    clientOptions: {
+      apiKey: 'test-key',
+      timeoutMs: 500,
+      fetchImpl: async () => jsonResponse({ ...minimalOfficialResponse, answers: {
+        ...minimalOfficialResponse.answers,
+        response_type: { type: 'choice', choice: 'catalog' },
+      } }),
+    },
+  });
+  assert.equal(genericCatalogResolution.responseType, 'catalog');
+  assert.match(genericCatalogResolution.answer?.text ?? '', /Mayorista: https:\/\/drive\.google\.com/);
+  assert.match(genericCatalogResolution.answer?.text ?? '', /Minorista: https:\/\/drive\.google\.com/);
+  assert.match(genericCatalogResolution.followUpText ?? '', /Si no encontrás/);
+  assert.equal(genericCatalogResolution.sendMenuAfter, false);
 
   const lowConfidenceResolution = await resolveJevCustomerResponse({
     question: 'No sé bien qué necesito',

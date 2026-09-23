@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { BUSINESS_ADDRESS, BUSINESS_SCHEDULE, MAIN_MENU_OPTIONS, isMenuCommandText, normalizeText } from '../botMenu';
+import { BUSINESS_ADDRESS, BUSINESS_SCHEDULE, CATALOG_MAYORISTA_URL, CATALOG_MINORISTA_URL, MAIN_MENU_OPTIONS, isMenuCommandText, normalizeText } from '../botMenu';
 import { type Catalog, type Product } from './catalog';
 import { AiProviderError, type Complete, parseJson } from './openRouter';
 import { isTypoGreeting, isUnintelligibleQuestion } from './inputQuality';
@@ -74,8 +74,8 @@ export function advisorUrl() {
 
 export function catalogLinks() {
   const links = [
-    ['Mayorista', process.env.CATALOG_MAYORISTA_URL],
-    ['Minorista', process.env.CATALOG_MINORISTA_URL],
+    ['Mayorista', CATALOG_MAYORISTA_URL],
+    ['Minorista', CATALOG_MINORISTA_URL],
   ];
   return links
     .filter(([, url]) => url && /^https:\/\//.test(url) && !url.includes('mi-distribuidora.com'))

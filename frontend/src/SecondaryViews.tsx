@@ -1364,6 +1364,8 @@ function AiView() {
   const [data, setData] = useState<AiData | null>(null);
   const [question, setQuestion] = useState('');
   const [testAnswer, setTestAnswer] = useState('');
+  const [testFollowUp, setTestFollowUp] = useState('');
+  const [testSendMenu, setTestSendMenu] = useState(false);
   const [testLabel, setTestLabel] = useState('');
   const [testSource, setTestSource] = useState('');
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -1463,8 +1465,8 @@ function AiView() {
   }
   async function runTest(event: FormEvent) {
     event.preventDefault(); if (!question.trim()) return;
-    setBusy(true); setTestAnswer(''); setTestSource(''); setNotice('');
-    try { const result = await api<{ answer: { text: string; label?: string | null; responseSource?: string } }>('/api/ai/test', { method: 'POST', body: JSON.stringify({ question }) }); setTestAnswer(result.answer.text); setTestLabel(result.answer.label ?? ''); setTestSource(result.answer.responseSource ?? ''); await load(); }
+    setBusy(true); setTestAnswer(''); setTestFollowUp(''); setTestSendMenu(false); setTestSource(''); setNotice('');
+    try { const result = await api<{ answer: { text: string; followUpText?: string; sendMenuAfter: boolean; label?: string | null; responseSource?: string } }>('/api/ai/test', { method: 'POST', body: JSON.stringify({ question }) }); setTestAnswer(result.answer.text); setTestFollowUp(result.answer.followUpText ?? ''); setTestSendMenu(result.answer.sendMenuAfter); setTestLabel(result.answer.label ?? ''); setTestSource(result.answer.responseSource ?? ''); await load(); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'No se pudo probar la respuesta.'); }
     finally { setBusy(false); }
   }
@@ -1575,7 +1577,7 @@ function AiView() {
       <section className="ai-test-card">
         <div><h2>Probar una pregunta con Jev</h2><p className="ai-section-description">Usa el mismo recorrido de decisión y respuesta que WhatsApp sin enviar mensajes. La prueba queda guardada en la vista Pruebas.</p></div>
         <form onSubmit={runTest} className="ai-test-form"><textarea aria-label="Pregunta de prueba" value={question} onChange={event => setQuestion(event.target.value)} placeholder="Ej.: ¿Hacen envíos a Villa María?" rows={3} /><button className="button primary" disabled={busy || !question.trim()}>{busy ? 'Consultando…' : 'Probar respuesta'}</button></form>
-        {testAnswer && <div className="ai-test-result"><div className="ai-result-heading"><strong>Respuesta que recibiría el cliente</strong>{testSourceLabel && <span className="ai-label-badge">{testSourceLabel}{testLabel ? ` · ${testLabel}` : ''}</span>}</div><p>{testAnswer}</p><small className="ai-editor-hint">Después se envía el menú automático.</small></div>}
+        {testAnswer && <div className="ai-test-result"><div className="ai-result-heading"><strong>Respuesta que recibiría el cliente</strong>{testSourceLabel && <span className="ai-label-badge">{testSourceLabel}{testLabel ? ` · ${testLabel}` : ''}</span>}</div><p>{testAnswer}</p>{testFollowUp && <p>{testFollowUp}</p>}{testSendMenu && <small className="ai-editor-hint">Después se envía el menú automático.</small>}</div>}
       </section>
       <nav className="ai-queue-tabs" aria-label="Vistas de actividad de IA">{aiQueueViews.map(view => <button type="button" key={view.id} className={filter === view.id ? 'active' : ''} aria-current={filter === view.id ? 'page' : undefined} onClick={() => setFilter(view.id)}><span>{view.label}</span><strong>{data.totals[view.id]}</strong></button>)}</nav>
       <section className="ai-section-card"><div className="ai-section-heading"><div><h2>{queueCopy.title}</h2><p className="ai-section-description">{queueCopy.description}</p></div><div className="ai-filters"><label><span className="sr-only">Buscar en esta vista</span><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Buscar pregunta o contacto" /></label></div></div>

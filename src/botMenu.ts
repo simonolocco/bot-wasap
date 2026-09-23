@@ -10,10 +10,10 @@ export type MenuOption = {
 const DISTRIBUTOR_NAME = process.env.DISTRIBUTOR_NAME ?? 'Distribuidora Abasot del campo';
 const BOT_FRIENDLY_NAME = process.env.BOT_FRIENDLY_NAME ?? 'AbastoBot';
 
-const CATALOG_MAYORISTA_URL =
-  process.env.CATALOG_MAYORISTA_URL ?? 'https://catalogo.mi-distribuidora.com/catalogo-mayorista.html';
-const CATALOG_MINORISTA_URL =
-  process.env.CATALOG_MINORISTA_URL ?? 'https://drive.google.com/file/d/1_mQxhP0oKDIJdBonfHSD2YudV3pqtHRQ/view';
+export const CATALOG_MAYORISTA_URL =
+  process.env.CATALOG_MAYORISTA_URL ?? 'https://drive.google.com/file/d/10ooMXAHcm1RL6aILFKq8rsNXsZHQy1CP/view?usp=sharing';
+export const CATALOG_MINORISTA_URL =
+  process.env.CATALOG_MINORISTA_URL ?? 'https://drive.google.com/file/d/1_mQxhP0oKDIJdBonfHSD2YudV3pqtHRQ/view?usp=sharing';
 
 export const MENU_HEADER_TEXT = '👋 ¡Hola! Bienvenido';
 // export const MENU_HEADER_IMAGE = 'https://example.com/logo.jpg'; // Descomentar y poner URL real si se desea imagen
@@ -141,6 +141,10 @@ export function formatPriceListMessage(): string {
     '',
     '📌 Tené en cuenta que los precios pueden actualizarse según disponibilidad de stock y vigencia de promociones.',
   ].join('\n');
+}
+
+export function formatCatalogFollowUpMessage(advisorLink: string): string {
+  return `Si no encontrás el producto o el precio en los catálogos, escribile a Mauricio, nuestro asesor comercial: ${advisorLink}`;
 }
 
 export function normalizeText(input: string | undefined | null): string {

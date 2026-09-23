@@ -279,8 +279,9 @@ app.post('/api/ai/test', async (req, res) => {
       budgetSubject: { type: 'admin', key: req.sessionID || req.ip || 'unknown' },
     });
     const answer = resolution.answer!;
+    const displayedAnswer = [answer.text, resolution.followUpText].filter(Boolean).join('\n\n');
     const suggestedName = deriveSuggestedAiTopic(resolution.classification, answer);
-    const log = await recordAiQuery({ question, answer: answer.text, outcome: answer.outcome, source: 'manual',
+    const log = await recordAiQuery({ question, answer: displayedAnswer, outcome: answer.outcome, source: 'manual',
       aiEnabled: settings.enabled, matchedAnswerRuleId: resolution.matchedRuleId,
       matchedAnswerLabelId: resolution.matchedLabel?.id ?? null,
       suggestedLabelId: resolution.matchedLabel?.id ?? null,
@@ -288,11 +289,11 @@ app.post('/api/ai/test', async (req, res) => {
       classificationMethod: resolution.classification.method,
       classificationConfidence: learningConfidence(resolution.classification, answer),
       model: answer.model, tokens: answer.tokens, elapsedMs: answer.elapsedMs, errorCode: answer.errorCode ?? null,
-      previewAnswer: answer.text, previewOutcome: answer.outcome, previewSource: resolution.source,
+      previewAnswer: displayedAnswer, previewOutcome: answer.outcome, previewSource: resolution.source,
       previewModel: answer.model, previewTokens: answer.tokens, previewElapsedMs: answer.elapsedMs,
       previewErrorCode: answer.errorCode ?? null });
     await audit(actor, 'ai_manual_test', undefined, undefined, { queryId: log?.id ?? null });
-    return res.json({ answer: { ...answer, sendMenuAfter: resolution.sendMenuAfter,
+    return res.json({ answer: { ...answer, followUpText: resolution.followUpText, sendMenuAfter: resolution.sendMenuAfter,
       label: resolution.matchedLabel?.name ?? resolution.responseLabel, responseSource: resolution.source }, query: log });
   } catch (error) {
     if (error instanceof JevServiceError) return res.status(error.status).json({ error: error.message });

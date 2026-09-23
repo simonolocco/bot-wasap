@@ -21,6 +21,7 @@ export type CustomerAiResolution = {
   source: 'saved-rule' | 'approved-label' | 'jev-template' | 'generated' | 'disabled';
   answer: Answer | null;
   sendMenuAfter: boolean;
+  followUpText?: string;
   classification: AiLabelClassification;
   matchedRuleId: string | null;
   matchedLabel: AiLabelCandidate | null;

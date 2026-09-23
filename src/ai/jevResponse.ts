@@ -1,4 +1,4 @@
-import { BUSINESS_ADDRESS, BUSINESS_SCHEDULE } from '../botMenu';
+import { BUSINESS_ADDRESS, BUSINESS_SCHEDULE, formatCatalogFollowUpMessage } from '../botMenu';
 import {
   JEV_MODEL,
   JevServiceError,
@@ -42,11 +42,19 @@ const RESPONSE_LABELS: Record<JevResponseType, string | null> = {
 };
 
 const HANDOFF_TYPES = new Set<JevResponseType>([
-  'payment', 'catalog_problem', 'product_advisor', 'complaint', 'human_advisor', 'external_proposal',
+  'payment', 'catalog_problem', 'complaint', 'human_advisor', 'external_proposal',
 ]);
 
-function productAdvisorAnswer() {
-  return `Para confirmar productos, marcas, presentaciones, precios, promociones, unidades por caja o stock actualizado, escribile directamente a Mauricio, nuestro asesor comercial: ${advisorUrl()}`;
+function catalogFirstMessages() {
+  const catalogs = catalogLinks();
+  if (!catalogs) return {
+    text: `Para consultar productos y precios, escribile a Mauricio, nuestro asesor comercial: ${advisorUrl()}`,
+    followUpText: undefined,
+  };
+  return {
+    text: `Podés buscar el producto y consultar su precio en nuestros catálogos:\n\n${catalogs}`,
+    followUpText: formatCatalogFollowUpMessage(advisorUrl()),
+  };
 }
 
 function fallbackTemplate(type: JevResponseType) {
@@ -65,7 +73,7 @@ function fallbackTemplate(type: JevResponseType) {
       ? `Te comparto nuestros catálogos vigentes:\n\n${catalogs}\n\nPara consultar un producto puntual, escribile a Mauricio: ${advisorUrl()}`
       : `Mauricio puede facilitarte la lista vigente: ${advisorUrl()}`,
     catalog_problem: `Probá abrir el catálogo desde Chrome o Safari. Si sigue sin abrir, Mauricio puede enviarte la lista por otra vía: ${advisorUrl()}`,
-    product_advisor: productAdvisorAnswer(),
+    product_advisor: catalogFirstMessages().text,
     order: 'Para armar tu pedido, elegí «Nuevo Pedido» (opción 4) y enviá la lista completa con cantidades, productos y marcas. La compra mínima es de 1/2 horma en adelante.',
     complaint: `Lamentamos el inconveniente y entendemos tu molestia. Para revisar tu caso y solucionarlo, comunicate directamente con Mauricio: ${advisorUrl()}`,
     human_advisor: `¡Por supuesto! Podés comunicarte directamente con Mauricio, nuestro asesor comercial: ${advisorUrl()}`,
@@ -152,7 +160,11 @@ export async function resolveJevCustomerResponse(input: {
       ? 'unclear'
       : chosen;
     const matchedLabel = labelFor(responseType, labels);
-    const rendered = renderSavedAnswer(matchedLabel?.answer?.trim() || fallbackTemplate(responseType));
+    const catalogFirst = responseType === 'product_advisor' || responseType === 'catalog'
+      ? catalogFirstMessages() : null;
+    // Catalog URLs are live configuration; an older approved label must not
+    // replace them with an immediate advisor referral.
+    const rendered = renderSavedAnswer(catalogFirst?.text || matchedLabel?.answer?.trim() || fallbackTemplate(responseType));
     const text = responseType === 'silence' ? '' : rendered.text;
     const responseLabel = RESPONSE_LABELS[responseType];
     const classification: AiLabelClassification = {
@@ -164,7 +176,8 @@ export async function resolveJevCustomerResponse(input: {
     const answer: Answer = {
       text,
       outcome: answerOutcome(responseType),
-      sources: matchedLabel ? [`Plantilla aprobada: ${matchedLabel.name}`] : ['Plantilla segura de Jev'],
+      sources: catalogFirst ? ['Catálogos vigentes de Jev']
+        : matchedLabel ? [`Plantilla aprobada: ${matchedLabel.name}`] : ['Plantilla segura de Jev'],
       products: [],
       model: decision.model,
       tokens: decision.usage.input_tokens + decision.usage.output_tokens,
@@ -173,7 +186,8 @@ export async function resolveJevCustomerResponse(input: {
     return {
       source: 'jev-template',
       answer,
-      sendMenuAfter: Boolean(text.trim()),
+      sendMenuAfter: Boolean(text.trim()) && !catalogFirst,
+      followUpText: catalogFirst?.followUpText,
       classification,
       matchedRuleId: null,
       matchedLabel,

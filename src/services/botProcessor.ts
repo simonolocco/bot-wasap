@@ -11,7 +11,7 @@ import {
 import {
   advisorReply, BUSINESS_ADDRESS, BUSINESS_SCHEDULE, EMPTY_ORDER_MESSAGE, FAQ_GENERAL, FAQ_OTHER_NO_ID, FAQ_OTHER_PROMPT,
   FAQ_OTHER_YES_ID, FOLLOW_UP_MENU_HEADER_TEXT, FOLLOW_UP_MENU_PROMPT, MAIN_MENU_OPTIONS, MENU_BUTTON_LABEL, MENU_HEADER_TEXT, MENU_PROMPT, ORDER_INSTRUCTIONS,
-  SUPPORT_TICKET_PROMPT, buildGreetingIntro, buildMenuListSections, formatPriceListMessage, isMenuCommandText, normalizeText, resolveOptionIdFromText, type MenuOptionId,
+  SUPPORT_TICKET_PROMPT, buildGreetingIntro, buildMenuListSections, formatCatalogFollowUpMessage, formatPriceListMessage, isMenuCommandText, normalizeText, resolveOptionIdFromText, type MenuOptionId,
 } from '../messageCatalog';
 import { buildOrderForwardLink } from './orderTicket';
 import { assistantEnabled, hasPendingQuestion, isLearningQueueNoise, shouldUseAssistant, type Turn } from '../ai/assistant';
@@ -193,7 +193,10 @@ async function handleOption(contactId: string, incoming: Incoming, option: MenuO
   switch (option) {
     case 'horarios': await outgoing(contactId, to, `${key}:schedule`, BUSINESS_SCHEDULE); break;
     case 'direccion': await outgoing(contactId, to, `${key}:address`, BUSINESS_ADDRESS); break;
-    case 'lista_precio': await outgoing(contactId, to, `${key}:prices`, formatPriceListMessage()); break;
+    case 'lista_precio':
+      await outgoing(contactId, to, `${key}:prices`, formatPriceListMessage());
+      await outgoing(contactId, to, `${key}:prices-followup`, formatCatalogFollowUpMessage(advisorLink()));
+      break;
     case 'preguntas_frecuentes':
       await outgoing(contactId, to, `${key}:faq`, FAQ_GENERAL);
       await outgoing(contactId, to, `${key}:faq-follow-up`, FAQ_OTHER_PROMPT, faqFollowUpPayload(to));
@@ -205,7 +208,7 @@ async function handleOption(contactId: string, incoming: Incoming, option: MenuO
       return;
   }
   await updateSession(contactId, { awaitingOrderDetail: false });
-  if (option !== 'preguntas_frecuentes') await sendFollowUpMenu(contactId, to, key);
+  if (option !== 'preguntas_frecuentes' && option !== 'lista_precio') await sendFollowUpMenu(contactId, to, key);
 }
 
 export async function processIncomingJob(job: { id: string; contact_id: string; attempts: number }) {
@@ -458,6 +461,7 @@ export async function processIncomingJob(job: { id: string; contact_id: string; 
           && latestAiSettings.engine === aiSettings.engine
           && sameRevision;
         const becameStale = shouldSkipAutomaticResponse(sourceTimestamp, event.received_at);
+        const recordedAnswer = [answer.text, resolution.followUpText].filter(Boolean).join('\n\n');
         if (!responseStillEnabled || latestContact?.botPaused || becameStale) {
           const withheldOutcome = latestContact?.botPaused || becameStale ? 'paused' : 'disabled';
           await recordAiQuery({ contactId: job.contact_id, providerMessageId: event.provider_message_id, question: rawText,
@@ -466,7 +470,7 @@ export async function processIncomingJob(job: { id: string; contact_id: string; 
             suggestedLabelId, suggestedLabelName: suggestedName, classificationMethod,
             classificationConfidence: confidence, model: answer.model, tokens: answer.tokens,
             elapsedMs: answer.elapsedMs, errorCode: becameStale ? 'stale-before-send' : null,
-            previewAnswer: answer.text, previewOutcome: answer.outcome, previewSource: resolution.source,
+            previewAnswer: recordedAnswer, previewOutcome: answer.outcome, previewSource: resolution.source,
             previewModel: answer.model, previewTokens: answer.tokens, previewElapsedMs: answer.elapsedMs,
             previewErrorCode: answer.errorCode ?? null });
           await completeJob(job.id);
@@ -475,6 +479,9 @@ export async function processIncomingJob(job: { id: string; contact_id: string; 
 
         const responseSent = Boolean(answer.text.trim());
         if (responseSent) await outgoing(job.contact_id, incoming.from, `${key}:ai-${resolution.source}`, answer.text.trim());
+        if (responseSent && resolution.followUpText) {
+          await outgoing(job.contact_id, incoming.from, `${key}:ai-${resolution.source}:catalog-followup`, resolution.followUpText);
+        }
         if (resolution.sendMenuAfter) await sendMenu(job.contact_id, incoming.from, `${key}:ai-menu`);
 
         // Reusing an approved label may learn this wording as an alias. Manual
@@ -509,12 +516,12 @@ export async function processIncomingJob(job: { id: string; contact_id: string; 
 
         const reviewStatus = aiReviewStatus({ source: 'production', aiEnabled, outcome: answer.outcome, responseSent, unintelligible });
         await recordAiQuery({ contactId: job.contact_id, providerMessageId: event.provider_message_id, question: rawText,
-          answer: answer.text, outcome: answer.outcome, source: 'production', aiEnabled, reviewStatus,
+          answer: recordedAnswer, outcome: answer.outcome, source: 'production', aiEnabled, reviewStatus,
           matchedAnswerRuleId: matchedRuleId, matchedAnswerLabelId: matchedLabelId,
           suggestedLabelId, suggestedLabelName: suggestedName,
           classificationMethod, classificationConfidence: confidence,
           model: answer.model, tokens: answer.tokens, elapsedMs: answer.elapsedMs, errorCode: answer.errorCode ?? null,
-          previewAnswer: answer.text, previewOutcome: answer.outcome, previewSource: resolution.source,
+          previewAnswer: recordedAnswer, previewOutcome: answer.outcome, previewSource: resolution.source,
           previewModel: answer.model, previewTokens: answer.tokens, previewElapsedMs: answer.elapsedMs,
           previewErrorCode: answer.errorCode ?? null });
         await recordBotInteractionEvent({ contactId: job.contact_id, providerMessageId: event.provider_message_id,

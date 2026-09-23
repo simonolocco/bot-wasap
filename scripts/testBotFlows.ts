@@ -5,6 +5,8 @@ import {
   FAQ_GENERAL,
   ORDER_INSTRUCTIONS,
   buildMenuListSections,
+  formatCatalogFollowUpMessage,
+  formatPriceListMessage,
   normalizeText,
   resolveOptionIdFromText,
 } from '../src/botMenu';
@@ -19,6 +21,10 @@ import {
   shouldQueueAiLearning,
   shouldSkipAutomaticResponse,
 } from '../src/services/botProcessor';
+
+assert.match(formatPriceListMessage(), /Mayorista:[\s\S]*https:\/\/drive\.google\.com/);
+assert.match(formatPriceListMessage(), /Minorista:[\s\S]*https:\/\/drive\.google\.com/);
+assert.match(formatCatalogFollowUpMessage('https://wa.me/5493517565641'), /Si no encontrás.*Mauricio.*https:\/\/wa\.me/);
 
 assert.equal(shouldQueueAiLearning({ text: 'En donde estan?', type: 'text' }), false,
   'Una pregunta resuelta por dirección no entra en aprendizaje.');
