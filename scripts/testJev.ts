@@ -93,6 +93,9 @@ async function main() {
     '¿Tienen Coca Cola de 2 litros?',
     '¿Tienen este producto?',
     '¿Qué productos sin TACC tienen?',
+    'Queso cremoso La Paulina',
+    'La Serenísima 1 litro',
+    'Muzzarella Barraza',
   ]) {
     assert.equal(shouldRouteToProductAdvisor(productQuestion), true, productQuestion);
   }
@@ -211,6 +214,19 @@ async function main() {
     confidence: 1,
   });
   assert.deepEqual(forcedProductAdvisor.answers.human_attention, { type: 'noul', noul: 1 });
+
+  const forcedBareProductAdvisor = await evaluateJevMessage('Muzzarella Barraza', {
+    apiKey: 'test-key',
+    timeoutMs: 500,
+    fetchImpl: async () => jsonResponse({
+      ...minimalOfficialResponse,
+      answers: {
+        ...minimalOfficialResponse.answers,
+        response_type: { type: 'choice', choice: 'catalog' },
+      },
+    }),
+  });
+  assert.equal(forcedBareProductAdvisor.answers.response_type.choice, 'product_advisor');
 
   const genericCatalog = await evaluateJevMessage('Pasame la lista de precios', {
     apiKey: 'test-key',
