@@ -55,6 +55,22 @@ async function main() {
 
     const contact = await query<{ id: string; unread: number }>('SELECT id, unread_count AS unread FROM contacts WHERE phone=$1', [phone]);
     assert.equal(contact.rows[0].unread, 23);
+    await query(`INSERT INTO advisor_followups
+      (contact_id, trigger_provider_message_id, due_at, status, locked_at, locked_by)
+      VALUES ($1, $2, now() + interval '10 minutes', 'pending', NULL, NULL),
+             ($1, $3, now() + interval '10 minutes', 'processing', now(), 'qa-worker')`,
+      [contact.rows[0].id, `${prefix}-followup-pending`, `${prefix}-followup-processing`]);
+    await storeIncomingEvent({
+      ...base,
+      body: 'Muchas gracias, me comunico.',
+      providerMessageId: `${prefix}-followup-cancel`,
+    });
+    const cancelledFollowups = await query<{ status: string }>(`
+      SELECT status FROM advisor_followups
+      WHERE contact_id=$1 AND trigger_provider_message_id LIKE $2
+      ORDER BY trigger_provider_message_id`, [contact.rows[0].id, `${prefix}-followup-%`]);
+    assert.deepEqual(cancelledFollowups.rows.map(row => row.status), ['cancelled', 'cancelled'],
+      'un nuevo mensaje debe cancelar seguimientos pendientes y ya reclamados');
     const outgoing = await prepareOutgoingMessage(contact.rows[0].id, `${prefix}-outgoing`, 'respuesta QA');
     const providerId = `${prefix}-provider-out`;
     await markOutgoingSent(outgoing.id, providerId);

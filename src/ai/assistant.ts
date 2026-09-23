@@ -137,14 +137,48 @@ const SHIPPING_VERB = /\b(llega[rn]?|envio|envios|repartos?|envia[rn]?|entrega[r
 const GIBBERISH_PATTERN = /^([.?¿!,\s]+|dfd|ver\*|(ja)+|(je)+|hika|hoka)$/i;
 /** Reactions, media stubs or genuinely empty input — always silence. */
 const REACTION_OR_EMPTY_PATTERN = /^\[mensaje (reaction|sticker|audio|image|video|unsupported|document) recibido\]$/i;
+/** Explicit opt-outs and goodbyes always close the turn, even if the previous
+ * assistant bubble happened to contain a question. */
+const EXPLICIT_CLOSURE_PATTERN = /^(no gracias|no me interesa|nada mas|chau|chao|hasta luego|de nada|saludos|nos vemos|que tengas buen dia|que tengan buen dia)$/i;
+/** Short acknowledgements can answer a question that the assistant just asked,
+ * so they are only noise when there is no pending conversational question. */
+const CONTEXTUAL_ACKNOWLEDGEMENT_PATTERN = /^(ok|dale|si|entendido|perfecto|listo|recibido|buenisimo|bueno|genial|joya|barbaro|excelente|esta bien|a|ma|kl|ver)$/i;
+const CLOSURE_EMOJI_PATTERN = /^(👍|👍🏻|👍🏼|👍🏿|🙌|🙌🏻|✅|💯)$/u;
+const GRATITUDE_MARKER_PATTERN = /\bgracias\b|\bagradezco\b|\bagradecid[oa]s?\b|^muy amable$/;
+const CLOSING_ACKNOWLEDGEMENT_WORDS = new Set([
+  'perfecto', 'genial', 'joya', 'barbaro', 'excelente', 'listo', 'entendido', 'buenisimo', 'bueno', 'dale', 'ok',
+  'muchas', 'muchisimas', 'mucho', 'mil', 'gracias', 'agradezco', 'agradecido', 'agradecida',
+  'agradecidos', 'agradecidas', 'muy', 'amable', 'por', 'la', 'el', 'tu', 'su',
+  'ayuda', 'atencion', 'informacion', 'info', 'respuesta', 'responder', 'responderme',
+  'avisar', 'aviso', 'todo', 'era', 'eso', 'esta', 'bien', 'igualmente', 'ya', 'ahora',
+  'ahi', 'entonces', 'me', 'les', 'le', 'te', 'lo', 'los', 'las', 'comunico',
+  'comunicare', 'comunicar', 'comunicarme', 'voy', 'a', 'escribo', 'escribire',
+  'escribir', 'contacto', 'contactare', 'contactar', 'con', 'mauricio', 'asesor',
+  'saludos', 'chau', 'chao', 'hasta', 'luego', 'que', 'tengas', 'tengan', 'un',
+  'buen', 'dia', 'noche', 'tarde',
+]);
+
 /**
- * Deliberate silence: explicit opt-out or pure acknowledgments with no business question.
- * Note: single-letter messages are handled separately by GIBBERISH_PATTERN → clarify.
- * Silence triggers are checked BEFORE gibberish so "ok"/"dale"/"chau" go to silence not clarify.
+ * Detects gratitude/closing sentences without hiding a real customer request.
+ * We intentionally accept only closing vocabulary after normalization instead
+ * of matching every sentence that happens to contain "gracias".
  */
-const SILENCE_TRIGGERS = /^(no gracias|no me interesa|nada mas|nada más|ok|dale|si|sí|chau|chao|hasta luego|muchas gracias|gracias|muy amable gracias|muy amable|entendido|perfecto|listo|recibido|de nada|buenisimo|bueno|a|ma|kl|ver\*|👍|👍🏻|👍🏼|👍🏿|🙌|🙌🏻|✅|💯)$/i;
+export function isConversationClosingAcknowledgement(text: string | undefined) {
+  const raw = text?.trim() ?? '';
+  if (!raw) return false;
+  if (CLOSURE_EMOJI_PATTERN.test(raw)) return true;
+
+  const normalized = normalizeText(raw);
+  if (EXPLICIT_CLOSURE_PATTERN.test(normalized)) return true;
+  if (/[?¿]/.test(raw) || !GRATITUDE_MARKER_PATTERN.test(normalized)) return false;
+  return normalized.split(' ').every(word => CLOSING_ACKNOWLEDGEMENT_WORDS.has(word));
+}
+
 export function isLearningQueueNoise(text: string | undefined, pendingQuestion = false) {
-  return Boolean(text?.trim()) && SILENCE_TRIGGERS.test(normalizeText(text)) && !pendingQuestion;
+  const raw = text?.trim() ?? '';
+  if (!raw) return false;
+  if (isConversationClosingAcknowledgement(raw)) return true;
+  return !pendingQuestion && CONTEXTUAL_ACKNOWLEDGEMENT_PATTERN.test(normalizeText(raw));
 }
 const ADVISOR_PATTERN = /necesito un asesor|asesor comercial|quiero un asesor|hablar con un asesor|asesor humano|necesito asesor/i;
 const MORE_INFO_PATTERN = /^(ver mas info|quiero mas info|mas info|imfo|info|ver mas info buenas tardes|quiero info)$/i;
@@ -473,9 +507,12 @@ export async function answerQuestion(
     return { ...base, text: '', outcome: 'silence', elapsedMs: Date.now() - started };
   }
 
-  // Fast pre-filter: deliberate silence triggers (checked before gibberish so "ok"/"dale"/"chau" → silence, not clarify)
-  if (/^(no gracias|no me interesa|nada mas|chau|chao|hasta luego|gracias|muchas gracias)$/.test(norm)) return { ...base, text: '', outcome: 'silence', elapsedMs: Date.now() - started };
-  if (!norm || (SILENCE_TRIGGERS.test(norm) && !pendingQuestion)) {
+  // Fast pre-filter: deterministic acknowledgements run before the provider so
+  // this behavior is identical whether customer-facing AI is enabled or not.
+  if (isLearningQueueNoise(raw, pendingQuestion)) {
+    return { ...base, text: '', outcome: 'silence', elapsedMs: Date.now() - started };
+  }
+  if (!norm) {
     // Exception: if raw message is purely punctuation (., ???) with no normalized content, give clarify
     // since customer may be testing the bot or accidentally sent characters
     const isPurelyPunctuation = !norm && /^[.?¿!,\s]+$/.test(raw);
@@ -585,7 +622,7 @@ export async function answerQuestion(
       intent.locationDistance = true;
     }
     // Silence overrides model output for reactions and opt-out
-    if (REACTION_OR_EMPTY_PATTERN.test(raw) || (SILENCE_TRIGGERS.test(norm) && !pendingQuestion)) {
+    if (REACTION_OR_EMPTY_PATTERN.test(raw) || isLearningQueueNoise(raw, pendingQuestion)) {
       intent.silence = true;
     } else {
       // Silence is only valid for the deterministic cases above. A provider can

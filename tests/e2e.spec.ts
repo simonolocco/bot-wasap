@@ -60,6 +60,42 @@ test('login, navegación principal, salud y logout', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Ingresar' })).toBeVisible();
 });
 
+test('la versión abre una bitácora accesible y devuelve el foco al cerrar', async ({ page }) => {
+  await login(page);
+  await openNavigationOnMobile(page);
+
+  const versionTrigger = page.getByRole('button', { name: /Ver historial de versiones\. Versión 2\.4\.0/ });
+  await expect(versionTrigger).toBeVisible();
+  await versionTrigger.click();
+
+  const dialog = page.getByRole('dialog', { name: 'Historial de versiones' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator('.release-entry')).toHaveCount(9);
+  await expect(dialog.locator('.release-entry.current')).toContainText('v2.4.0');
+  await expect(dialog.locator('.release-entry.current')).toContainText('Versión actual');
+  await expect(dialog.locator('time')).toHaveCount(9);
+
+  const closeButton = dialog.getByRole('button', { name: 'Cerrar historial de versiones' });
+  await expect(closeButton).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(versionTrigger).toBeFocused();
+
+  await versionTrigger.click();
+  await expect(dialog).toBeVisible();
+  const overflow = await dialog.evaluate(element => ({
+    documentWidth: document.documentElement.scrollWidth,
+    viewportWidth: document.documentElement.clientWidth,
+    dialogWidth: element.getBoundingClientRect().width,
+  }));
+  expect(overflow.documentWidth).toBeLessThanOrEqual(overflow.viewportWidth + 1);
+  expect(overflow.dialogWidth).toBeLessThanOrEqual(overflow.viewportWidth);
+
+  await page.locator('.modal-backdrop').click({ position: { x: 4, y: 4 } });
+  await expect(dialog).toHaveCount(0);
+  await expect(versionTrigger).toBeFocused();
+});
+
 test('imagen privada genera miniatura WebP autenticada', async ({ page, request }) => {
   const run = Date.now().toString();
   const phone = `549110${run.slice(-7)}`;

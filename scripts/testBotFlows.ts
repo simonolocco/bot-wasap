@@ -42,6 +42,33 @@ assert.equal(shouldQueueAiLearning({ text: 'Sí', type: 'text' }, false, true), 
   'Una respuesta corta a una pregunta previa del asistente debe conservar el contexto.');
 assert.equal(shouldIgnoreConversationNoise({ text: 'Ok', type: 'text' }, false, true), false,
   'Ok no es ruido cuando responde una pregunta previa del asistente.');
+assert.equal(shouldIgnoreConversationNoise({ text: 'Perfecto', type: 'text' }, false, true), false,
+  'Una confirmación breve conserva el contexto cuando responde una pregunta pendiente.');
+for (const closingText of [
+  'Muchas gracias, me comunico.',
+  'Perfecto, gracias por la ayuda',
+  'Mil gracias, ya les escribo',
+  'Joya, muchas gracias',
+  'Gracias por la información, era eso',
+]) {
+  assert.equal(shouldIgnoreConversationNoise({ text: closingText, type: 'text' }), true,
+    `El cierre compuesto debe quedar en silencio: ${closingText}`);
+  assert.equal(shouldIgnoreConversationNoise({ text: closingText, type: 'text' }, false, true), true,
+    `La gratitud explícita cierra aun con una pregunta anterior: ${closingText}`);
+  assert.equal(shouldQueueAiLearning({ text: closingText, type: 'text' }), false,
+    `El cierre compuesto no debe entrar al routing ni agendar seguimiento: ${closingText}`);
+}
+for (const customerQuestion of [
+  'Gracias, hacen envíos?',
+  'Gracias, hacen envíos? Estoy en Santa Rosa de Calamuchita.',
+  'Gracias, ¿cuál es el horario?',
+  'No gracias, pero pasame el catálogo',
+]) {
+  assert.equal(shouldIgnoreConversationNoise({ text: customerQuestion, type: 'text' }), false,
+    `Una consulta real no puede ocultarse por contener gratitud: ${customerQuestion}`);
+}
+assert.equal(shouldIgnoreConversationNoise({ text: 'Gracias', type: 'text' }, false, true), true,
+  'La gratitud explícita cierra el turno incluso si la respuesta anterior contenía una pregunta.');
 assert.equal(shouldQueueAiLearning({ text: 'Necesito información sobre factura A', type: 'text' }), true,
   'Una pregunta completa con la palabra información debe ir a la IA, no abrir el menú genérico.');
 

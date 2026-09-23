@@ -2,6 +2,7 @@ import { useSheetFocus } from './useSheetFocus';
 import { FormEvent, Fragment, KeyboardEvent, Suspense, lazy, useEffect, useLayoutEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { api, formatDate, initials, mediaUrl, shortText, thumbnailUrl } from './api';
+import { APP_VERSION } from './appVersion';
 import type {
   Contact,
   ConversationDetail,
@@ -199,14 +200,18 @@ function Sidebar({
   unread,
   sidebarOpen,
   onToggle,
+  versionHistoryOpen,
+  onOpenVersionHistory,
 }: {
   view: View;
   onNavigate: (view: View) => void;
   unread: number;
   sidebarOpen: boolean;
   onToggle: () => void;
+  versionHistoryOpen: boolean;
+  onOpenVersionHistory: () => void;
 }) {
-  const navigationRef = useSheetFocus(sidebarOpen, onToggle, true);
+  const navigationRef = useSheetFocus(sidebarOpen && !versionHistoryOpen, onToggle, true);
   const items: Array<[View, IconName, string]> = [
     ['dashboard', 'dashboard', 'Resumen'],
     ['analytics', 'analytics', 'Analíticas'],
@@ -244,6 +249,18 @@ function Sidebar({
         <button type="button" className={`mobile-nav-link ${['dashboard', 'analytics', 'templates', 'ia', 'jev'].includes(view) ? 'active' : ''}`} aria-label="Más secciones" aria-expanded={sidebarOpen} aria-controls="all-sections" onClick={onToggle}><SvgIcon name="moreHorizontal" size={20} /><span>Más</span></button>
       </nav>
       <div className="sidebar-bottom">
+        <button
+          type="button"
+          className="sidebar-version"
+          aria-label={`Ver historial de versiones. Versión ${APP_VERSION}`}
+          aria-haspopup="dialog"
+          aria-expanded={versionHistoryOpen}
+          aria-controls="version-history-dialog"
+          onClick={onOpenVersionHistory}
+        >
+          <span className="sidebar-version-label">Versión</span>
+          <strong>v{APP_VERSION}</strong>
+        </button>
         <span className="connection-badge"><i /> WhatsApp conectado</span>
         <button className="sidebar-logout" onClick={async () => { await api('/api/auth/logout', { method: 'POST' }); location.reload(); }}>
           <SvgIcon name="logout" />
@@ -1829,6 +1846,7 @@ function TemplatesView() {
 }
 
 const SecondaryViewsModule = lazy(() => import('./SecondaryViews'));
+const VersionHistoryModal = lazy(() => import('./VersionHistoryModal'));
 
 /* ═══════════════════════════════════════════════════════
    APP (main)
@@ -1838,6 +1856,7 @@ export default function App() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [view, setView] = useState<View>('inbox');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
   const [theme, setTheme] = useState<Theme>(
     () => (localStorage.getItem('abasto-theme') as Theme) || 'system',
   );
@@ -2292,6 +2311,8 @@ export default function App() {
         unread={conversationStats?.unreadMessages ?? conversations.reduce((s, r) => s + (r.unreadCount || 0), 0)}
         sidebarOpen={sidebarOpen}
         onToggle={() => setSidebarOpen(value => !value)}
+        versionHistoryOpen={versionHistoryOpen}
+        onOpenVersionHistory={() => setVersionHistoryOpen(true)}
       />
       {sidebarOpen && <button className="sidebar-backdrop" aria-label="Cerrar navegación" onClick={() => setSidebarOpen(false)} />}
 
@@ -2411,6 +2432,12 @@ export default function App() {
           onCancel={() => setCloseTicket(null)}
           onConfirm={confirmClose}
         />
+      )}
+
+      {versionHistoryOpen && (
+        <Suspense fallback={null}>
+          <VersionHistoryModal onClose={() => setVersionHistoryOpen(false)} />
+        </Suspense>
       )}
     </div>
   );

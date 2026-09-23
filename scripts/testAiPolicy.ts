@@ -99,6 +99,11 @@ async function runSilenceTests() {
     '[Mensaje unsupported recibido]',
     'Gracias',
     'Muchas gracias',
+    'Muchas gracias, me comunico.',
+    'Perfecto, gracias por la ayuda',
+    'Mil gracias, ya les escribo',
+    'Joya, muchas gracias',
+    'Gracias por la información, era eso',
     'Ok',
     'Dale',
     'Chau',
@@ -112,6 +117,17 @@ async function runSilenceTests() {
     check(`Silencio para "${msg.slice(0, 40)}"`, () => {
       assert.equal(result.outcome, 'silence', `Expected silence, got ${result.outcome}: "${result.text.slice(0, 80)}"`);
       assert.equal(result.text, '', `Expected empty text, got: "${result.text.slice(0, 80)}"`);
+    });
+  }
+  for (const msg of [
+    'Gracias, hacen envíos?',
+    'Gracias, hacen envíos? Estoy en Santa Rosa de Calamuchita.',
+    'Gracias, ¿cuál es el horario?',
+  ]) {
+    const result = await answerQuestion({ message: msg }, catalog, mockComplete);
+    check(`La consulta real no se silencia: "${msg}"`, () => {
+      assert.notEqual(result.outcome, 'silence');
+      assert.ok(result.text.trim());
     });
   }
   // renderAnswer with silence:true returns silence

@@ -176,11 +176,11 @@ export async function storeIncomingEvent(input: {
     if (!event.rows[0]) return { duplicate: true as const };
     const incomingAt = input.sourceTimestamp ? new Date(input.sourceTimestamp) : undefined;
     const contact = await upsertContact(client, input.phone, input.profileName, { incomingAt });
-    // Any new incoming message means the customer interacted again. Pending
-    // advisor reminders for older messages must not be sent afterward.
+    // Any new incoming message means the customer interacted again. Pending or
+    // already-claimed advisor reminders for older messages must not be sent.
     await client.query(`UPDATE advisor_followups
       SET status='cancelled', completed_at=now(), locked_at=NULL, locked_by=NULL
-      WHERE contact_id=$1 AND status='pending'`, [contact.id]);
+      WHERE contact_id=$1 AND status IN ('pending', 'processing')`, [contact.id]);
     await client.query(`INSERT INTO bot_sessions (contact_id, display_name) VALUES ($1, $2)
       ON CONFLICT (contact_id) DO UPDATE SET display_name = CASE WHEN bot_sessions.display_name = '' THEN EXCLUDED.display_name ELSE bot_sessions.display_name END, updated_at = now()`,
       [contact.id, input.profileName?.trim() ?? '']);

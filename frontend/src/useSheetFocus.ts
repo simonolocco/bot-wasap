@@ -11,7 +11,11 @@ export function useSheetFocus(open: boolean, onClose: () => void, overlayOnly = 
     if (!root) return;
     const previous = document.activeElement as HTMLElement | null;
     const controls = () => [...root.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]')].filter(el => el.getClientRects().length > 0);
-    controls()[0]?.focus({ preventScroll: true });
+    // Opening the mobile navigation hides its trigger, so focus the first visible
+    // control. When a child dialog closes, however, its restored trigger is still
+    // visible inside this sheet and must keep focus instead of jumping to the top.
+    const activeIsVisibleInside = Boolean(previous && root.contains(previous) && previous.getClientRects().length > 0);
+    if (!activeIsVisibleInside) controls()[0]?.focus({ preventScroll: true });
     const keydown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close.current(); }
       if (event.key !== 'Tab') return;
