@@ -18,7 +18,7 @@ import type {
   UnrecognizedPattern,
 } from './types';
 
-type SecondaryView = 'dashboard' | 'analytics' | 'jev' | 'contacts' | 'orders' | 'tickets' | 'templates' | 'ia';
+type SecondaryView = 'dashboard' | 'analytics' | 'jev' | 'contacts' | 'orders' | 'tickets' | 'templates' | 'ia' | 'laboratorio';
 type Paged<T> = { items: T[]; total: number; page: number; limit: number };
 
 const stages: Record<string, { label: string; tone: string }> = {
@@ -1627,6 +1627,7 @@ export default function SecondaryViews({
   onNavigate: (view: SecondaryView | 'inbox', options?: { analyticsNoMenuFilter?: { from: string; to: string } | null }) => void;
   onOpenContact: (id: string) => void;
 }) {
+  if (view === 'laboratorio') return <LaboratorioView />;
   if (view === 'dashboard') return <Dashboard onNavigate={onNavigate} />;
   if (view === 'analytics') return <Analytics onOpenContact={onOpenContact} onNavigate={onNavigate} />;
   if (view === 'jev') return <JevSimulatorView />;
@@ -1635,4 +1636,30 @@ export default function SecondaryViews({
   if (view === 'orders') return <Orders onOpenContact={onOpenContact} />;
   if (view === 'ia') return <AiView />;
   return <Templates />;
+}
+
+function LaboratorioView() {
+  const steps = [
+    { title: 'Preparación', description: 'Reunimos lo necesario antes de empezar.' },
+    { title: 'Revisión', description: 'Comprobamos que cada parte esté lista.' },
+    { title: 'Publicación', description: 'Compartimos el resultado cuando todo está aprobado.' },
+  ];
+
+  return (
+    <section className="portal-laboratory" aria-labelledby="portal-laboratory-title">
+      <header className="portal-laboratory-header">
+        <span className="section-kicker">Sección interna</span>
+        <h2 id="portal-laboratory-title">Laboratorio del portal</h2>
+        <p className="portal-laboratory-notice">Prueba interna: no muestra datos ni estados reales</p>
+      </header>
+      <ol className="portal-laboratory-steps">
+        {steps.map((step) => (
+          <li className="portal-laboratory-step" key={step.title}>
+            <h3>{step.title}</h3>
+            <p>{step.description}</p>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
 }

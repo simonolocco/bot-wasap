@@ -14,7 +14,7 @@ import type {
 } from './types';
 import './styles.css';
 
-type View = 'inbox' | 'dashboard' | 'analytics' | 'jev' | 'contacts' | 'orders' | 'tickets' | 'templates' | 'ia';
+type View = 'inbox' | 'dashboard' | 'analytics' | 'jev' | 'contacts' | 'orders' | 'tickets' | 'templates' | 'ia' | 'laboratorio';
 type Theme = 'system' | 'light' | 'dark';
 
 const stages: Record<string, string> = {
@@ -130,6 +130,7 @@ type IconName =
   | 'contact'
   | 'order'
   | 'template'
+  | 'flask'
   | 'bell'
   | 'bellOff'
   | 'refresh'
@@ -160,6 +161,7 @@ function SvgIcon({ name, size = 17 }: { name: IconName; size?: number }) {
     contact: <><circle cx="12" cy="8" r="3.5" /><path d="M5 20a7 7 0 0 1 14 0" /></>,
     order: <><path d="M6 3h12v18H6z" /><path d="M9 7h6M9 11h6M9 15h4" /></>,
     template: <><path d="M5 3h10l4 4v14H5z" /><path d="M15 3v5h4M8 12h8M8 16h6" /></>,
+    flask: <><path d="M9 3h6M10 3v7l-5.6 9.2A1.8 1.8 0 0 0 5.9 22h12.2a1.8 1.8 0 0 0 1.5-2.8L14 10V3" /><path d="M8 16h8" /></>,
     bell: <><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21h4" /></>,
     bellOff: <><path d="m4 4 16 16M10 21h4M18 9a6 6 0 0 0-8-5" /><path d="M6 9c0 7-3 7-3 9h13" /></>,
     refresh: <><path d="M20 11a8 8 0 0 0-14.7-4L3 10" /><path d="M3 4v6h6M4 13a8 8 0 0 0 14.7 4L21 14" /><path d="M21 20v-6h-6" /></>,
@@ -192,6 +194,7 @@ const viewTitles: Record<View, [string, string]> = {
   contacts: ['Contactos', 'Toda tu base, paginada y editable.'],
   orders: ['Pedidos', 'Seguimiento de pedidos recibidos.'],
   templates: ['Plantillas', 'Preparadas para comunicaciones autorizadas.'],
+  laboratorio: ['Laboratorio del portal', 'Vista interna de prueba con contenido estático.'],
 };
 
 function Sidebar({
@@ -222,6 +225,7 @@ function Sidebar({
     ['contacts', 'contact', 'Contactos'],
     ['orders', 'order', 'Pedidos'],
     ['templates', 'template', 'Plantillas'],
+    ['laboratorio', 'flask', 'Laboratorio'],
   ];
   return (
     <aside ref={navigationRef} className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
@@ -246,7 +250,7 @@ function Sidebar({
             {id === 'inbox' && unread > 0 && <b>{unread > 99 ? '99+' : unread}</b>}
           </button>
         ))}
-        <button type="button" className={`mobile-nav-link ${['dashboard', 'analytics', 'templates', 'ia', 'jev'].includes(view) ? 'active' : ''}`} aria-label="Más secciones" aria-expanded={sidebarOpen} aria-controls="all-sections" onClick={onToggle}><SvgIcon name="moreHorizontal" size={20} /><span>Más</span></button>
+        <button type="button" className={`mobile-nav-link ${['dashboard', 'analytics', 'templates', 'ia', 'jev', 'laboratorio'].includes(view) ? 'active' : ''}`} aria-label="Más secciones" aria-expanded={sidebarOpen} aria-controls="all-sections" onClick={onToggle}><SvgIcon name="moreHorizontal" size={20} /><span>Más</span></button>
       </nav>
       <div className="sidebar-bottom">
         <button
