@@ -12,4 +12,7 @@ SET answer = E'Podés buscar el producto y consultar su precio en nuestros catá
     updated_by = 'migration-032',
     updated_at = now()
 WHERE normalized_name = 'catalogo'
-  AND answer = E'Te comparto nuestros catálogos vigentes:\n\n*Mayorista:* https://drive.google.com/file/d/10ooMXAHcm1RL6aILFKq8rsNXsZHQy1CP/view?usp=sharing\n*Minorista:* https://drive.google.com/file/d/1_mQxhP0oKDIJdBonfHSD2YudV3pqtHRQ/view?usp=sharing\n\nPara consultar un producto, precio o disponibilidad puntual, escribile a Mauricio: https://wa.me/5493517565641';
+  AND answer IN (
+    E'Te comparto nuestros catálogos vigentes:\n\n*Mayorista:* https://drive.google.com/file/d/10ooMXAHcm1RL6aILFKq8rsNXsZHQy1CP/view?usp=sharing\n*Minorista:* https://drive.google.com/file/d/1_mQxhP0oKDIJdBonfHSD2YudV3pqtHRQ/view?usp=sharing\n\nPara consultar un producto, precio o disponibilidad puntual, escribile a Mauricio: https://wa.me/5493517565641',
+    E'Te comparto los enlaces a nuestras listas y catálogos vigentes:\n\nMayorista: https://drive.google.com/file/d/10ooMXAHcm1RL6aILFKq8rsNXsZHQy1CP/view?usp=sharing\nMinorista: https://drive.google.com/file/d/1_mQxhP0oKDIJdBonfHSD2YudV3pqtHRQ/view?usp=sharing\n\nCualquier consulta sobre precios, stock o pedidos podés consultarnos o escribirle a nuestro asesor comercial Mauricio: https://wa.me/5493517565641'
+  );
