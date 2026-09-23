@@ -208,7 +208,7 @@ async function handleOption(contactId: string, incoming: Incoming, option: MenuO
       return;
   }
   await updateSession(contactId, { awaitingOrderDetail: false });
-  if (option !== 'preguntas_frecuentes' && option !== 'lista_precio') await sendFollowUpMenu(contactId, to, key);
+  if (option !== 'preguntas_frecuentes') await sendFollowUpMenu(contactId, to, key);
 }
 
 export async function processIncomingJob(job: { id: string; contact_id: string; attempts: number }) {

@@ -186,7 +186,7 @@ export async function resolveJevCustomerResponse(input: {
     return {
       source: 'jev-template',
       answer,
-      sendMenuAfter: Boolean(text.trim()) && !catalogFirst,
+      sendMenuAfter: Boolean(text.trim()),
       followUpText: catalogFirst?.followUpText,
       classification,
       matchedRuleId: null,

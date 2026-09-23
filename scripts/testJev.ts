@@ -274,7 +274,7 @@ async function main() {
   assert.doesNotMatch(productResolution.answer?.text ?? '', /Mauricio/);
   assert.match(productResolution.followUpText ?? '', /Si no encontrás el producto o el precio.*Mauricio/);
   assert.equal(productResolution.answer?.outcome, 'answered');
-  assert.equal(productResolution.sendMenuAfter, false);
+  assert.equal(productResolution.sendMenuAfter, true);
   assert.equal(productResolution.source, 'jev-template');
   assert.equal(productResolution.classification.method, 'jev');
 
@@ -294,7 +294,7 @@ async function main() {
   assert.match(genericCatalogResolution.answer?.text ?? '', /Mayorista: https:\/\/drive\.google\.com/);
   assert.match(genericCatalogResolution.answer?.text ?? '', /Minorista: https:\/\/drive\.google\.com/);
   assert.match(genericCatalogResolution.followUpText ?? '', /Si no encontrás/);
-  assert.equal(genericCatalogResolution.sendMenuAfter, false);
+  assert.equal(genericCatalogResolution.sendMenuAfter, true);
 
   const lowConfidenceResolution = await resolveJevCustomerResponse({
     question: 'No sé bien qué necesito',
