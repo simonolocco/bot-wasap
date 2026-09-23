@@ -47,7 +47,7 @@ assert.deepEqual(previewBudgetSubject('contact-1', { type: 'admin', key: 'sessio
 
 const server = read('src/server.ts');
 assert.ok((server.match(/budgetSubject: \{ type: 'admin', key: req\.sessionID/g) ?? []).length >= 2,
-  'Simulador y prueba manual deben compartir la cuota de la sesión administrativa.');
+  'Prueba manual y regeneración de vistas previas deben usar la cuota de la sesión administrativa.');
 assert.match(server, /generateAndStoreAiQueryPreview\([\s\S]*budgetSubject: \{ type: 'admin'/,
   'La regeneración sin contacto debe quedar asociada a la sesión administrativa.');
 

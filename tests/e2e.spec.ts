@@ -7,7 +7,7 @@ test('las APIs privadas rechazan sesiones anónimas', async ({ request }) => {
   expect(response.status()).toBe(401);
   const upload = await request.post('/api/media', { multipart: { file: { name: 'malware.exe', mimeType: 'application/octet-stream', buffer: Buffer.from('MZ') } } });
   expect(upload.status()).toBe(401);
-  const jev = await request.post('/api/jev/simulate', { data: { message: 'Mensaje privado' } });
+  const jev = await request.post('/api/ai/test', { data: { question: 'Mensaje privado' } });
   expect(jev.status()).toBe(401);
 });
 
@@ -34,7 +34,7 @@ test('login, navegación principal, salud y logout', async ({ page }) => {
   await login(page);
   for (const [nav, heading] of [
     ['Resumen', 'Resumen'],
-    ['Simulador Jev', 'Simulador Jev'],
+    ['IA', 'IA'],
     ['Conversaciones', 'Conversaciones'],
     ['Tickets', 'Tickets'],
     ['Contactos', 'Contactos'],
@@ -46,6 +46,8 @@ test('login, navegación principal, salud y logout', async ({ page }) => {
     await expect(page.getByRole('heading', { name: heading }).first()).toBeVisible();
   }
   await openNavigationOnMobile(page);
+  await expect(page.getByRole('button', { name: 'Simulador Jev', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Laboratorio', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Resumen', exact: true }).click();
   await expect(page.getByText('Estado del sistema')).toBeVisible();
   await expect(page.getByText('Worker', { exact: true })).toBeVisible();
@@ -64,16 +66,16 @@ test('la versión abre una bitácora accesible y devuelve el foco al cerrar', as
   await login(page);
   await openNavigationOnMobile(page);
 
-  const versionTrigger = page.getByRole('button', { name: /Ver historial de versiones\. Versión 2\.4\.0/ });
+  const versionTrigger = page.getByRole('button', { name: /Ver historial de versiones\. Versión 2\.4\.1/ });
   await expect(versionTrigger).toBeVisible();
   await versionTrigger.click();
 
   const dialog = page.getByRole('dialog', { name: 'Historial de versiones' });
   await expect(dialog).toBeVisible();
-  await expect(dialog.locator('.release-entry')).toHaveCount(9);
-  await expect(dialog.locator('.release-entry.current')).toContainText('v2.4.0');
+  await expect(dialog.locator('.release-entry')).toHaveCount(10);
+  await expect(dialog.locator('.release-entry.current')).toContainText('v2.4.1');
   await expect(dialog.locator('.release-entry.current')).toContainText('Versión actual');
-  await expect(dialog.locator('time')).toHaveCount(9);
+  await expect(dialog.locator('time')).toHaveCount(10);
 
   const closeButton = dialog.getByRole('button', { name: 'Cerrar historial de versiones' });
   await expect(closeButton).toBeFocused();

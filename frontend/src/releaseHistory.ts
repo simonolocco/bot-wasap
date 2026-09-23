@@ -9,6 +9,11 @@ export type ReleaseHistoryEntry = Readonly<{
 export const RELEASE_HISTORY = [
   {
     version: APP_VERSION,
+    releasedAt: '2026-09-23',
+    summary: 'Retiramos Laboratorio y el simulador independiente del panel. Jev sigue activo y sus respuestas se pueden probar desde IA.',
+  },
+  {
+    version: '2.4.0',
     releasedAt: '2026-09-22',
     summary: 'Jev quedó listo para probar y activar, con respuestas completas, límites de uso y cierres silenciosos cuando el cliente agradece.',
   },

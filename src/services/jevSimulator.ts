@@ -423,7 +423,7 @@ export async function evaluateJevMessage(
           Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
           'HTTP-Referer': 'https://abasto-bot.cloud',
-          'X-OpenRouter-Title': 'AbastoBot · Simulador Jev',
+          'X-OpenRouter-Title': 'AbastoBot · Jev',
         },
         body: JSON.stringify(buildJevSimulationRequest(message, history)),
         signal: controller.signal,

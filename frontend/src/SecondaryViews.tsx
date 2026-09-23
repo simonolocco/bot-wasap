@@ -2,7 +2,6 @@ import { useSheetFocus } from './useSheetFocus';
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { api, cachedApi, formatDate, formatDateOnly, initials, invalidateApi } from './api';
 import AnalyticsView from './AnalyticsView';
-import JevSimulatorView from './JevSimulatorView';
 import type {
   AnalyticsPeriodKey,
   AiAnswerLabel,
@@ -18,7 +17,7 @@ import type {
   UnrecognizedPattern,
 } from './types';
 
-type SecondaryView = 'dashboard' | 'analytics' | 'jev' | 'contacts' | 'orders' | 'tickets' | 'templates' | 'ia';
+type SecondaryView = 'dashboard' | 'analytics' | 'contacts' | 'orders' | 'tickets' | 'templates' | 'ia';
 type Paged<T> = { items: T[]; total: number; page: number; limit: number };
 
 const stages: Record<string, { label: string; tone: string }> = {
@@ -1456,9 +1455,9 @@ function AiView() {
     if (!data) return;
     const switchingLegacyToJev = data.settings.enabled && data.settings.engine !== 'jev';
     const enabling = switchingLegacyToJev || !data.settings.enabled;
-    if (enabling && !window.confirm('¿Activar Jev para responder mensajes reales de clientes? El simulador seguirá disponible para probarlo.')) return;
+    if (enabling && !window.confirm('¿Activar Jev para responder mensajes reales de clientes? Podés seguir probando respuestas desde esta sección.')) return;
     setBusy(true); setNotice('');
-    try { await api('/api/ai/status', { method: 'PATCH', body: JSON.stringify({ enabled: enabling, ...(enabling ? { engine: 'jev' } : {}) }) }); setNotice(enabling ? 'Jev quedó activo para responder a clientes.' : 'Jev quedó apagado. El simulador y las vistas previas siguen disponibles.'); await load(); }
+    try { await api('/api/ai/status', { method: 'PATCH', body: JSON.stringify({ enabled: enabling, ...(enabling ? { engine: 'jev' } : {}) }) }); setNotice(enabling ? 'Jev quedó activo para responder a clientes.' : 'Jev quedó apagado. Las pruebas y vistas previas siguen disponibles en IA.'); await load(); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'No se pudo cambiar el estado.'); }
     finally { setBusy(false); }
   }
@@ -1563,7 +1562,7 @@ function AiView() {
   return (
     <div className="secondary-view ai-view">
       <section className={`ai-control-card ${data.settings.enabled ? 'is-enabled' : 'is-disabled'}`}>
-        <div className="ai-control-copy"><div className="ai-control-title"><span className="ai-live-dot" aria-hidden="true" /><h2>Respuestas automáticas a clientes</h2><span className={`ai-status ${data.settings.enabled ? 'answered' : 'disabled'}`}>{jevActive ? 'Jev activo' : legacyActive ? 'IA anterior activa' : 'Apagadas'}</span></div><p>{jevActive ? 'Jev clasifica cada consulta y elige una respuesta aprobada. Las consultas sobre productos siempre pasan al asesor.' : legacyActive ? 'Hay una configuración anterior respondiendo a clientes. Podés cambiarla a Jev con el botón.' : 'Jev no envía mensajes a clientes. Podés probar conversaciones completas en el simulador y activarlo recién cuando estés conforme.'}</p></div>
+        <div className="ai-control-copy"><div className="ai-control-title"><span className="ai-live-dot" aria-hidden="true" /><h2>Respuestas automáticas a clientes</h2><span className={`ai-status ${data.settings.enabled ? 'answered' : 'disabled'}`}>{jevActive ? 'Jev activo' : legacyActive ? 'IA anterior activa' : 'Apagadas'}</span></div><p>{jevActive ? 'Jev clasifica cada consulta y elige una respuesta aprobada. Las consultas sobre productos siempre pasan al asesor.' : legacyActive ? 'Hay una configuración anterior respondiendo a clientes. Podés cambiarla a Jev con el botón.' : 'Jev no envía mensajes a clientes. Podés probar sus respuestas desde esta sección y activarlo cuando estés conforme.'}</p></div>
         <button type="button" className={`button ${jevActive ? 'danger' : 'primary'}`} aria-pressed={jevActive} disabled={busy} onClick={() => void toggle()}>{jevActive ? 'Apagar Jev' : legacyActive ? 'Cambiar a Jev en producción' : 'Activar Jev en producción'}</button>
       </section>
       <section className="ai-response-contract" aria-label="Cómo responde Jev"><strong>Cómo se decide cada respuesta</strong><ol><li>El primer mensaje siempre muestra el menú.</li><li>Jev identifica el tipo de consulta.</li><li>El sistema envía la plantilla aprobada; productos, precios y stock van a Mauricio.</li></ol></section>
@@ -1629,7 +1628,6 @@ export default function SecondaryViews({
 }) {
   if (view === 'dashboard') return <Dashboard onNavigate={onNavigate} />;
   if (view === 'analytics') return <Analytics onOpenContact={onOpenContact} onNavigate={onNavigate} />;
-  if (view === 'jev') return <JevSimulatorView />;
   if (view === 'tickets') return <Tickets onOpen={onOpenContact} />;
   if (view === 'contacts') return <Contacts onOpen={onOpenContact} />;
   if (view === 'orders') return <Orders onOpenContact={onOpenContact} />;
