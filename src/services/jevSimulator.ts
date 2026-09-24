@@ -214,6 +214,11 @@ const BARE_PRICE_FOLLOWUP_PATTERN = /^(?:(?:y|entonces)\s+)?(?:(?:cuanto\s+(?:sa
 const DIRECT_AVAILABILITY_PATTERN = /\b(?:tienen|tenes|hay|trabajan|manejan|venden)\b/;
 const NON_PRODUCT_AVAILABILITY_PATTERN = /\b(?:envio|entrega|flete|reparto|delivery|local|sucursal|horario|abiert[oa]s?|atencion|turno|estacionamiento|telefono|whatsapp|pago|transferencia|cuenta|mercado\s+pago|tarjeta|cuotas?|catalogo|lista|compra\s+minima|pedido\s+minimo|minimo|minorista|mayorista)\b/;
 const NON_PRODUCT_PRICE_PATTERN = /\b(?:envios?|entregas?|fletes?|repartos?|delivery|compra\s+minima|pedido\s+minimo|minimo\s+de\s+compra|cuotas?|recargos?)\b/;
+const BUSINESS_LOCATION_PATTERN = /^(?:donde\s+(?:queda(?:n)?|esta(?:n)?|se\s+(?:encuentra(?:n)?|ubica(?:n)?))(?:\s+(?:ustedes|el\s+local|la\s+sucursal|el\s+negocio|la\s+distribuidora))?|(?:cual\s+es\s+|me\s+pasas?\s+|pasame\s+)?(?:la\s+|su\s+)?(?:direccion|ubicacion|domicilio)(?:\s+(?:del\s+local|de\s+la\s+sucursal|de\s+ustedes))?|de\s+donde\s+son)$/;
+
+export function shouldRouteToAddress(message: string) {
+  return BUSINESS_LOCATION_PATTERN.test(normalizeForMatching(message));
+}
 
 /**
  * Route concrete product questions to the catalog-first response. Generic
@@ -222,7 +227,7 @@ const NON_PRODUCT_PRICE_PATTERN = /\b(?:envios?|entregas?|fletes?|repartos?|deli
  */
 export function shouldRouteToProductAdvisor(message: string, history: readonly JevHistoryMessage[] = []) {
   const normalized = normalizeForMatching(message);
-  if (!normalized || CATALOG_PROBLEM_PATTERN.test(normalized)) return false;
+  if (!normalized || shouldRouteToAddress(message) || CATALOG_PROBLEM_PATTERN.test(normalized)) return false;
   if (GENERIC_CATALOG_PATTERN.test(normalized) || GENERIC_PRODUCTS_PATTERN.test(normalized)) return false;
 
   if (FOOD_SAFETY_PATTERN.test(normalized)) return true;
@@ -380,12 +385,12 @@ function isSimulationResponse(value: unknown): value is RawJevSimulationResponse
   );
 }
 
-function normalizeResponseType(answer: RawJevChoiceAnswer, forceProductAdvisor: boolean): JevChoiceAnswer {
-  if (forceProductAdvisor) {
+function normalizeResponseType(answer: RawJevChoiceAnswer, forcedType: JevResponseType | null): JevChoiceAnswer {
+  if (forcedType) {
     return {
       type: 'choice',
-      choice: 'product_advisor',
-      probabilities: { product_advisor: 1 },
+      choice: forcedType,
+      probabilities: { [forcedType]: 1 },
       confidence: 1,
     };
   }
@@ -453,11 +458,13 @@ export async function evaluateJevMessage(
       throw new JevServiceError(502, 'Jev respondió con un resultado que no se pudo mostrar.');
     }
 
-    const forceProductAdvisor = shouldRouteToProductAdvisor(message, history);
+    const forcedType: JevResponseType | null = shouldRouteToAddress(message)
+      ? 'address'
+      : shouldRouteToProductAdvisor(message, history) ? 'product_advisor' : null;
     return {
       model: payload.model,
       answers: {
-        response_type: normalizeResponseType(payload.answers.response_type, forceProductAdvisor),
+        response_type: normalizeResponseType(payload.answers.response_type, forcedType),
         urgency: {
           type: 'score',
           score: payload.answers.urgency.score,

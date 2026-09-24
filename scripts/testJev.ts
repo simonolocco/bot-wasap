@@ -12,10 +12,12 @@ import {
   JevServiceError,
   JevSimulationLimiter,
   normalizeJevHistory,
+  shouldRouteToAddress,
   shouldRouteToProductAdvisor,
   type JevHistoryMessage,
 } from '../src/services/jevSimulator';
 import { resolveJevCustomerResponse } from '../src/ai/jevResponse';
+import { BUSINESS_ADDRESS } from '../src/botMenu';
 
 const completeOfficialResponse = {
   id: 'gen-dec-test',
@@ -83,6 +85,20 @@ async function main() {
   assert.ok(boundedHistory[boundedHistory.length - 1]?.content.startsWith('19:'));
   assert.ok(!boundedHistory.some(item => item.content.startsWith('0:')));
   assert.equal(buildJevSimulationRequest('x'.repeat(5_000)).state.current_message.length, JEV_CURRENT_MESSAGE_MAX_CHARS);
+
+  for (const addressQuestion of [
+    'Donde queda?',
+    '¿Dónde queda?',
+    '¿Dónde queda el local?',
+    '¿Dónde se encuentran?',
+    '¿Cuál es la dirección?',
+    'Pasame la ubicación',
+  ]) {
+    assert.equal(shouldRouteToAddress(addressQuestion), true, addressQuestion);
+    assert.equal(shouldRouteToProductAdvisor(addressQuestion), false, addressQuestion);
+  }
+  assert.equal(shouldRouteToAddress('¿Dónde queda el queso cremoso?'), false);
+  assert.equal(shouldRouteToAddress('¿Dónde queda mi pedido?'), false);
 
   for (const productQuestion of [
     '¿Cuánto sale la mermelada de frutilla?',
@@ -248,6 +264,18 @@ async function main() {
   });
   assert.equal(genericCatalog.answers.response_type.choice, 'catalog');
 
+  const addressDecision = await evaluateJevMessage('Donde queda?', {
+    apiKey: 'test-key',
+    timeoutMs: 500,
+    fetchImpl: async () => jsonResponse({ ...minimalOfficialResponse, answers: {
+      ...minimalOfficialResponse.answers,
+      response_type: { type: 'choice', choice: 'catalog' },
+    } }),
+  });
+  assert.deepEqual(addressDecision.answers.response_type, {
+    type: 'choice', choice: 'address', probabilities: { address: 1 }, confidence: 1,
+  });
+
   const shippingFollowUp = await evaluateJevMessage('¿Y cuánto sale?', [
     { role: 'customer', content: '¿Llegan a Villa María?' },
     { role: 'assistant', content: 'Podemos revisar la cobertura.' },
@@ -295,6 +323,23 @@ async function main() {
   assert.match(genericCatalogResolution.answer?.text ?? '', /Minorista: https:\/\/drive\.google\.com/);
   assert.match(genericCatalogResolution.followUpText ?? '', /Si no encontrás/);
   assert.equal(genericCatalogResolution.sendMenuAfter, true);
+
+  const addressResolution = await resolveJevCustomerResponse({
+    question: 'Donde queda?',
+    labels: [],
+    clientOptions: {
+      apiKey: 'test-key',
+      timeoutMs: 500,
+      fetchImpl: async () => jsonResponse({ ...minimalOfficialResponse, answers: {
+        ...minimalOfficialResponse.answers,
+        response_type: { type: 'choice', choice: 'catalog' },
+      } }),
+    },
+  });
+  assert.equal(addressResolution.responseType, 'address');
+  assert.equal(addressResolution.responseLabel, 'direccion');
+  assert.equal(addressResolution.answer?.text, BUSINESS_ADDRESS);
+  assert.equal(addressResolution.followUpText, undefined);
 
   const lowConfidenceResolution = await resolveJevCustomerResponse({
     question: 'No sé bien qué necesito',
